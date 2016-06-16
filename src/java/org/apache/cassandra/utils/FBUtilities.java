@@ -43,6 +43,7 @@ import org.apache.cassandra.auth.IRoleManager;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.db.DecoratedKey;
 import org.apache.cassandra.db.SerializationHeader;
+import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.dht.IPartitioner;
 import org.apache.cassandra.dht.LocalPartitioner;
 import org.apache.cassandra.dht.Range;
@@ -413,20 +414,24 @@ public class FBUtilities
         Map<MetadataType, MetadataComponent> sstableMetadata = desc.getMetadataSerializer().deserialize(desc, types);
         ValidationMetadata validationMetadata = (ValidationMetadata) sstableMetadata.get(MetadataType.VALIDATION);
         SerializationHeader.Component header = (SerializationHeader.Component) sstableMetadata.get(MetadataType.HEADER);
-        if (validationMetadata.partitioner.endsWith("LocalPartitioner"))
-        {
-            return new LocalPartitioner(header.getKeyType());
-        }
-        else
-        {
-            return newPartitioner(validationMetadata.partitioner);
-        }
+        return newPartitioner(validationMetadata.partitioner, Optional.of(header.getKeyType()));
     }
 
     public static IPartitioner newPartitioner(String partitionerClassName) throws ConfigurationException
     {
+        return newPartitioner(partitionerClassName, Optional.empty());
+    }
+
+    private static IPartitioner newPartitioner(String partitionerClassName, Optional<AbstractType<?>> comparator) throws ConfigurationException
+    {
         if (!partitionerClassName.contains("."))
             partitionerClassName = "org.apache.cassandra.dht." + partitionerClassName;
+
+        if (partitionerClassName.equals("org.apache.cassandra.dht.LocalPartitioner"))
+        {
+            assert comparator.isPresent() : "Expected a comparator for local partitioner";
+            return new LocalPartitioner(comparator.get());
+        }
         return FBUtilities.instanceOrConstruct(partitionerClassName, "partitioner");
     }
 
