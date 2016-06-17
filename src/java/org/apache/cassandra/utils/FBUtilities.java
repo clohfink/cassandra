@@ -32,6 +32,7 @@ import java.util.zip.Checksum;
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Joiner;
 import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
@@ -422,7 +423,8 @@ public class FBUtilities
         return newPartitioner(partitionerClassName, Optional.empty());
     }
 
-    private static IPartitioner newPartitioner(String partitionerClassName, Optional<AbstractType<?>> comparator) throws ConfigurationException
+    @VisibleForTesting
+    static IPartitioner newPartitioner(String partitionerClassName, Optional<AbstractType<?>> comparator) throws ConfigurationException
     {
         if (!partitionerClassName.contains("."))
             partitionerClassName = "org.apache.cassandra.dht." + partitionerClassName;
