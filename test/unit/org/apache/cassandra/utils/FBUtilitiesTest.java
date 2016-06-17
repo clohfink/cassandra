@@ -18,19 +18,31 @@
 
 package org.apache.cassandra.utils;
 
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.fail;
+
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.charset.CharacterCodingException;
 import java.nio.charset.StandardCharsets;
-
-import com.google.common.primitives.Ints;
-import org.junit.Test;
-
 import java.util.Map;
+import java.util.Optional;
 import java.util.TreeMap;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.fail;
+import com.google.common.primitives.Ints;
+
+import org.apache.cassandra.db.marshal.AbstractType;
+import org.apache.cassandra.db.marshal.Int32Type;
+import org.apache.cassandra.db.marshal.ListType;
+import org.apache.cassandra.db.marshal.UUIDType;
+import org.apache.cassandra.dht.ByteOrderedPartitioner;
+import org.apache.cassandra.dht.LengthPartitioner;
+import org.apache.cassandra.dht.Murmur3Partitioner;
+import org.apache.cassandra.dht.OrderPreservingPartitioner;
+import org.apache.cassandra.dht.RandomPartitioner;
+import org.junit.Test;
+
+import junit.framework.Assert;
 
 public class FBUtilitiesTest
 {
@@ -94,5 +106,37 @@ public class FBUtilitiesTest
     {
         ByteBuffer bytes = ByteBuffer.wrap(new byte[]{(byte)0xff, (byte)0xfe});
         ByteBufferUtil.string(bytes, StandardCharsets.UTF_8);
+    }
+
+    private static void assertPartitioner(String name, Class expected)
+    {
+        Assert.assertTrue(String.format("%s != %s", name, expected.toString()),
+                          expected.isInstance(FBUtilities.newPartitioner(name)));
+    }
+
+    @Test
+    public void testNewPartitionerNoArgConstructors()
+    {
+        // if any of these start failing it likely means the sstabledump/sstablemetadata tools will
+        // also fail to read existing sstables.
+        assertPartitioner("ByteOrderedPartitioner", ByteOrderedPartitioner.class);
+        assertPartitioner("LengthPartitioner", LengthPartitioner.class);
+        assertPartitioner("Murmur3Partitioner", Murmur3Partitioner.class);
+        assertPartitioner("OrderPreservingPartitioner", OrderPreservingPartitioner.class);
+        assertPartitioner("RandomPartitioner", RandomPartitioner.class);
+        assertPartitioner("org.apache.cassandra.dht.ByteOrderedPartitioner", ByteOrderedPartitioner.class);
+        assertPartitioner("org.apache.cassandra.dht.LengthPartitioner", LengthPartitioner.class);
+        assertPartitioner("org.apache.cassandra.dht.Murmur3Partitioner", Murmur3Partitioner.class);
+        assertPartitioner("org.apache.cassandra.dht.OrderPreservingPartitioner", OrderPreservingPartitioner.class);
+        assertPartitioner("org.apache.cassandra.dht.RandomPartitioner", RandomPartitioner.class);
+    }
+
+    @Test
+    public void testNewPartitionerLocalPartitioner()
+    {
+       AbstractType<?> type = FBUtilities.newPartitioner("LocalPartitioner", Optional.of(UUIDType.instance)).partitionOrdering();
+       Assert.assertEquals(type, UUIDType.instance);
+       type = FBUtilities.newPartitioner("LocalPartitioner", Optional.of(ListType.getInstance(Int32Type.instance, true))).partitionOrdering();
+       Assert.assertEquals(type, ListType.getInstance(Int32Type.instance, true));
     }
 }
