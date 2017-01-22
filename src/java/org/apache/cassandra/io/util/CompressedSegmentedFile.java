@@ -27,9 +27,13 @@ import com.google.common.primitives.Ints;
 import org.apache.cassandra.cache.ChunkCache;
 import org.apache.cassandra.config.Config;
 import org.apache.cassandra.config.Config.DiskAccessMode;
-import org.apache.cassandra.io.compress.*;
-import org.apache.cassandra.io.sstable.CorruptSSTableException;
 import org.apache.cassandra.config.DatabaseDescriptor;
+import org.apache.cassandra.io.compress.BufferType;
+import org.apache.cassandra.io.compress.CompressedSequentialWriter;
+import org.apache.cassandra.io.compress.CompressionMetadata;
+import org.apache.cassandra.io.compress.CorruptBlockException;
+import org.apache.cassandra.io.sstable.CorruptSSTableException;
+import org.apache.cassandra.io.sstable.Descriptor;
 import org.apache.cassandra.utils.concurrent.Ref;
 
 public class CompressedSegmentedFile extends SegmentedFile implements ICompressedFile
@@ -122,17 +126,17 @@ public class CompressedSegmentedFile extends SegmentedFile implements ICompresse
             this.mode = DatabaseDescriptor.getDiskAccessMode();
         }
 
-        protected CompressionMetadata metadata(String path, long overrideLength)
+        protected CompressionMetadata metadata(Descriptor desc, String path, long overrideLength)
         {
             if (writer == null)
-                return CompressionMetadata.create(path);
+                return CompressionMetadata.create(desc, path);
 
             return writer.open(overrideLength);
         }
 
-        public SegmentedFile complete(ChannelProxy channel, int bufferSize, long overrideLength)
+        public SegmentedFile complete(Descriptor desc, ChannelProxy channel, int bufferSize, long overrideLength)
         {
-            return new CompressedSegmentedFile(channel, metadata(channel.filePath(), overrideLength), mode);
+            return new CompressedSegmentedFile(channel, metadata(desc, channel.filePath(), overrideLength), mode);
         }
     }
 

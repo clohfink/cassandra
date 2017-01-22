@@ -17,13 +17,15 @@
  */
 package org.apache.cassandra.io.util;
 
-import java.io.*;
-
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import java.io.DataInput;
+import java.io.DataOutput;
+import java.io.IOException;
 
 import org.apache.cassandra.db.TypeSizes;
+import org.apache.cassandra.io.sstable.Descriptor;
 import org.apache.cassandra.io.sstable.format.Version;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class MmappedSegmentedFile extends SegmentedFile
 {
@@ -61,7 +63,7 @@ public class MmappedSegmentedFile extends SegmentedFile
             super();
         }
 
-        public SegmentedFile complete(ChannelProxy channel, int bufferSize, long overrideLength)
+        public SegmentedFile complete(Descriptor desc, ChannelProxy channel, int bufferSize, long overrideLength)
         {
             long length = overrideLength > 0 ? overrideLength : channel.size();
             updateRegions(channel, length);

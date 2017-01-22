@@ -88,6 +88,10 @@ public class CompressionMetadata
     public static CompressionMetadata create(String dataFilePath)
     {
         Descriptor desc = Descriptor.fromFilename(dataFilePath);
+        return create(desc, dataFilePath);
+    }
+    public static CompressionMetadata create(Descriptor desc, String dataFilePath)
+    {
         return new CompressionMetadata(desc.filenameFor(Component.COMPRESSION_INFO), new File(dataFilePath).length(), desc.version.compressedChecksumType());
     }
 

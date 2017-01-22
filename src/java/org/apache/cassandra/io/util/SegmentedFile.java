@@ -170,15 +170,15 @@ public abstract class SegmentedFile extends SharedCloseableImpl
          * Called after all potential boundaries have been added to apply this Builder to a concrete file on disk.
          * @param channel The channel to the file on disk.
          */
-        protected abstract SegmentedFile complete(ChannelProxy channel, int bufferSize, long overrideLength);
+        protected abstract SegmentedFile complete(Descriptor desc, ChannelProxy channel, int bufferSize, long overrideLength);
 
         @SuppressWarnings("resource") // SegmentedFile owns channel
-        private SegmentedFile complete(String path, int bufferSize, long overrideLength)
+        private SegmentedFile complete(Descriptor desc, String path, int bufferSize, long overrideLength)
         {
             ChannelProxy channelCopy = getChannel(path);
             try
             {
-                return complete(channelCopy, bufferSize, overrideLength);
+                return complete(desc, channelCopy, bufferSize, overrideLength);
             }
             catch (Throwable t)
             {
@@ -189,22 +189,22 @@ public abstract class SegmentedFile extends SharedCloseableImpl
 
         public SegmentedFile buildData(Descriptor desc, StatsMetadata stats, IndexSummaryBuilder.ReadableBoundary boundary)
         {
-            return complete(desc.filenameFor(Component.DATA), bufferSize(stats), boundary.dataLength);
+            return complete(desc, desc.filenameFor(Component.DATA), bufferSize(stats), boundary.dataLength);
         }
 
         public SegmentedFile buildData(Descriptor desc, StatsMetadata stats)
         {
-            return complete(desc.filenameFor(Component.DATA), bufferSize(stats), -1L);
+            return complete(desc, desc.filenameFor(Component.DATA), bufferSize(stats), -1L);
         }
 
         public SegmentedFile buildIndex(Descriptor desc, IndexSummary indexSummary, IndexSummaryBuilder.ReadableBoundary boundary)
         {
-            return complete(desc.filenameFor(Component.PRIMARY_INDEX), bufferSize(desc, indexSummary), boundary.indexLength);
+            return complete(desc, desc.filenameFor(Component.PRIMARY_INDEX), bufferSize(desc, indexSummary), boundary.indexLength);
         }
 
         public SegmentedFile buildIndex(Descriptor desc, IndexSummary indexSummary)
         {
-            return complete(desc.filenameFor(Component.PRIMARY_INDEX), bufferSize(desc, indexSummary), -1L);
+            return complete(desc, desc.filenameFor(Component.PRIMARY_INDEX), bufferSize(desc, indexSummary), -1L);
         }
 
         private static int bufferSize(StatsMetadata stats)

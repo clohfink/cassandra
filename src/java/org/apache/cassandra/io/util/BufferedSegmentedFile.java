@@ -19,6 +19,7 @@ package org.apache.cassandra.io.util;
 
 import org.apache.cassandra.cache.ChunkCache;
 import org.apache.cassandra.io.compress.BufferType;
+import org.apache.cassandra.io.sstable.Descriptor;
 
 public class BufferedSegmentedFile extends SegmentedFile
 {
@@ -44,7 +45,7 @@ public class BufferedSegmentedFile extends SegmentedFile
 
     public static class Builder extends SegmentedFile.Builder
     {
-        public SegmentedFile complete(ChannelProxy channel, int bufferSize, long overrideLength)
+        public SegmentedFile complete(Descriptor desc, ChannelProxy channel, int bufferSize, long overrideLength)
         {
             long length = overrideLength > 0 ? overrideLength : channel.size();
             return new BufferedSegmentedFile(channel, bufferSize, length);
