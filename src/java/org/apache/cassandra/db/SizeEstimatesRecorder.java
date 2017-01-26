@@ -68,12 +68,10 @@ public class SizeEstimatesRecorder extends MigrationListener implements Runnable
 
         logger.trace("Recording size estimates");
 
-        // find primary token ranges for the local node.
-        Collection<Token> localTokens = StorageService.instance.getLocalTokens();
-        Collection<Range<Token>> localRanges = metadata.getPrimaryRangesFor(localTokens);
-
         for (Keyspace keyspace : Keyspace.nonLocalStrategy())
         {
+            Collection<Range<Token>> localRanges = StorageService.instance.getPrimaryRangesForEndpoint(keyspace.getName(),
+                    FBUtilities.getBroadcastAddress());
             for (ColumnFamilyStore table : keyspace.getColumnFamilyStores())
             {
                 long start = System.nanoTime();
