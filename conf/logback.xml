@@ -33,10 +33,10 @@ appender reference in the root level section below.
     <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
       <level>INFO</level>
     </filter>
-    <file>${cassandra.logdir}/system.log</file>
+    <file>${CASS_LOGS_DIR}/system.log</file>
     <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
       <!-- rollover daily -->
-      <fileNamePattern>${cassandra.logdir}/system.log.%d{yyyy-MM-dd}.%i.zip</fileNamePattern>
+      <fileNamePattern>${CASS_LOGS_DIR}/system.log.%d{yyyy-MM-dd}.%i.zip</fileNamePattern>
       <!-- each file should be at most 50MB, keep 7 days worth of history, but at most 5GB -->
       <maxFileSize>50MB</maxFileSize>
       <maxHistory>7</maxHistory>
@@ -50,10 +50,10 @@ appender reference in the root level section below.
   <!-- DEBUGLOG rolling file appender to debug.log (all levels) -->
 
   <appender name="DEBUGLOG" class="ch.qos.logback.core.rolling.RollingFileAppender">
-    <file>${cassandra.logdir}/debug.log</file>
+    <file>${CASS_LOGS_DIR}/debug.log</file>
     <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
       <!-- rollover daily -->
-      <fileNamePattern>${cassandra.logdir}/debug.log.%d{yyyy-MM-dd}.%i.zip</fileNamePattern>
+      <fileNamePattern>${CASS_LOGS_DIR}/debug.log.%d{yyyy-MM-dd}.%i.zip</fileNamePattern>
       <!-- each file should be at most 50MB, keep 7 days worth of history, but at most 5GB -->
       <maxFileSize>50MB</maxFileSize>
       <maxHistory>7</maxHistory>
