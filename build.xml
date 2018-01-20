@@ -14,7 +14,7 @@
   See the License for the specific language governing permissions and
   limitations under the License.
 -->
-<project basedir="." default="jar" name="apache-cassandra"
+<project basedir="." default="jar" name="nf-cassandra"
          xmlns:artifact="antlib:org.apache.maven.artifact.ant"
          xmlns:if="ant:if"
          xmlns:unless="ant:unless">
