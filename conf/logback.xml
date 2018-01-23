@@ -110,6 +110,23 @@ appender reference in the root level section below.
   <!-- Uncomment bellow and corresponding appender-ref to activate logback metrics
   <appender name="LogbackMetrics" class="com.codahale.metrics.logback.InstrumentedAppender" />
    -->
+  <appender name="ISSUES_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+    <file>${CASS_LOGS_DIR}/issues.log</file>
+
+    <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
+      <level>WARN</level>
+    </filter>
+
+    <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+      <fileNamePattern>${CASS_LOGS_DIR}/issues.log.%d{yyyy-MM-dd}.zip</fileNamePattern>
+      <maxHistory>5</maxHistory>
+      <totalSizeCap>500MB</totalSizeCap>
+    </rollingPolicy>
+
+    <encoder>
+      <pattern>%-5level [%thread] %date{ISO8601} %marker %F:%L - %msg%n</pattern>
+     </encoder>
+  </appender>
 
   <root level="INFO">
     <appender-ref ref="SYSTEMLOG" />
