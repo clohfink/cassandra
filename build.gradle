@@ -1,0 +1,71 @@
+apply plugin: 'netflix.nebula'
+apply plugin: 'netflix.ospackage'
+apply plugin: 'java'
+
+nebula {
+    moduleEmail = 'cde-team@netflix.com'
+    moduleOwner = 'cde-team@netflix.com'
+}
+
+ant.importBuild('build.xml') { antTargetName ->
+    'ant' + antTargetName
+}
+
+ext {
+    pname = "oss-cass2x"
+    cass_version = ant.properties['version']
+    cass_home_dir = "/apps/nfcassandra_server"
+    cass_filename = "nf-cassandra-${project.ext.cass_version}-bin.tar.gz"
+    priam_extensions_version = "3.1.42"
+    priam_extensions_jar = "priam-cass-extensions-${priam_extensions_version}.jar"
+}
+
+dependencies {
+    compile "com.netflix.priam:priam-cass-extensions:${priam_extensions_version}"
+    compile 'com.jeffjirsa.cassandra.db.compaction:TimeWindowCompactionStrategy:2.1.12'
+}
+
+task unpackTarball(type: Copy, dependsOn: antartifacts) {
+    from tarTree("${buildDir}/${project.ext.cass_filename}")
+    into "${buildDir}/tarball"
+}
+
+task copyFromTarball(type: Copy, dependsOn: unpackTarball) {
+    from "${buildDir}/tarball/nf-cassandra-${project.ext.cass_version}"
+    into "root/${project.ext.cass_home_dir}"
+
+    exclude "javadoc/**"
+
+    rename('cassandra.in.sh', 'cassandra.in.sh.upstream')
+}
+
+task customizeFiles(type: Copy, dependsOn: copyFromTarball) {
+    from "nflx-packaging"
+    into "root"
+}
+
+buildDeb {
+    dependsOn customizeFiles
+}
+
+ospackage {
+    packageName project.ext.pname
+    version = project.ext.cass_version
+
+    println "Building deb for nf-cassandra ${version}"
+    into("${project.ext.cass_home_dir}/lib") {
+        from configurations.runtime.filter { it.name.startsWith('priam') }
+        from configurations.runtime.filter { it.name.startsWith('TimeWindowCompactionStrategy') }
+    }
+
+    // For external packages that depend on Cassandra to be installed
+    // but do not care which particular version
+    provides('cdecassandra')
+
+    link("${project.ext.cass_home_dir}/agents/spectator-agent.jar", '/apps/spectator-agent/spectator-agent.jar')
+    link("${project.ext.cass_home_dir}/agents/libjvmkill.so", '/apps/jvmkill/libjvmkill.so')
+    link("${project.ext.cass_home_dir}/agents/${priam_extensions_jar}",
+        "${project.ext.cass_home_dir}/lib/${priam_extensions_jar}")
+    link("/usr/share/cassandra/cassandra.in.sh",
+        "${project.ext.cass_home_dir}/bin/cassandra.in.sh")
+}

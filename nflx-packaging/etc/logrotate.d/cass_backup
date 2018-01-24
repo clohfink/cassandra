@@ -1,0 +1,5 @@
+/mnt/data/cassandra/logs/backup*.log {
+    daily
+    notifempty
+    missingok
+}
