@@ -55,9 +55,7 @@ cassandra_storagedir="$CASSANDRA_HOME/data"
 # JAVA_HOME can optionally be set here
 #JAVA_HOME=/usr/local/jdk6
 
-for jar in "$CASSANDRA_HOME"/lib/*.jar; do
-    CLASSPATH="$CLASSPATH:$jar"
-done
+CLASSPATH="$CLASSPATH:$CASSANDRA_HOME/lib/*"
 
 # JSR223 - collect all JSR223 engines' jars
 for jsr223jar in "$CASSANDRA_HOME"/lib/jsr223/*/*.jar; do
