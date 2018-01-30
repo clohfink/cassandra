@@ -25,6 +25,9 @@ dependencies {
     compile 'com.jeffjirsa.cassandra.db.compaction:TimeWindowCompactionStrategy:2.1.12'
 }
 
+sourceSets.remove(sourceSets.main)
+sourceSets.remove(sourceSets.test)
+
 task unpackTarball(type: Copy, dependsOn: antartifacts) {
     from tarTree("${buildDir}/${project.ext.cass_filename}")
     into "${buildDir}/tarball"
