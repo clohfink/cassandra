@@ -134,7 +134,13 @@ for agent_file in ${CASSANDRA_HOME}/agents/*.so; do
   fi
 done
 
-# Check what parameters were defined on jvm-server.options file to avoid conflicts
+JVM_OPTS="$JVM_OPTS -Djava.rmi.server.hostname='$EC2_PUBLIC_HOSTNAME'"
+
+# Keep heap dumps and gc logs separated by timestamps
+START_TIMESTAMP=`date +%s`
+JVM_OPTS="$JVM_OPTS -Xloggc:${CASS_LOGS_DIR}/cassandra-${START_TIMESTAMP}-gc.log"
+
+# Check what parameters were defined on jvm.options file to avoid conflicts
 echo $JVM_OPTS | grep -q Xmn
 DEFINED_XMN=$?
 echo $JVM_OPTS | grep -q Xmx
@@ -218,7 +224,7 @@ JVM_OPTS="$JVM_OPTS -javaagent:$CASSANDRA_HOME/lib/jamm-0.3.2.jar"
 
 # set jvm HeapDumpPath with CASSANDRA_HEAPDUMP_DIR
 if [ "x$CASSANDRA_HEAPDUMP_DIR" != "x" ]; then
-    JVM_OPTS="$JVM_OPTS -XX:HeapDumpPath=$CASSANDRA_HEAPDUMP_DIR/cassandra-`date +%s`-pid$$.hprof"
+    JVM_OPTS="$JVM_OPTS -XX:HeapDumpPath=$CASSANDRA_HEAPDUMP_DIR/cassandra-${START_TIMESTAMP}-pid$$.hprof"
 fi
 
 # stop the jvm on OutOfMemoryError as it can result in some data corruption
