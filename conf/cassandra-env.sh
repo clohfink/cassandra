@@ -111,6 +111,29 @@ else
     fi
 fi
 
+# Pull in any agents present in CASSANDRA_HOME
+for agent_file in ${CASSANDRA_HOME}/agents/*.jar; do
+  if [ -e "${agent_file}" ]; then
+    base_file="${agent_file%.jar}"
+    if [ -s "${base_file}.options" ]; then
+      options=`cat ${base_file}.options`
+      agent_file="${agent_file}=${options}"
+    fi
+    JVM_OPTS="$JVM_OPTS -javaagent:${agent_file}"
+  fi
+done
+
+for agent_file in ${CASSANDRA_HOME}/agents/*.so; do
+  if [ -e "${agent_file}" ]; then
+    base_file="${agent_file%.so}"
+    if [ -s "${base_file}.options" ]; then
+      options=`cat ${base_file}.options`
+      agent_file="${agent_file}=${options}"
+    fi
+    JVM_OPTS="$JVM_OPTS -agentpath:${agent_file}"
+  fi
+done
+
 # Check what parameters were defined on jvm-server.options file to avoid conflicts
 echo $JVM_OPTS | grep -q Xmn
 DEFINED_XMN=$?
