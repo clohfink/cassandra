@@ -111,6 +111,15 @@ else
     fi
 fi
 
+# Needed to pick up any environment variables set by, e.g. Priam
+set -e
+for file in ${ADDITIONAL_ENVVARS}; do
+  while IFS= read -r line; do
+    export "$line"
+  done < "${file}"
+done
+set +e
+
 # Pull in any agents present in CASSANDRA_HOME
 for agent_file in ${CASSANDRA_HOME}/agents/*.jar; do
   if [ -e "${agent_file}" ]; then
