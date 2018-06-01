@@ -38,14 +38,21 @@ task copyFromTarball(type: Copy, dependsOn: unpackTarball) {
     into "root/${project.ext.cass_home_dir}"
 
     exclude "javadoc/**"
+    exclude "conf/**"
 
     rename('cassandra.in.sh', 'cassandra.in.sh.upstream')
 }
 
-task customizeFiles(type: Copy, dependsOn: copyFromTarball) {
+task copyConfig(type: Copy, dependsOn: copyFromTarball) {
+    from "${buildDir}/tarball/nf-cassandra-${project.ext.cass_version}/conf"
+    into "root/etc/cassandra"
+}
+
+task customizeFiles(type: Copy, dependsOn: copyConfig) {
     from "nflx-packaging"
     into "root"
 }
+
 
 buildDeb {
     dependsOn customizeFiles
@@ -71,4 +78,6 @@ ospackage {
         "${project.ext.cass_home_dir}/lib/${priam_extensions_jar}")
     link("/usr/share/cassandra/cassandra.in.sh",
         "${project.ext.cass_home_dir}/bin/cassandra.in.sh")
+
+    link("${project.ext.cass_home_dir}/conf", '/etc/cassandra')
 }
