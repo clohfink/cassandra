@@ -96,7 +96,7 @@ import org.json.simple.JSONObject;
 
 import static org.apache.cassandra.utils.Throwables.maybeFail;
 
-public class ColumnFamilyStore implements ColumnFamilyStoreMBean
+public class ColumnFamilyStore implements ColumnFamilyStoreMBean, Comparable<ColumnFamilyStore>
 {
     private static final Logger logger = LoggerFactory.getLogger(ColumnFamilyStore.class);
 
@@ -2628,5 +2628,14 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean
     public boolean getNeverPurgeTombstones()
     {
         return neverPurgeTombstones;
+    }
+
+    @Override
+    public int compareTo(ColumnFamilyStore other)
+    {
+        return ComparisonChain.start()
+                              .compare(this.keyspace.getName(), other.keyspace.getName())
+                              .compare(this.name, other.name)
+                              .result();
     }
 }
