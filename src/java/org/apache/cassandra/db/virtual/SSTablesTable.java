@@ -1,0 +1,163 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.apache.cassandra.db.virtual;
+
+import java.nio.ByteBuffer;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.Iterator;
+import java.util.List;
+
+import com.google.common.collect.AbstractIterator;
+import com.google.common.collect.Iterators;
+import com.google.common.collect.Lists;
+import com.google.common.collect.Ordering;
+
+import org.apache.cassandra.db.ColumnFamilyStore;
+import org.apache.cassandra.db.DataRange;
+import org.apache.cassandra.db.DecoratedKey;
+import org.apache.cassandra.db.RegularAndStaticColumns;
+import org.apache.cassandra.db.lifecycle.SSTableSet;
+import org.apache.cassandra.db.marshal.BooleanType;
+import org.apache.cassandra.db.marshal.CompositeType;
+import org.apache.cassandra.db.marshal.Int32Type;
+import org.apache.cassandra.db.marshal.LongType;
+import org.apache.cassandra.db.marshal.UTF8Type;
+import org.apache.cassandra.db.rows.Row;
+import org.apache.cassandra.dht.IPartitioner;
+import org.apache.cassandra.dht.LocalPartitioner;
+import org.apache.cassandra.io.sstable.format.SSTableReader;
+import org.apache.cassandra.schema.Schema;
+import org.apache.cassandra.schema.TableMetadata;
+
+final class SSTablesTable extends AbstractIteratingTable
+{
+    private static final IPartitioner partitioner = new LocalPartitioner(CompositeType.getInstance(UTF8Type.instance, UTF8Type.instance));
+    private static final String KEYSPACE_NAME = "keyspace_name";
+    private final static String TABLE_NAME = "table_name";
+    private static final String ID = "id";
+
+    private static final String ON_DISK_SIZE = "on_disk_size";
+    private static final String IS_REPAIRED = "is_repaired";
+    private static final String ESTIMATED_PARTITIONS = "estimated_partitions";
+    private static final String MAX_TTL = "max_ttl";
+    private static final String MIN_TTL = "min_ttl";
+    private static final String READS = "reads";
+    private static final String MAX_LOCAL_DELETION_TIME = "max_local_deletion_time";
+    private static final String MIN_LOCAL_DELETION_TIME = "min_local_deletion_time";
+    private static final String MAX_TIMESTAMP = "max_timestamp";
+    private static final String MIN_TIMESTAMP = "min_timestamp";
+    private static final String MAX_PARTITION_SIZE = "max_partition_size";
+    private static final String LEVEL = "level";
+    private static final String LAST_TOKEN = "last_token";
+    private static final String FIRST_TOKEN = "first_token";
+
+    SSTablesTable(String keyspace)
+    {
+        super(TableMetadata.builder(keyspace, "sstables")
+                           .comment("current sstables with some metadata")
+                           .kind(TableMetadata.Kind.VIRTUAL)
+                           .addPartitionKeyColumn(KEYSPACE_NAME, UTF8Type.instance)
+                           .addPartitionKeyColumn(TABLE_NAME, UTF8Type.instance)
+                           .partitioner(partitioner)
+                           .addClusteringColumn(ID, Int32Type.instance)
+                           .addRegularColumn(ON_DISK_SIZE, LongType.instance)
+                           .addRegularColumn(IS_REPAIRED, BooleanType.instance)
+                           .addRegularColumn(ESTIMATED_PARTITIONS, LongType.instance)
+                           .addRegularColumn(MAX_TTL, Int32Type.instance)
+                           .addRegularColumn(MIN_TTL, Int32Type.instance)
+                           .addRegularColumn(LEVEL, Int32Type.instance)
+                           .addRegularColumn(READS, LongType.instance)
+                           .addRegularColumn(MAX_PARTITION_SIZE, LongType.instance)
+                           .addRegularColumn(MAX_LOCAL_DELETION_TIME, Int32Type.instance)
+                           .addRegularColumn(MIN_LOCAL_DELETION_TIME, Int32Type.instance)
+                           .addRegularColumn(MAX_TIMESTAMP, LongType.instance)
+                           .addRegularColumn(MIN_TIMESTAMP, LongType.instance)
+                           .addRegularColumn(FIRST_TOKEN, UTF8Type.instance)
+                           .addRegularColumn(LAST_TOKEN, UTF8Type.instance)
+                           .build());
+    }
+
+    private String getKeyspace(DecoratedKey key)
+    {
+        CompositeType type = (CompositeType) metadata.partitionKeyType;
+        ByteBuffer[] bb = type.split(key.getKey());
+
+        return type.types.get(0).getString(bb[0]);
+    }
+
+    private String getTable(DecoratedKey key)
+    {
+        CompositeType type = (CompositeType) metadata.partitionKeyType;
+        ByteBuffer[] bb = type.split(key.getKey());
+        return type.types.get(1).getString(bb[1]);
+    }
+
+    private DecoratedKey makeKey(String keyspace, String table)
+    {
+        ByteBuffer partitionKey = ((CompositeType) metadata.partitionKeyType).decompose(keyspace, table);
+        return metadata.partitioner.decorateKey(partitionKey);
+    }
+
+    protected boolean hasKey(DecoratedKey key)
+    {
+        return Schema.instance.getTableMetadata(getKeyspace(key), getTable(key)) != null;
+    }
+
+    public Iterator<DecoratedKey> getPartitionKeys(DataRange range)
+    {
+        Iterator<ColumnFamilyStore> cfs = Ordering.natural().sortedCopy(ColumnFamilyStore.all()).iterator();
+        return new AbstractIterator<DecoratedKey>()
+        {
+            protected DecoratedKey computeNext()
+            {
+                if (!cfs.hasNext())
+                    return endOfData();
+                ColumnFamilyStore next = cfs.next();
+                return makeKey(next.keyspace.getName(), next.name);
+            }
+        };
+    }
+
+    protected Iterator<Row> getRows(boolean isReversed, DecoratedKey key, RegularAndStaticColumns columns)
+    {
+        ColumnFamilyStore cfs = Schema.instance.getKeyspaceInstance(getKeyspace(key))
+                                               .getColumnFamilyStore(getTable(key));
+        List<SSTableReader> sorted = Lists.newArrayList(cfs.getSSTables(SSTableSet.CANONICAL));
+        Collections.sort(sorted, Comparator.comparingInt(s -> s.descriptor.generation));
+        if (isReversed)
+            Collections.reverse(sorted);
+        return Iterators.transform(sorted.iterator(), sstable ->
+                              row(sstable.descriptor.generation)
+                                  .add(FIRST_TOKEN, sstable.first.getToken().toString())
+                                  .add(LAST_TOKEN, sstable.last.getToken().toString())
+                                  .add(MIN_TIMESTAMP, sstable.getMinTimestamp())
+                                  .add(MAX_TIMESTAMP, sstable.getMaxTimestamp())
+                                  .add(MIN_LOCAL_DELETION_TIME, sstable.getMinLocalDeletionTime())
+                                  .add(MAX_LOCAL_DELETION_TIME, sstable.getMaxLocalDeletionTime())
+                                  .add(READS, sstable.getReadMeter() == null ? 0 : sstable.getReadMeter().count())
+                                  .add(MIN_TTL, sstable.getMinTTL())
+                                  .add(MAX_TTL, sstable.getMaxTTL())
+                                  .add(ESTIMATED_PARTITIONS, sstable.estimatedKeys())
+                                  .add(IS_REPAIRED, sstable.isRepaired())
+                                  .add(ON_DISK_SIZE, sstable.onDiskLength())
+                                  .add(MAX_PARTITION_SIZE, sstable.getEstimatedPartitionSize().max())
+                                  .add(LEVEL, sstable.getSSTableLevel())
+                                  .build(columns));
+    }
+}
