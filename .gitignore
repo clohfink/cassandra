@@ -69,11 +69,23 @@ target/
 Thumbs.db
 .ccm/
 
-**/.ant-targets-build.xml
-.ant_targets
+# JSR223
+lib/jsr223/clojure/*.jar
+lib/jsr223/groovy/*.jar
+lib/jsr223/jaskell/*.jar
+lib/jsr223/jruby/*.jar
+lib/jsr223/jruby/jni
+lib/jsr223/jruby/ruby
+lib/jsr223/jython/*.jar
+lib/jsr223/jython/cachedir
+lib/jsr223/scala/*.jar
 
 # Gradle
 .gradle
+root
+
+/.ant-targets-build.xml
+.ant_targets
 
 # Generated files from the documentation
 doc/modules/cassandra/pages/configuration/cass_yaml_file.adoc
