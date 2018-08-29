@@ -118,7 +118,8 @@
 -XX:+UseNUMA
 
 # http://www.evanjones.ca/jvm-mmap-pause.html
--XX:+PerfDisableSharedMem
+# Netflix does not need this because we mount /tmp on a tmpfs
+# -XX:+PerfDisableSharedMem
 
 # Prefer binding to IPv4 network intefaces (when net.ipv6.bindv6only=1). See
 # http://bugs.sun.com/bugdatabase/view_bug.do?bug_id=6342561 (short version:
@@ -186,3 +187,18 @@
 # * CAP_NOWARN: same as previous, except that the client warning will not be emitted.
 #
 #-Dcassandra.expiration_date_overflow_policy=REJECT
+
+######################
+#  NETFLIX SETTINGS  #
+######################
+
+# For more detailed flamegraphs, very very minor perf hit but worth it
+# for visibility into our Cassandra processes
+-XX:+PreserveFramePointer
+
+# I (josephl) don't know why we set these ... but carrying forward for
+# fair perf comparisons
+-XX:MetaspaceSize=256M
+-XX:MaxMetaspaceSize=1024M
+-XX:MinMetaspaceFreeRatio=50
+-XX:MaxMetaspaceFreeRatio=80
