@@ -18,7 +18,6 @@
 
 package org.apache.cassandra.locator;
 
-import java.net.InetAddress;
 import java.util.List;
 import java.util.Map;
 
@@ -26,6 +25,7 @@ import com.google.common.collect.Lists;
 
 import org.apache.cassandra.dht.Token;
 import org.apache.cassandra.exceptions.ConfigurationException;
+import org.apache.cassandra.locator.InetAddressAndPort;
 import org.apache.cassandra.service.StorageService;
 
 public class EverywhereStrategy extends AbstractReplicationStrategy
@@ -35,7 +35,7 @@ public class EverywhereStrategy extends AbstractReplicationStrategy
         super(keyspaceName, tokenMetadata, snitch, configOptions);
     }
 
-    public List<InetAddress> calculateNaturalEndpoints(Token searchToken, TokenMetadata tokenMetadata)
+    public List<InetAddressAndPort> calculateNaturalEndpoints(Token searchToken, TokenMetadata tokenMetadata)
     {
         return Lists.newArrayList(tokenMetadata.getAllEndpoints());
     }
