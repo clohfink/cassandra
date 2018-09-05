@@ -91,26 +91,6 @@ if [ "x$CASSANDRA_LOG_DIR" = "x" ] ; then
     CASSANDRA_LOG_DIR="$CASSANDRA_HOME/logs"
 fi
 
-#GC log path has to be defined here because it needs to access CASSANDRA_HOME
-if [ $JAVA_VERSION -ge 11 ] ; then
-    # See description of https://bugs.openjdk.java.net/browse/JDK-8046148 for details about the syntax
-    # The following is the equivalent to -XX:+PrintGCDetails -XX:+UseGCLogFileRotation -XX:NumberOfGCLogFiles=10 -XX:GCLogFileSize=10M
-    echo "$JVM_OPTS" | grep -qe "-[X]log:gc"
-    if [ "$?" = "1" ] ; then # [X] to prevent ccm from replacing this line
-        # only add -Xlog:gc if it's not mentioned in jvm-server.options file
-        mkdir -p ${CASSANDRA_LOG_DIR}
-        JVM_OPTS="$JVM_OPTS -Xlog:gc=info,heap*=trace,age*=debug,safepoint=info,promotion*=trace:file=${CASSANDRA_LOG_DIR}/gc.log:time,uptime,pid,tid,level:filecount=10,filesize=10485760"
-    fi
-else
-    # Java 8
-    echo "$JVM_OPTS" | grep -qe "-[X]loggc"
-    if [ "$?" = "1" ] ; then # [X] to prevent ccm from replacing this line
-        # only add -Xlog:gc if it's not mentioned in jvm-server.options file
-        mkdir -p ${CASSANDRA_LOG_DIR}
-        JVM_OPTS="$JVM_OPTS -Xloggc:${CASSANDRA_LOG_DIR}/gc.log"
-    fi
-fi
-
 # Needed to pick up any environment variables set by, e.g. Priam
 set -e
 for file in ${ADDITIONAL_ENVVARS}; do
@@ -119,6 +99,29 @@ for file in ${ADDITIONAL_ENVVARS}; do
   done < "${file}"
 done
 set +e
+
+# Keep heap dumps and gc logs separated by timestamps
+START_TIMESTAMP=`date +%s`
+
+#GC log path has to be defined here because it needs to access CASSANDRA_HOME
+if [ $JAVA_VERSION -ge 11 ] ; then
+    # See description of https://bugs.openjdk.java.net/browse/JDK-8046148 for details about the syntax
+    # The following is the equivalent to -XX:+PrintGCDetails -XX:+UseGCLogFileRotation -XX:NumberOfGCLogFiles=10 -XX:GCLogFileSize=10M
+    echo "$JVM_OPTS" | grep -qe "-[X]log:gc"
+    if [ "$?" = "1" ] ; then # [X] to prevent ccm from replacing this line
+        # only add -Xlog:gc if it's not mentioned in jvm-server.options file
+        mkdir -p ${CASSANDRA_LOG_DIR}
+        JVM_OPTS="$JVM_OPTS -Xlog:gc=info,heap*=trace,age*=debug,safepoint=info,promotion*=trace:file=${CASSANDRA_LOG_DIR}/cassandra-${START_TIMESTAMP}-gc.log:time,uptime,pid,tid,level:filecount=10,filesize=10485760"
+    fi
+else
+    # Java 8
+    echo "$JVM_OPTS" | grep -qe "-[X]loggc"
+    if [ "$?" = "1" ] ; then # [X] to prevent ccm from replacing this line
+        # only add -Xlog:gc if it's not mentioned in jvm-server.options file
+        mkdir -p ${CASSANDRA_LOG_DIR}
+        JVM_OPTS="$JVM_OPTS -Xloggc:${CASSANDRA_LOG_DIR}/cassandra-${START_TIMESTAMP}-gc.log"
+    fi
+fi
 
 # Pull in any agents present in CASSANDRA_HOME
 for agent_file in ${CASSANDRA_HOME}/agents/*.jar; do
@@ -144,10 +147,6 @@ for agent_file in ${CASSANDRA_HOME}/agents/*.so; do
 done
 
 JVM_OPTS="$JVM_OPTS -Djava.rmi.server.hostname='$EC2_PUBLIC_HOSTNAME'"
-
-# Keep heap dumps and gc logs separated by timestamps
-START_TIMESTAMP=`date +%s`
-JVM_OPTS="$JVM_OPTS -Xloggc:${CASS_LOGS_DIR}/cassandra-${START_TIMESTAMP}-gc.log"
 
 # Check what parameters were defined on jvm.options file to avoid conflicts
 echo $JVM_OPTS | grep -q Xmn
