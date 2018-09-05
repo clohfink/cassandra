@@ -45,6 +45,8 @@ task copyFromTarball(type: Copy, dependsOn: unpackTarball) {
 task copyConfig(type: Copy, dependsOn: copyFromTarball) {
     from "${buildDir}/tarball/nf-cassandra-${project.ext.cass_version}/conf"
     into "root/etc/cassandra"
+
+    rename('cassandra-topology.properties', 'cassandra-topology.properties.upstream')
 }
 
 task customizeFiles(type: Copy, dependsOn: copyConfig) {
