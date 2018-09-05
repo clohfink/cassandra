@@ -35,12 +35,8 @@ ssl_storage_port: 7103
 listen_address: null
 start_native_transport: true
 native_transport_port: 7104
-start_rpc: true
 rpc_address: null
-rpc_port: 7102
 rpc_keepalive: true
-rpc_server_type: hsha
-thrift_framed_transport_size_in_mb: 15
 incremental_backups: false
 snapshot_before_compaction: false
 auto_snapshot: false
@@ -56,8 +52,6 @@ endpoint_snitch: org.apache.cassandra.locator.Ec2MultiRegionSnitch
 dynamic_snitch_update_interval_in_ms: 100
 dynamic_snitch_reset_interval_in_ms: 600000
 dynamic_snitch_badness_threshold: 0.1
-request_scheduler: org.apache.cassandra.scheduler.NoScheduler
-index_interval: 256
 server_encryption_options:
   internode_encryption: all
   keystore: /apps/nfcassandra_server/conf/cassandra-app.jks.2025
@@ -72,8 +66,6 @@ client_encryption_options:
   truststore_password: uNAUSqMeFX0iqv
 internode_compression: all
 inter_dc_tcp_nodelay: true
-rpc_min_threads: 16
-rpc_max_threads: 2048
 stream_throughput_outbound_megabits_per_sec: 400
 dynamic_snitch: true
 concurrent_compactors: 2
