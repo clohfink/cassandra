@@ -25,7 +25,6 @@ import com.google.common.collect.Lists;
 
 import org.apache.cassandra.dht.Token;
 import org.apache.cassandra.exceptions.ConfigurationException;
-import org.apache.cassandra.locator.InetAddressAndPort;
 import org.apache.cassandra.service.StorageService;
 
 public class EverywhereStrategy extends AbstractReplicationStrategy
@@ -35,14 +34,21 @@ public class EverywhereStrategy extends AbstractReplicationStrategy
         super(keyspaceName, tokenMetadata, snitch, configOptions);
     }
 
+    @Override
+    public EndpointsForRange calculateNaturalReplicas(Token searchToken, TokenMetadata tokenMetadata)
+    {
+        return null;
+    }
+
     public List<InetAddressAndPort> calculateNaturalEndpoints(Token searchToken, TokenMetadata tokenMetadata)
     {
         return Lists.newArrayList(tokenMetadata.getAllEndpoints());
     }
 
-    public int getReplicationFactor()
+    public ReplicationFactor getReplicationFactor()
     {
-        return StorageService.instance.getTokenMetadata().getAllEndpoints().size();
+        return ReplicationFactor.fullOnly(StorageService.instance.getTokenMetadata().getAllEndpoints().size());
+
     }
 
     public void validateOptions() throws ConfigurationException
