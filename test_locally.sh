@@ -40,7 +40,7 @@ fi
 
 set -euf -o pipefail
 
-echo ">>> Setting up virtualenv for casserole and aws sdk"
+echo ">>> Setting up virtualenv for nflx-python-libs and aws sdk"
 if [ ! -d "./venv" ]; then
     virtualenv venv
 fi
