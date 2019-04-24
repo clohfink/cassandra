@@ -12,7 +12,7 @@ ant.importBuild('build.xml') { antTargetName ->
 }
 
 ext {
-    pname = "oss-casstrunk"
+    pname = "cde-nfcassandra-trunk"
     cass_version = ant.properties['version']
     cass_home_dir = "/apps/nfcassandra_server"
     cass_filename = "nf-cassandra-${project.ext.cass_version}-bin.tar.gz"
