@@ -72,8 +72,6 @@ ospackage {
     // but do not care which particular version
     provides('cdecassandra')
 
-    link("${project.ext.cass_home_dir}/agents/spectator-agent.jar", '/apps/spectator-agent/spectator-agent.jar')
-    link("${project.ext.cass_home_dir}/agents/libjvmkill.so", '/apps/jvmkill/libjvmkill.so')
     link("${project.ext.cass_home_dir}/agents/${priam_extensions_jar}",
         "${project.ext.cass_home_dir}/lib/${priam_extensions_jar}")
     link("/usr/share/cassandra/cassandra.in.sh",
