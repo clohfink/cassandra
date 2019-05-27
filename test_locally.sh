@@ -1,6 +1,6 @@
 #!/bin/bash
 BASTION="awspersistence.test.netflix.net"
-NUM_RUNNING="'jps | grep CassandraDaemon | wc -l'"
+NUM_RUNNING="'sudo jps | grep CassandraDaemon | wc -l'"
 RUN_BUILD=1
 
 function usage {
@@ -76,10 +76,8 @@ venv/bin/aws s3 cp "build/${CASSANDRA_JAR}" "${S3URL}"
 
 echo ">>> Executing bolt from local machine"
 echo ">>>" nflx-bolt-run cass_patch_nfcassandra.sh $APP --pack cass --instances-parallel --zones-parallel --regions-parallel --params '&-v='$CASSANDRA_JAR_VERSION'&-r&-f'
-nflx-bolt-run cass_patch_nfcassandra.sh $APP --pack cass --instances-parallel --zones-parallel --regions-parallel --params '&-v='$CASSANDRA_JAR_VERSION'&-r&-f'
-
+NETFLIX_STACK=test NETFLIX_APP=binary_upgrade EC2_REGION=us-west-2 NETFLIX_ENVIRONMENT=test venv/bin/nflx-bolt-run cass_patch_nfcassandra.sh $APP --pack cass --instances-parallel --zones-parallel --regions-parallel --params '&-v='$CASSANDRA_JAR_VERSION'&-r&-f'
 
 echo ">>> Checking if Cassandra started up, you should see 1s next to each machine"
 echo ">>>" ssh -t awspersistence.test.netflix.net -- /apps/pae/nflx-python-libs/bin/yolo --all-parallel -z $APP ssh "${NUM_RUNNING}"
 ssh -t "$BASTION" -- /apps/pae/nflx-python-libs/bin/yolo --all-parallel -z $APP ssh "${NUM_RUNNING}"
-
