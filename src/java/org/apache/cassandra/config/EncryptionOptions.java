@@ -161,8 +161,8 @@ public class EncryptionOptions
         store_type = "JKS";
         require_client_auth = false;
         require_endpoint_verification = false;
-        enabled = null;
-        optional = null;
+        enabled = true;
+        optional = true;
     }
 
     public EncryptionOptions(ParameterizedClass ssl_context_factory, String keystore, String keystore_password,
