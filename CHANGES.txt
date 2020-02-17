@@ -1,3 +1,5 @@
+test1
+
 4.0-alpha4
  * Add documentation of hints (CASSANDRA-15491)
  * updateCoordinatorWriteLatencyTableMetric can produce misleading metrics (CASSANDRA-15569)
