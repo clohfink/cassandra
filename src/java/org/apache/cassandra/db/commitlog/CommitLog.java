@@ -261,7 +261,15 @@ public class CommitLog implements CommitLogMBean
     {
         assert mutation != null;
 
-        mutation.validateSize(MessagingService.current_version, ENTRY_OVERHEAD_SIZE);
+        try
+        {
+            mutation.validateSize(MessagingService.current_version, ENTRY_OVERHEAD_SIZE);
+        }
+        catch (MutationExceededMaxSizeException e)
+        {
+            metrics.oversizedMutations.mark();
+            throw e;
+        }
 
         try (DataOutputBuffer dob = DataOutputBuffer.scratchBuffer.get())
         {
