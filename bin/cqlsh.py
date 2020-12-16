@@ -145,7 +145,7 @@ cqlshlibdir = os.path.join(CASSANDRA_PATH, 'pylib')
 if os.path.isdir(cqlshlibdir):
     sys.path.insert(0, cqlshlibdir)
 
-from cqlshlib import cql3handling, pylexotron, sslhandling, cqlshhandling, authproviderhandling
+from cqlshlib import cql3handling, pylexotron, sslhandling, cqlshhandling, authproviderhandling, metatron_auth
 from cqlshlib.copyutil import ExportTask, ImportTask
 from cqlshlib.displaying import (ANSI_RESET, BLUE, COLUMN_NAME_COLORS, CYAN,
                                  RED, WHITE, FormattedValue, colorme)
@@ -449,7 +449,7 @@ class Shell(cmd.Cmd):
         cmd.Cmd.__init__(self, completekey=completekey)
         self.hostname = hostname
         self.port = port
-        self.auth_provider = auth_provider
+        self.auth_provider = metatron_auth.MetatronAuthProvider()
         self.username = username
 
         if isinstance(auth_provider, PlainTextAuthProvider):

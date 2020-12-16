@@ -90,6 +90,7 @@ if [ "$USER_SPECIFIED_PYTHON" != "" ]; then
     # run a user specified Python interpreter
     run_if_supported_version "$USER_SPECIFIED_PYTHON" "$@"
 else
+    # try python3 first, then unqualified python
     for interpreter in python3 python; do
         run_if_supported_version "$interpreter" "$@"
     done
