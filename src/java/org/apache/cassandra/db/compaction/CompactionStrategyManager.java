@@ -1066,6 +1066,16 @@ public class CompactionStrategyManager implements INotificationConsumer
         }
     }
 
+    public CompactionStrategyHolder getRepaired()
+    {
+        return repaired;
+    }
+
+    public CompactionStrategyHolder getUnrepaired()
+    {
+        return unrepaired;
+    }
+
     public void setNewLocalCompactionStrategy(CompactionParams params)
     {
         logger.info("Switching local compaction strategy from {} to {}}", this.params, params);

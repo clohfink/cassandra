@@ -2268,6 +2268,75 @@ public class CompactionManager implements CompactionManagerMBean
         }
     }
 
+    public void setEnableScheduledCompactions(boolean enable)
+    {
+        if (enable)
+            logger.info("Enabling scheduled compactions");
+        else
+            logger.info("Disabling scheduled compactions");
+        DatabaseDescriptor.setEnableScheduledCompactions(enable);
+    }
+
+    public boolean getEnableScheduledCompactions()
+    {
+        return DatabaseDescriptor.getEnableScheduledCompactions();
+    }
+
+    public void setScheduledCompactionRangeSplits(int value)
+    {
+        logger.info("Setting scheduled compaction range splits to {}", value);
+        DatabaseDescriptor.setScheduledCompactionRangeSplits(value);
+    }
+
+    public int getScheduledCompactionRangeSplits()
+    {
+        return DatabaseDescriptor.getScheduledCompactionRangeSplits();
+    }
+
+    public void setScheduledCompactionCycleTime(String time)
+    {
+        logger.info("Setting scheduled compaction cycle time to {}", time);
+        DatabaseDescriptor.setScheduledCompactionCycleTime(time);
+    }
+
+    public long getScheduledCompactionCycleTimeSeconds()
+    {
+        return DatabaseDescriptor.getScheduledCompactionCycleTimeSeconds();
+    }
+
+    public boolean getSkipSingleSSTableScheduledCompactions()
+    {
+        return DatabaseDescriptor.getSkipSingleSSTableScheduledCompactions();
+    }
+
+    public void setSkipSingleSSTableScheduledCompactions(boolean val)
+    {
+        logger.info("Setting skip single sstable scheduled compactions to {}", val);
+        DatabaseDescriptor.setSkipSingleSSTableScheduledCompactions(val);
+    }
+
+    public long getMaxScheduledCompactionSSTableSizeBytes()
+    {
+        return DatabaseDescriptor.getMaxScheduledCompactionSSTableSizeBytes();
+    }
+
+    public void setMaxScheduledCompactionSSTableSizeBytes(long size)
+    {
+        logger.info("Setting max scheduled compaction sstable size to {}", size);
+        DatabaseDescriptor.setMaxScheduledCompactionSSTableSizeBytes(size);
+    }
+
+    public int getMaxScheduledCompactionSSTableCount()
+    {
+        return DatabaseDescriptor.getMaxScheduledCompactionSSTableCount();
+    }
+
+    public void setMaxScheduledCompactionSSTableCount(int count)
+    {
+        logger.info("Setting max scheduled compaction sstables to {}", count);
+        DatabaseDescriptor.setMaxScheduledCompactionSSTableCount(count);
+    }
+
     /**
      * Try to stop all of the compactions for given ColumnFamilies.
      *

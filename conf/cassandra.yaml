@@ -1830,3 +1830,10 @@ drop_compact_storage_enabled: false
 #    heartbeat_file: /var/lib/cassandra/data/cassandra-heartbeat
 #    excluded_keyspaces: # comma separated list of keyspaces to exclude from the check
 #    excluded_tables: # comma separated list of keyspace.table pairs to exclude from the check
+
+# Enable to run scheduled compactions - this generates a lot of compaction on the node, so enable with care:
+# enable_scheduled_compactions: false
+# minimum number of sub ranges we should compact:
+# scheduled_compaction_range_splits: 100
+# number of days it should take to compact everything, format is Xd for X days, Xh for X hours and Xs for X seconds:
+# scheduled_compaction_cycle_time: 60d
