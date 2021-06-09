@@ -2383,6 +2383,9 @@ def main(options, hostname, port):
 # on Windows then the module name is not __main__, see CASSANDRA-9304 (Windows support was dropped in CASSANDRA-16956)
 insert_driver_hooks()
 
+def cli():
+    main(*read_options(sys.argv[1:], os.environ))
+
 if __name__ == '__main__':
     main(*read_options(sys.argv[1:], os.environ))
 

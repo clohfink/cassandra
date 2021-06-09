@@ -1,0 +1,13 @@
+app-type: python
+jenkins-controller: platform
+jenkins-default-job: CDE-cqlsh3
+jenkins-jobs:
+- CDE-cqlsh3
+name: cqlsh3
+org: cde
+python:
+  test-versions:
+  - "3.7"
+team-email: cde-team@netflix.com
+tool-versions:
+  python: "3.7"

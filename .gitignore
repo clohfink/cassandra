@@ -98,3 +98,15 @@ venv/
 # build-scripts will put cassandra-builds into the directory
 cassandra-builds/
 cassandra-dtest/
+=======
+.gradle
+
+# cqlsh
+pylib/.tox/
+pylib/dist/
+pylib/.eggs/
+pylib/*.egg-info/
+pylib/venv*/
+pylib/.venv*/
+pylib/cqlshlib/cqlshbin.py
+pylib/.setupmeta.version

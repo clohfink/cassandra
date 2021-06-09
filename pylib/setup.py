@@ -15,20 +15,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import sys
-from distutils.core import setup
-
-
-def get_extensions():
-    if "--no-compile" in sys.argv:
-        return []
-
-    from Cython.Build import cythonize
-    return cythonize("cqlshlib/copyutil.py")
+from setuptools import find_packages, setup
 
 setup(
-    name="cassandra-pylib",
-    description="Cassandra Python Libraries",
-    packages=["cqlshlib"],
-    ext_modules=get_extensions(),
+    name="cqlsh3",
+    setup_requires="setupmeta",
+    versioning="build-id",
+    packages=find_packages(exclude=['*test*']), 
+    entry_points={
+       "console_scripts": [
+           "cqlsh3 = cqlshlib.cqlshbin:cli",
+        ],
+    },
+    author="CDE",
+    author_email="cde-team@netflix.com",
+    keywords="cqlsh",
+    url="https://stash.corp.netflix.com/projects/CDE/repos/nfcassandra/browse",
+    
 )
+
