@@ -13,6 +13,7 @@ cql
 decorator
 docopt
 enum34
+nflx-python-eureq
 flaky
 metatron
 mock

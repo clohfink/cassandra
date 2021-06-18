@@ -21,6 +21,7 @@ import codecs
 import configparser
 import csv
 import errno
+import eureq
 import getpass
 import optparse
 import os
@@ -158,7 +159,7 @@ from cqlshlib.util import is_file_secure
 
 
 DEFAULT_HOST = '127.0.0.1'
-DEFAULT_PORT = 9042
+DEFAULT_PORT = 7104
 DEFAULT_SSL = False
 DEFAULT_CONNECT_TIMEOUT_SECONDS = 5
 DEFAULT_REQUEST_TIMEOUT_SECONDS = 10
@@ -201,6 +202,8 @@ parser.add_option('--coverage', action='store_true',
                   help='Collect coverage data')
 parser.add_option("--encoding", help="Specify a non-default encoding for output."
                   + " (Default: %s)" % (UTF8,))
+parser.add_option("--cluster", help="Specify a C* cluster to connect to")
+parser.add_option("--env", help="Specify env of C* cluster to connect to")
 parser.add_option("--cqlshrc", help="Specify an alternative cqlshrc file location.")
 parser.add_option("--credentials", help="Specify an alternative credentials file location.")
 parser.add_option('--cqlversion', default=None,
@@ -2138,6 +2141,8 @@ def read_options(cmdlineargs, environment):
     optvalues.tty = option_with_default(configs.getboolean, 'ui', 'tty', sys.stdin.isatty())
     optvalues.protocol_version = option_with_default(configs.getint, 'protocol', 'version', None)
     optvalues.cqlversion = option_with_default(configs.get, 'cql', 'version', None)
+    optvalues.cluster = option_with_default(configs.get, 'connection', 'cluster', None)
+    optvalues.env = option_with_default(configs.get, 'connection', 'env', None)
     optvalues.connect_timeout = option_with_default(configs.getint, 'connection', 'timeout', DEFAULT_CONNECT_TIMEOUT_SECONDS)
     optvalues.request_timeout = option_with_default(configs.getint, 'connection', 'request_timeout', DEFAULT_REQUEST_TIMEOUT_SECONDS)
     optvalues.execute = None
@@ -2186,6 +2191,8 @@ def read_options(cmdlineargs, environment):
     options.username = maybe_ensure_text(options.username)
     options.password = maybe_ensure_text(options.password)
     options.keyspace = maybe_ensure_text(options.keyspace)
+    options.cluster = maybe_ensure_text(options.cluster)
+    options.env = maybe_ensure_text(options.env)
 
     hostname = option_with_default(configs.get, 'connection', 'hostname', DEFAULT_HOST)
     port = option_with_default(configs.get, 'connection', 'port', DEFAULT_PORT)
@@ -2234,6 +2241,13 @@ def read_options(cmdlineargs, environment):
         port = int(port)
     except ValueError:
         parser.error('%r is not a valid port number.' % port)
+
+    if options.cluster is not None and options.env is not None:
+        try:
+            instances = eureq.instances(f'app://{options.cluster}', env = options.env, discovery_retry=3, discovery_backoff=1)
+            hostname = instances[0].ip
+        except Exception:
+            parser.error(f'No healthy instances found for cluster {options.cluster} in env {options.env}')
     return options, hostname, port
 
 
@@ -2383,8 +2397,10 @@ def main(options, hostname, port):
 # on Windows then the module name is not __main__, see CASSANDRA-9304 (Windows support was dropped in CASSANDRA-16956)
 insert_driver_hooks()
 
+
 def cli():
     main(*read_options(sys.argv[1:], os.environ))
+
 
 if __name__ == '__main__':
     main(*read_options(sys.argv[1:], os.environ))
