@@ -372,7 +372,10 @@ public class LeveledCompactionStrategy extends AbstractCompactionStrategy
             for (Range<Token> r : splitRanges)
             {
                 Token midPoint = partitioner.midpoint(r.left, r.right);
-                if (!midPoint.equals(r.left) && !midPoint.equals(r.right))
+                // if we split (MINIMUM, 0] using RandomPartitioner we get the midpoint of the full range - so here
+                // we avoid that by making sure that we get something that is actually contained in the range (and not
+                // equal to either the left or right tokens, which would mean that we can't split the range any more)
+                if (r.contains(midPoint) && !r.right.equals(midPoint))
                 {
                     newSplitRanges.add(new Range<>(r.left, midPoint));
                     newSplitRanges.add(new Range<>(midPoint, r.right));
