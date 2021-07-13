@@ -21,7 +21,6 @@ import codecs
 import configparser
 import csv
 import errno
-import eureq
 import getpass
 import optparse
 import os
@@ -452,7 +451,13 @@ class Shell(cmd.Cmd):
         cmd.Cmd.__init__(self, completekey=completekey)
         self.hostname = hostname
         self.port = port
-        self.auth_provider = metatron_auth.MetatronAuthProvider()
+        self.auth_provider = None
+        try:
+            from cqlshlib import metatron_auth
+            self.auth_provider = metatron_auth.MetatronAuthProvider()
+        except ImportError:
+            print("WARNING: [metatron] dependency missing. Cannot connect to metatron auth clusters.")
+
         self.username = username
 
         if isinstance(auth_provider, PlainTextAuthProvider):
@@ -2244,8 +2249,11 @@ def read_options(cmdlineargs, environment):
 
     if options.cluster is not None and options.env is not None:
         try:
+            import eureq
             instances = eureq.instances(f'app://{options.cluster}', env = options.env, discovery_retry=3, discovery_backoff=1)
             hostname = instances[0].ip
+        except ImportError:
+            parser.error("Unable to find [eureq] dependency which is required for --cluster and --env to work")
         except Exception:
             parser.error(f'No healthy instances found for cluster {options.cluster} in env {options.env}')
     return options, hostname, port
