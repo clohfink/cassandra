@@ -17,6 +17,7 @@
  */
 package org.apache.cassandra.locator;
 
+import com.amazonaws.util.EC2MetadataUtils;
 import java.io.DataInputStream;
 import java.io.FilterInputStream;
 import java.io.IOException;
@@ -44,12 +45,9 @@ import org.apache.cassandra.utils.FBUtilities;
 public class Ec2Snitch extends AbstractNetworkTopologySnitch
 {
     protected static final Logger logger = LoggerFactory.getLogger(Ec2Snitch.class);
-
     private static final String SNITCH_PROP_NAMING_SCHEME = "ec2_naming_scheme";
     static final String EC2_NAMING_LEGACY = "legacy";
     private static final String EC2_NAMING_STANDARD = "standard";
-
-    private static final String ZONE_NAME_QUERY_URL = "http://169.254.169.254/latest/meta-data/placement/availability-zone";
     private static final String DEFAULT_DC = "UNKNOWN-DC";
     private static final String DEFAULT_RACK = "UNKNOWN-RACK";
 
@@ -66,7 +64,7 @@ public class Ec2Snitch extends AbstractNetworkTopologySnitch
 
     public Ec2Snitch(SnitchProperties props) throws IOException, ConfigurationException
     {
-        String az = awsApiCall(ZONE_NAME_QUERY_URL);
+        String az = EC2MetadataUtils.getAvailabilityZone();
 
         // if using the full naming scheme, region name is created by removing letters from the
         // end of the availability zone and zone is the full zone name

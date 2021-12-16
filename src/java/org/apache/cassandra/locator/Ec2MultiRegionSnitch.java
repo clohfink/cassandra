@@ -17,6 +17,7 @@
  */
 package org.apache.cassandra.locator;
 
+import com.amazonaws.util.EC2MetadataUtils;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
@@ -40,16 +41,19 @@ import org.apache.cassandra.service.StorageService;
  */
 public class Ec2MultiRegionSnitch extends Ec2Snitch
 {
-    private static final String PUBLIC_IP_QUERY_URL = "http://169.254.169.254/latest/meta-data/public-ipv4";
-    private static final String PRIVATE_IP_QUERY_URL = "http://169.254.169.254/latest/meta-data/local-ipv4";
+    private static final String PUBLIC_IP_QUERY_URL = "/latest/meta-data/public-ipv4";
     private final String localPrivateAddress;
 
     public Ec2MultiRegionSnitch() throws IOException, ConfigurationException
     {
         super();
-        InetAddress localPublicAddress = InetAddress.getByName(awsApiCall(PUBLIC_IP_QUERY_URL));
+        String publicIp = EC2MetadataUtils.getData(PUBLIC_IP_QUERY_URL);
+        if (publicIp == null) {
+            throw new IOException("Failed to obtain public ip");
+        }
+        InetAddress localPublicAddress = InetAddress.getByName(publicIp);
         logger.info("EC2Snitch using publicIP as identifier: {}", localPublicAddress);
-        localPrivateAddress = awsApiCall(PRIVATE_IP_QUERY_URL);
+        localPrivateAddress = EC2MetadataUtils.getPrivateIpAddress();
         // use the Public IP to broadcast Address to other nodes.
         DatabaseDescriptor.setBroadcastAddress(localPublicAddress);
         if (DatabaseDescriptor.getBroadcastRpcAddress() == null)
