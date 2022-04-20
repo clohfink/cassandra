@@ -20,7 +20,8 @@ from setuptools import find_packages, setup
 setup(
     name="cqlsh3",
     setup_requires="setupmeta",
-    versioning="build-id",
+    python_requires='>=3.6',
+    versioning="post",
     packages=find_packages(exclude=['*test*']), 
     entry_points={
        "console_scripts": [
