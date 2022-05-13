@@ -2248,13 +2248,23 @@ def read_options(cmdlineargs, environment):
         parser.error('%r is not a valid port number.' % port)
 
     if options.cluster is not None and options.env is not None:
+        instances_found = False
         try:
             import eureq
-            instances = eureq.instances(f'app://{options.cluster}', env = options.env, discovery_retry=3, discovery_backoff=1)
-            hostname = instances[0].ip
+            regions = ['us-east-1','eu-west-1','us-west-2','us-east-2','us-west-1']
+            for region in regions:
+                try:
+                    instances = eureq.instances(f'app://{options.cluster}', env = options.env, region = region, discovery_retry=3, discovery_backoff=1)
+                    if len(instances) > 0:
+                        instances_found = True
+                        hostname = instances[0].ip
+                        break
+                except Exception:
+                    # it is possible the app does not exist in the region, and the method exceptions out. Let's try next region.
+                    pass
         except ImportError:
             parser.error("Unable to find [eureq] dependency which is required for --cluster and --env to work")
-        except Exception:
+        if not instances_found:
             parser.error(f'No healthy instances found for cluster {options.cluster} in env {options.env}')
     return options, hostname, port
 
