@@ -927,7 +927,7 @@
         </javac>
     </target>
 
-    <target depends="init,gen-cql3-grammar,generate-cql-html,generate-jflex-java,rat-check"
+    <target depends="init,gen-cql3-grammar,generate-cql-html,generate-jflex-java"
             name="build-project">
         <echo message="${ant.project.name}: ${ant.file}"/>
         <!-- Order matters! -->
@@ -970,6 +970,14 @@
             <src path="${stress.build.src}" />
             <classpath>
                 <path refid="cassandra.classpath" />
+                <path>
+                    <fileset dir="${build.lib}">
+                        <include name="**/*.jar" />
+                    </fileset>
+                    <fileset dir="${build.dir.lib}">
+                        <include name="**/*.jar" />
+                    </fileset>
+                </path>
             </classpath>
         </javac>
         <copy todir="${stress.build.classes}">
@@ -1049,30 +1057,30 @@
     <property name="simulator-bootstrap.build.classes" value="${build.classes}/simulator-bootstrap" />
     <property name="simulator-bootstrap.manifest" value="${simulator-bootstrap.build.classes}/MANIFEST.MF" />
 
-    <target name="simulator-asm-build" depends="_build_unsafe" description="build simulator-asm">
-        <antcall target="_simulator-asm_build"/>
-    </target>
+<!--    <target name="simulator-asm-build" depends="_build_unsafe" description="build simulator-asm">-->
+<!--        <antcall target="_simulator-asm_build"/>-->
+<!--    </target>-->
 
     <target name="simulator-bootstrap-build" depends="_build_unsafe" description="build simulator-bootstrap">
         <antcall target="_simulator-bootstrap_build"/>
     </target>
 
-    <target name="_simulator-asm_build">
-    	<mkdir dir="${simulator-asm.build.classes}" />
-        <javac compiler="modern" debug="true" debuglevel="${debuglevel}"
-               source="${source.version}" target="${target.version}"
-               encoding="utf-8" destdir="${simulator-asm.build.classes}" includeantruntime="true">
-            <src path="${simulator-asm.build.src}" />
-            <classpath>
-                <fileset dir="${test.lib}">
-                     <include name="**/asm-*${asm.version}.jar" /> 
-                </fileset>
-                <fileset dir="${build.lib}">
-                     <include name="**/asm-*${asm.version}.jar" />
-                </fileset>
-            </classpath>
-        </javac>
-    </target>
+<!--    <target name="_simulator-asm_build">-->
+<!--    	<mkdir dir="${simulator-asm.build.classes}" />-->
+<!--        <javac compiler="modern" debug="true" debuglevel="${debuglevel}"-->
+<!--               source="${source.version}" target="${target.version}"-->
+<!--               encoding="utf-8" destdir="${simulator-asm.build.classes}" includeantruntime="true">-->
+<!--            <src path="${simulator-asm.build.src}" />-->
+<!--            <classpath>-->
+<!--                <fileset dir="${test.lib}">-->
+<!--                     <include name="**/asm-*${asm.version}.jar" /> -->
+<!--                </fileset>-->
+<!--                <fileset dir="${build.lib}">-->
+<!--                     <include name="**/asm-*${asm.version}.jar" />-->
+<!--                </fileset>-->
+<!--            </classpath>-->
+<!--        </javac>-->
+<!--    </target>-->
 
     <target name="_simulator-bootstrap_build">
     	<mkdir dir="${simulator-bootstrap.build.classes}" />
@@ -1160,43 +1168,43 @@
         </jar>
     </target>
 
-    <target name="simulator-jars"
-            depends="simulator-asm-build,simulator-bootstrap-build"
-            description="Assemble Cassandra JAR files">
+<!--    <target name="simulator-jars"-->
+<!--            depends="simulator-asm-build,simulator-bootstrap-build"-->
+<!--            description="Assemble Cassandra JAR files">-->
 
-        <!-- simulator asm jar -->
-        <manifest file="${simulator-asm.manifest}">
-            <attribute name="Built-By" value="Benedict Elliott Smith"/>
-            <attribute name="Premain-Class" value="org.apache.cassandra.simulator.asm.InterceptAgent"/>
-            <attribute name="Agent-Class" value="org.apache.cassandra.simulator.asm.InterceptAgent"/>
-            <attribute name="Can-Redefine-Classes" value="true"/>
-            <attribute name="Can-Retransform-Classes" value="true"/>
-        </manifest>
-        <mkdir dir="${simulator-asm.build.classes}/META-INF" />
-        <mkdir dir="${test.lib}/jars/" />
-        <jar destfile="${test.lib}/jars/simulator-asm.jar" manifest="${simulator-asm.manifest}">
-            <fileset dir="${simulator-asm.build.classes}"/>
-            <fileset dir="${test.lib}/jars">
-                <include name="**/asm-*${asm.version}.jar" />
-            </fileset>
-        </jar>
+<!--        &lt;!&ndash; simulator asm jar &ndash;&gt;-->
+<!--        <manifest file="${simulator-asm.manifest}">-->
+<!--            <attribute name="Built-By" value="Benedict Elliott Smith"/>-->
+<!--            <attribute name="Premain-Class" value="org.apache.cassandra.simulator.asm.InterceptAgent"/>-->
+<!--            <attribute name="Agent-Class" value="org.apache.cassandra.simulator.asm.InterceptAgent"/>-->
+<!--            <attribute name="Can-Redefine-Classes" value="true"/>-->
+<!--            <attribute name="Can-Retransform-Classes" value="true"/>-->
+<!--        </manifest>-->
+<!--        <mkdir dir="${simulator-asm.build.classes}/META-INF" />-->
+<!--        <mkdir dir="${test.lib}/jars/" />-->
+<!--        <jar destfile="${test.lib}/jars/simulator-asm.jar" manifest="${simulator-asm.manifest}">-->
+<!--            <fileset dir="${simulator-asm.build.classes}"/>-->
+<!--            <fileset dir="${test.lib}/jars">-->
+<!--                <include name="**/asm-*${asm.version}.jar" />-->
+<!--            </fileset>-->
+<!--        </jar>-->
 
-        <!-- simulator bootstrap jar -->
-        <manifest file="${simulator-bootstrap.manifest}">
-            <attribute name="Built-By" value="Benedict Elliott Smith"/>
-        </manifest>
-        <mkdir dir="${simulator-bootstrap.build.classes}/META-INF" />
-        <mkdir dir="${test.lib}/jars/" />
-        <jar destfile="${test.lib}/jars/simulator-bootstrap.jar" manifest="${simulator-bootstrap.manifest}">
-            <fileset dir="${simulator-bootstrap.build.classes}"/>
-            <fileset dir="${test.lib}/jars">
-                <include name="**/asm-*${asm.version}.jar" />
-            </fileset>
-        </jar>
-    </target>
+<!--        &lt;!&ndash; simulator bootstrap jar &ndash;&gt;-->
+<!--        <manifest file="${simulator-bootstrap.manifest}">-->
+<!--            <attribute name="Built-By" value="Benedict Elliott Smith"/>-->
+<!--        </manifest>-->
+<!--        <mkdir dir="${simulator-bootstrap.build.classes}/META-INF" />-->
+<!--        <mkdir dir="${test.lib}/jars/" />-->
+<!--        <jar destfile="${test.lib}/jars/simulator-bootstrap.jar" manifest="${simulator-bootstrap.manifest}">-->
+<!--            <fileset dir="${simulator-bootstrap.build.classes}"/>-->
+<!--            <fileset dir="${test.lib}/jars">-->
+<!--                <include name="**/asm-*${asm.version}.jar" />-->
+<!--            </fileset>-->
+<!--        </jar>-->
+<!--    </target>-->
 
     <target name="jar"
-            depends="_main-jar,build-test,stress-jar,fqltool-jar,simulator-jars,write-poms"
+            depends="_main-jar,build-test,stress-jar,fqltool-jar,write-poms"
             description="Assemble Cassandra JAR files">
     </target>
 
@@ -1389,7 +1397,7 @@
       </jar>
   </target>
 
-  <target name="build-test" depends="_main-jar,stress-build,fqltool-build,resolver-dist-lib,simulator-jars,checkstyle-test" unless="no-build-test"
+  <target name="build-test" depends="_main-jar,stress-build,fqltool-build,write-poms"
           description="Compile test classes">
     <antcall target="_build-test"/>
   </target>
@@ -1407,6 +1415,9 @@
      <classpath>
         <path refid="cassandra.classpath.test"/>
         <pathelement location="${fqltool.build.classes}"/>
+         <fileset dir="${build.dir.lib}">
+             <include name="**/*.jar" />
+         </fileset>
      </classpath>
      <compilerarg value="-XDignore.symbol.file"/>
      <src path="${test.anttasks.src}"/>
@@ -1473,11 +1484,11 @@
                  else="">
         <istrue value="${usejacoco}"/>
       </condition>
-      <taskdef name="junit-timeout" classname="org.apache.cassandra.JStackJUnitTask">
-        <classpath>
-          <pathelement location="${test.classes}"/>
-        </classpath>
-      </taskdef>
+<!--      <taskdef name="junit-timeout" classname="org.apache.cassandra.JStackJUnitTask">-->
+<!--        <classpath>-->
+<!--          <pathelement location="${test.classes}"/>-->
+<!--        </classpath>-->
+<!--      </taskdef>-->
       <mkdir dir="${build.test.dir}/cassandra"/>
       <mkdir dir="${build.test.dir}/output"/>
       <mkdir dir="${build.test.dir}/output/@{testtag}"/>
