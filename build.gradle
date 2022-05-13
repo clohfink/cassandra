@@ -25,6 +25,7 @@ ext {
 
 dependencies {
     compile "com.netflix.priam:priam-cass-extensions:${priam_extensions_version}"
+    compile 'org.ow2.asm:asm:7.1'
 }
 
 task unpackTarball(type: Copy, dependsOn: antartifacts) {
