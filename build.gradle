@@ -7,6 +7,9 @@ nebula {
     moduleOwner = 'cde-team@netflix.com'
 }
 
+sourceSets.remove(sourceSets.main)
+sourceSets.remove(sourceSets.test)
+
 ant.importBuild('build.xml') { antTargetName ->
     'ant' + antTargetName
 }
@@ -23,9 +26,6 @@ ext {
 dependencies {
     compile "com.netflix.priam:priam-cass-extensions:${priam_extensions_version}"
 }
-
-sourceSets.remove(sourceSets.main)
-sourceSets.remove(sourceSets.test)
 
 task unpackTarball(type: Copy, dependsOn: antartifacts) {
     from tarTree("${buildDir}/${project.ext.cass_filename}")
