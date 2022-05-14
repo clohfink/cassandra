@@ -291,7 +291,6 @@
         </fileset>
         <fileset dir="${test.lib}/jars">
             <include name="**/*.jar" />
-            <exclude name="**/ant-*.jar"/>
         </fileset>
     </path>
 
@@ -686,7 +685,9 @@
           </dependency>
           <dependency groupId="org.hamcrest" artifactId="hamcrest" version="2.2" scope="test"/>
           <dependency groupId="com.github.seancfoley" artifactId="ipaddress" version="5.3.3" />
-        </dependencyManagement>
+          <dependency groupId="netflix" artifactId="metatron-ipc-common-shaded" version="1.211.0" />
+          <dependency groupId="com.github.luben" artifactId="zstd-jni" version="1.5.0-4"/>
+	</dependencyManagement>
         <developer id="adelapena" name="Andres de la Peña"/>
         <developer id="alakshman" name="Avinash Lakshman"/>
         <developer id="aleksey" name="Aleksey Yeschenko"/>
@@ -869,6 +870,8 @@
         <dependency groupId="org.jboss.byteman" artifactId="byteman-submit"/>
         <dependency groupId="org.jboss.byteman" artifactId="byteman-bmunit"/>
         <dependency groupId="com.github.seancfoley" artifactId="ipaddress" />
+        <dependency groupId="netflix" artifactId="metatron-ipc-common-shaded" version="1.211.0" />
+        <dependency groupId="com.github.luben" artifactId="zstd-jni" version="1.5.0-4"/>
       </artifact:pom>
     </target>
 
@@ -1291,7 +1294,7 @@
     </target>
 
     <!-- creates release tarballs -->
-    <target name="artifacts" depends="_artifacts-init,gen-doc,sources-jar,javadoc-jar"
+    <target name="artifacts" depends="_artifacts-init,gen-doc,sources-jar,jar"
             description="Create Cassandra release artifacts">
       <tar compression="gzip" longfile="gnu"
         destfile="${build.dir}/${final.name}-bin.tar.gz">
@@ -1418,6 +1421,9 @@
      <classpath>
         <path refid="cassandra.classpath.test"/>
         <pathelement location="${fqltool.build.classes}"/>
+         <fileset dir="${build.dir.lib}">
+             <include name="**/*.jar" />
+         </fileset>
      </classpath>
      <compilerarg value="-XDignore.symbol.file"/>
      <src path="${test.anttasks.src}"/>
