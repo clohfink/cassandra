@@ -179,6 +179,16 @@
         </sequential>
     </macrodef>
 
+<!--    <script language="javascript">-->
+<!--        if (project.getProperty("cassandra.keepBriefBrief") == null)-->
+<!--        {-->
+<!--            if (project.getProperty("test.name").equals("*Test"))-->
+<!--                project.setProperty("cassandra.keepBriefBrief", "true");-->
+<!--            else-->
+<!--                project.setProperty("cassandra.keepBriefBrief", "false");-->
+<!--        }-->
+<!--    </script>-->
+
     <condition property="java.version.8">
         <equals arg1="${ant.java.version}" arg2="1.8"/>
     </condition>
@@ -288,14 +298,28 @@
     <path id="maven-ant-tasks.classpath" path="${build.dir}/maven-ant-tasks-${maven-ant-tasks.version}.jar" />
     <path id="cassandra.classpath">
         <pathelement location="${build.classes.main}" />
+<!--        <fileset dir="${build.lib}">-->
+<!--            <include name="**/*.jar" />-->
+<!--            <exclude name="**/*-sources.jar"/>-->
+<!--            <exclude name="**/ant-*.jar"/>-->
+<!--        </fileset>-->
         <fileset dir="${build.dir.lib}">
             <include name="**/*.jar" />
+<!--            <exclude name="**/*-sources.jar"/>-->
+<!--            <exclude name="**/ant-*.jar"/>-->
         </fileset>
     </path>
     <path id="cassandra.classpath.test">
         <file file="${build.dir}/${final.name}.jar"/> <!-- we need the jar for tests and benchmarks (multi-version jar) -->
+<!--        <fileset dir="${build.lib}">-->
+<!--            <include name="**/*.jar" />-->
+<!--            <exclude name="**/*-sources.jar"/>-->
+<!--            <exclude name="**/ant-*.jar"/>-->
+<!--        </fileset>-->
         <fileset dir="${build.dir.lib}">
             <include name="**/*.jar" />
+<!--            <exclude name="**/*-sources.jar"/>-->
+<!--            <exclude name="**/ant-*.jar"/>-->
         </fileset>
         <fileset dir="${test.lib}/jars">
             <include name="**/*.jar" />
@@ -487,6 +511,64 @@
     <target name="maven-ant-tasks-init" depends="maven-ant-tasks-download,resolver-init" unless="maven-ant-tasks.initialized"
             description="Initialize Maven ANT Tasks">
       <typedef uri="antlib:org.apache.maven.artifact.ant" classpathref="maven-ant-tasks.classpath" />
+      <!-- define the remote repositories we use -->
+<!--      <artifact:remoteRepository id="central"   url="${artifact.remoteRepository.central}"/>-->
+<!--      <artifact:remoteRepository id="apache"    url="${artifact.remoteRepository.apache}"/>-->
+
+<!--      <macrodef name="install">-->
+<!--         <attribute name="pomFile"/>-->
+<!--         <attribute name="file"/>-->
+<!--         <attribute name="classifier" default=""/>-->
+<!--         <attribute name="packaging" default="jar"/>-->
+<!--         <sequential>-->
+<!--            <artifact:mvn mavenVersion="${maven.version}" fork="true" failonerror="true">-->
+<!--               <arg value="org.apache.maven.plugins:maven-install-plugin:2.3.1:install-file" />-->
+<!--               <arg value="-DpomFile=@{pomFile}" />-->
+<!--               <arg value="-Dfile=@{file}" />-->
+<!--               <arg value="-Dclassifier=@{classifier}" />-->
+<!--               <arg value="-Dpackaging=@{packaging}" />-->
+<!--            </artifact:mvn>-->
+<!--         </sequential>-->
+<!--      </macrodef>-->
+
+<!--      <macrodef name="deploy">-->
+<!--         <attribute name="pomFile"/>-->
+<!--         <attribute name="file"/>-->
+<!--         <attribute name="classifier" default=""/>-->
+<!--         <attribute name="packaging" default="jar"/>-->
+<!--         <sequential>-->
+<!--             <artifact:mvn mavenVersion="${maven.version}" fork="true" failonerror="true">-->
+<!--                <jvmarg value="-Xmx512m"/>-->
+<!--                <arg value="org.apache.maven.plugins:maven-gpg-plugin:1.6:sign-and-deploy-file" />-->
+<!--                <arg value="-DretryFailedDeploymentCount=5" />-->
+<!--                <arg value="-Durl=${maven-repository-url}" />-->
+<!--                <arg value="-DrepositoryId=${maven-repository-id}" />-->
+<!--                <arg value="-DpomFile=@{pomFile}" />-->
+<!--                <arg value="-Dfile=@{file}" />-->
+<!--                <arg value="-Dclassifier=@{classifier}" />-->
+<!--                <arg value="-Dpackaging=@{packaging}" />-->
+<!--             </artifact:mvn>-->
+<!--         </sequential>-->
+<!--      </macrodef>-->
+
+<!--      <macrodef name="sign-dist">-->
+<!--         <attribute name="file"/>-->
+<!--         <sequential>-->
+<!--             <echo message="gpg signing @{file}" />-->
+<!--             <artifact:mvn mavenVersion="${maven.version}" fork="true" failonerror="true">-->
+<!--                <jvmarg value="-Xmx512m"/>-->
+<!--                <arg value="-q" />-->
+<!--                <arg value="org.apache.maven.plugins:maven-gpg-plugin:1.6:sign-and-deploy-file" />-->
+<!--                <arg value="-Dfile=@{file}" />-->
+<!--                <arg value="-DgroupId=org.apache.cassandra" />-->
+<!--                <arg value="-DartifactId=cassandra-parent" />-->
+<!--                <arg value="-Dversion=${version}" />-->
+<!--                &lt;!&ndash; intentionally dummy out the deploy step &ndash;&gt;-->
+<!--                <arg value="-Durl=file:///tmp/" />-->
+<!--                <arg value="-DrepositoryId=tmp" />-->
+<!--             </artifact:mvn>-->
+<!--         </sequential>-->
+<!--      </macrodef>-->
       <property name="maven-ant-tasks.initialized" value="true"/>
     </target>
 
@@ -981,14 +1063,14 @@
             <src path="${stress.build.src}" />
             <classpath>
                 <path refid="cassandra.classpath" />
-                <path>
-                    <fileset dir="${build.lib}">
-                        <include name="**/*.jar" />
-                    </fileset>
-                    <fileset dir="${build.dir.lib}">
-                        <include name="**/*.jar" />
-                    </fileset>
-                </path>
+<!--                <path>-->
+<!--                    <fileset dir="${build.lib}">-->
+<!--                        <include name="**/*.jar" />-->
+<!--                    </fileset>-->
+<!--                    <fileset dir="${build.dir.lib}">-->
+<!--                        <include name="**/*.jar" />-->
+<!--                    </fileset>-->
+<!--                </path>-->
             </classpath>
         </javac>
         <copy todir="${stress.build.classes}">
@@ -1050,6 +1132,11 @@
             <src path="${fqltool.build.src}" />
             <classpath>
                 <path refid="cassandra.classpath" />
+<!--                <path>-->
+<!--                    <fileset dir="${build.lib}">-->
+<!--                        <include name="**/*.jar" />-->
+<!--                    </fileset>-->
+<!--                </path>-->
             </classpath>
         </javac>
     </target>
@@ -1177,7 +1264,7 @@
         </manifest>
         <mkdir dir="${fqltool.build.classes}/META-INF" />
         <mkdir dir="${build.dir}/tools/lib/" />
-        <jar destfile="${build.dir}/tools/lib/fqltool.jar" manifest="${stress.manifest}">
+        <jar destfile="${build.dir}/tools/lib/fqltool.jar" manifest="${fqltool.manifest}">
             <fileset dir="${fqltool.build.classes}"/>
         </jar>
     </target>
@@ -1411,7 +1498,7 @@
       </jar>
   </target>
 
-  <target name="build-test" depends="_main-jar,stress-build,fqltool-build,write-poms" unless="no-build-test"
+  <target name="build-test" depends="_main-jar,stress-build,fqltool-build,resolver-dist-lib,checkstyle-test,write-poms" unless="no-build-test"
           description="Compile test classes">
     <antcall target="_build-test"/>
   </target>
@@ -2242,7 +2329,7 @@
   </target>
 
   <!-- ECJ 4.6.1 in standalone mode does not work with JPMS, so we skip this target for Java 11 -->
-  <target name="eclipse-warnings" depends="build, _assert_rat_output" description="Run eclipse compiler code analysis" if="java.version.8">
+  <target name="eclipse-warnings" depends="build" description="Run eclipse compiler code analysis" if="java.version.8">
         <property name="ecj.log.dir" value="${build.dir}/ecj" />
         <property name="ecj.warnings.file" value="${ecj.log.dir}/eclipse_compiler_checks.txt"/>
         <mkdir  dir="${ecj.log.dir}" />
