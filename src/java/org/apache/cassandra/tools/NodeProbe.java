@@ -460,6 +460,11 @@ public class NodeProbe implements AutoCloseable
         ssProxy.forceKeyspaceCompactionForPartitionKey(keyspaceName, partitionKey, tableNames);
     }
 
+    public void compactKeysIgnoringGcGrace(boolean splitOutput, String keyspaceName, String tableName, String... partitionKeysIgnoreGcGrace) throws IOException, ExecutionException, InterruptedException
+    {
+        ssProxy.compactKeysIgnoringGcGrace(splitOutput, keyspaceName, tableName, partitionKeysIgnoreGcGrace);
+    }
+
     public void forceKeyspaceFlush(String keyspaceName, String... tableNames) throws IOException, ExecutionException, InterruptedException
     {
         ssProxy.forceKeyspaceFlush(keyspaceName, tableNames);

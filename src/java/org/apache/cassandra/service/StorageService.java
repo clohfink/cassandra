@@ -5131,6 +5131,25 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
                              StringUtils.join(toFormat, ","));
     }
 
+    /***
+     * Force major compaction for a list of partitions in a table
+     * The method will ignore the gc_grace_seconds for the partitionKeysIgnoreGcGrace during the comapction,
+     * in order to purge the tombstones and free up space quicker.
+     * @param splitOutput option to split output when using STCS to files
+     * @param keyspaceName keyspace name
+     * @param tableName table name
+     * @param partitionKeysIgnoreGcGrace partition keys ignoring the gc_grace_seconds
+     * @throws IOException on any I/O operation error
+     * @throws ExecutionException when attempting to retrieve the result of a task that aborted by throwing an exception
+     * @throws InterruptedException when a thread is waiting, sleeping, or otherwise occupied, and the thread is interrupted, either before or during the activity
+     */
+    public void compactKeysIgnoringGcGrace(boolean splitOutput, String keyspaceName,
+                                           String tableName, String... partitionKeysIgnoreGcGrace) throws IOException, ExecutionException, InterruptedException
+    {
+        ColumnFamilyStore cfStore = getValidKeyspace(keyspaceName).getColumnFamilyStore(tableName);
+        cfStore.forceMajorCompaction(splitOutput, partitionKeysIgnoreGcGrace);
+    }
+
     /**
      * Force a remove operation to complete. This may be necessary if a remove operation
      * blocks forever due to node/stream failure. removeNode() must be called
