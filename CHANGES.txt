@@ -1,3 +1,6 @@
+4.1.1
+ * Add a virtual table that exposes currently running queries (CASSANDRA-15241)
+
 4.1.0
  * Streaming progress virtual table lock contention can trigger TCP_USER_TIMEOUT and fail streaming (CASSANDRA-18110)
  * Fix TWCS ignoring ignoreOverlaps
