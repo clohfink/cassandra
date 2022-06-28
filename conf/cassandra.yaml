@@ -24,7 +24,7 @@ cluster_name: 'Test Cluster'
 # See https://cassandra.apache.org/doc/latest/getting_started/production.html#tokens for
 # best practice information about num_tokens.
 #
-num_tokens: 16
+num_tokens: 256
 
 # Triggers automatic allocation of num_tokens tokens for this node. The allocation
 # algorithm attempts to choose tokens in a way that optimizes replicated load over

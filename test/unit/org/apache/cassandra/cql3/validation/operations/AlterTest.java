@@ -19,7 +19,9 @@ package org.apache.cassandra.cql3.validation.operations;
 
 import java.util.UUID;
 
+import org.junit.AfterClass;
 import org.junit.Assert;
+import org.junit.BeforeClass;
 import org.junit.Test;
 
 import org.apache.cassandra.config.DatabaseDescriptor;
@@ -50,6 +52,18 @@ import static org.junit.Assert.fail;
 
 public class AlterTest extends CQLTester
 {
+    @BeforeClass
+    public static void beforeClass()
+    {
+        DatabaseDescriptor.setEnableDroppedColumns(true);
+    }
+
+    @AfterClass
+    public static void afterClass()
+    {
+        DatabaseDescriptor.setEnableDroppedColumns(false);
+    }
+
     @Test
     public void testAddList() throws Throwable
     {
@@ -196,6 +210,20 @@ public class AlterTest extends CQLTester
                    row(1, 100, 100, 100, 100));
     }
 
+    @Test(expected = InvalidRequestException.class)
+    public void testDisableDrop() throws Throwable
+    {
+        DatabaseDescriptor.setEnableDroppedColumns(false);
+
+        createTable("CREATE TABLE %s (id text PRIMARY KEY, c1 int, c2 int);");
+        try
+        {
+            execute("ALTER TABLE %s DROP c1;");
+            Assert.fail("expected invalid request");
+        } finally {
+            DatabaseDescriptor.setEnableDroppedColumns(true);
+        }
+    }
 
     @Test
     public void testChangeStrategyWithUnquotedAgrument() throws Throwable

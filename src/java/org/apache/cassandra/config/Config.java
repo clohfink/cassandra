@@ -561,6 +561,7 @@ public class Config
 
     @Replaces(oldName = "enable_drop_compact_storage", converter = Converters.IDENTITY, deprecated = true)
     public volatile boolean drop_compact_storage_enabled = false;
+    public volatile boolean enable_dropped_columns = false;
 
     public volatile boolean use_statements_enabled = true;
 

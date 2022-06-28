@@ -3460,6 +3460,16 @@ public class DatabaseDescriptor
         conf.drop_compact_storage_enabled = enableDropCompactStorage;
     }
 
+    public static boolean enableDroppedColumns()
+    {
+        return conf.enable_dropped_columns;
+    }
+
+    public static void setEnableDroppedColumns(boolean enable)
+    {
+        conf.enable_dropped_columns = enable;
+    }
+
     public static long getUserDefinedFunctionFailTimeout()
     {
         return conf.user_defined_functions_fail_timeout.toMilliseconds();

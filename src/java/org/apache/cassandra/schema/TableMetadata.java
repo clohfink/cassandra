@@ -1028,6 +1028,9 @@ public class TableMetadata implements SchemaElement
 
         public Builder removeRegularOrStaticColumn(ColumnIdentifier identifier)
         {
+            if (!DatabaseDescriptor.enableDroppedColumns())
+                throw new InvalidRequestException("Dropped columns are disabled for this cluster. Contact #cde to drop the column.");
+
             ColumnMetadata column = columns.get(identifier.bytes);
             if (column == null || column.isPrimaryKeyColumn())
                 throw new IllegalArgumentException();
