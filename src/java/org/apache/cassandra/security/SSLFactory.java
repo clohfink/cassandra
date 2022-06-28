@@ -165,8 +165,10 @@ public final class SSLFactory
     static SslContext createNettySslContext(EncryptionOptions options, boolean verifyPeerCertificate,
                                             SocketType socketType, CipherSuiteFilter cipherFilter) throws IOException
     {
-        return options.sslContextFactoryInstance.createNettySslContext(verifyPeerCertificate, socketType,
-                                                                       cipherFilter);
+        if (options.use_metatron_ssl) {
+            return options.sslContextFactoryInstance.createNettyMetatronSslContext(socketType, cipherFilter);
+        }
+        return options.sslContextFactoryInstance.createNettySslContext(verifyPeerCertificate, socketType, cipherFilter);
     }
 
     /**

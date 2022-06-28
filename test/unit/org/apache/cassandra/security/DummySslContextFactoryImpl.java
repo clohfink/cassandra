@@ -50,6 +50,12 @@ public class DummySslContextFactoryImpl implements ISslContextFactory
     }
 
     @Override
+    public SslContext createNettyMetatronSslContext(SocketType socketType, CipherSuiteFilter cipherFilter) throws SSLException
+    {
+        return null;
+    }
+
+    @Override
     public void initHotReloading() throws SSLException
     {
 

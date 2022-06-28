@@ -71,7 +71,18 @@ public interface ISslContextFactory
      * @throws SSLException in case the Ssl Context creation fails for some reason
      */
     SslContext createNettySslContext(boolean verifyPeerCertificate, SocketType socketType,
-                                     CipherSuiteFilter cipherFilter) throws SSLException;
+                                 CipherSuiteFilter cipherFilter) throws SSLException;
+
+    /**
+     * Creates Metatron Netty's SslContext object.
+     *
+     * @param socketType            {@link SocketType} for Netty's Inbound or Outbound channels
+     * @param cipherFilter          to allow Netty's cipher suite filtering, e.g.
+     *                              {@link io.netty.handler.ssl.SslContextBuilder#ciphers(Iterable, CipherSuiteFilter)}
+     * @return Metatron Netty's {@link SslContext}
+     * @throws SSLException in case the Ssl Context creation fails for some reason
+     */
+    SslContext createNettyMetatronSslContext(SocketType socketType, CipherSuiteFilter cipherFilter) throws SSLException;
 
     /**
      * Initializes hot reloading of the security keys/certs. The implementation must guarantee this to be thread safe.

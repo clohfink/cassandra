@@ -88,6 +88,7 @@ public class EncryptionOptions
     public final String store_type;
     public final boolean require_client_auth;
     public final boolean require_endpoint_verification;
+    public final Boolean use_metatron_ssl;
     // ServerEncryptionOptions does not use the enabled flag at all instead using the existing
     // internode_encryption option. So we force this private and expose through isEnabled
     // so users of ServerEncryptionOptions can't accidentally use this when they should use isEnabled
@@ -100,7 +101,6 @@ public class EncryptionOptions
     // Calculated by calling applyConfig() after populating/parsing
     protected Boolean isEnabled;
     protected Boolean isOptional;
-
     /*
      * We will wait to initialize this until applyConfig() call to make sure we do it only when the caller is ready
      * to use this option instance.
@@ -121,7 +121,8 @@ public class EncryptionOptions
         REQUIRE_CLIENT_AUTH("require_client_auth"),
         REQUIRE_ENDPOINT_VERIFICATION("require_endpoint_verification"),
         ENABLED("enabled"),
-        OPTIONAL("optional");
+        OPTIONAL("optional"),
+        USE_METATRON_SSL("use_metatron_ssl");
 
         final String keyName;
 
@@ -163,13 +164,14 @@ public class EncryptionOptions
         require_endpoint_verification = false;
         enabled = true;
         optional = true;
+        use_metatron_ssl = true;
     }
 
     public EncryptionOptions(ParameterizedClass ssl_context_factory, String keystore, String keystore_password,
                              String truststore, String truststore_password, List<String> cipher_suites,
                              String protocol, List<String> accepted_protocols, String algorithm, String store_type,
                              boolean require_client_auth, boolean require_endpoint_verification, Boolean enabled,
-                             Boolean optional)
+                             Boolean optional, Boolean use_metatron_ssl)
     {
         this.ssl_context_factory = ssl_context_factory;
         this.keystore = keystore;
@@ -185,6 +187,7 @@ public class EncryptionOptions
         this.require_endpoint_verification = require_endpoint_verification;
         this.enabled = enabled;
         this.optional = optional;
+        this.use_metatron_ssl = use_metatron_ssl;
     }
 
     public EncryptionOptions(EncryptionOptions options)
@@ -203,6 +206,7 @@ public class EncryptionOptions
         require_endpoint_verification = options.require_endpoint_verification;
         enabled = options.enabled;
         this.optional = options.optional;
+        use_metatron_ssl = options.use_metatron_ssl;
     }
 
     /* Computes enabled and optional before use. Because the configuration can be loaded
@@ -284,6 +288,7 @@ public class EncryptionOptions
         putSslContextFactoryParameter(sslContextFactoryParameters, ConfigKey.REQUIRE_ENDPOINT_VERIFICATION, this.require_endpoint_verification);
         putSslContextFactoryParameter(sslContextFactoryParameters, ConfigKey.ENABLED, this.enabled);
         putSslContextFactoryParameter(sslContextFactoryParameters, ConfigKey.OPTIONAL, this.optional);
+        putSslContextFactoryParameter(sslContextFactoryParameters, ConfigKey.USE_METATRON_SSL, this.use_metatron_ssl);
 
         if (CassandraRelevantProperties.TEST_JVM_DTEST_DISABLE_SSL.getBoolean())
         {
@@ -426,7 +431,7 @@ public class EncryptionOptions
         return new EncryptionOptions(sslContextFactoryClass, keystore, keystore_password, truststore,
                                      truststore_password, cipher_suites,protocol, accepted_protocols, algorithm,
                                      store_type, require_client_auth, require_endpoint_verification,enabled,
-                                     optional).applyConfig();
+                                     optional, use_metatron_ssl).applyConfig();
     }
 
     public EncryptionOptions withKeyStore(String keystore)
@@ -434,7 +439,7 @@ public class EncryptionOptions
         return new EncryptionOptions(ssl_context_factory, keystore, keystore_password, truststore,
                                      truststore_password, cipher_suites,protocol, accepted_protocols, algorithm,
                                      store_type, require_client_auth, require_endpoint_verification, enabled,
-                                     optional).applyConfig();
+                                     optional, use_metatron_ssl).applyConfig();
     }
 
     public EncryptionOptions withKeyStorePassword(String keystore_password)
@@ -442,7 +447,7 @@ public class EncryptionOptions
         return new EncryptionOptions(ssl_context_factory, keystore, keystore_password, truststore,
                                      truststore_password, cipher_suites,protocol, accepted_protocols, algorithm,
                                      store_type, require_client_auth, require_endpoint_verification, enabled,
-                                     optional).applyConfig();
+                                     optional, use_metatron_ssl).applyConfig();
     }
 
     public EncryptionOptions withTrustStore(String truststore)
@@ -450,7 +455,7 @@ public class EncryptionOptions
         return new EncryptionOptions(ssl_context_factory, keystore, keystore_password, truststore,
                                      truststore_password, cipher_suites, protocol, accepted_protocols, algorithm,
                                      store_type, require_client_auth, require_endpoint_verification, enabled,
-                                     optional).applyConfig();
+                                     optional, use_metatron_ssl).applyConfig();
     }
 
     public EncryptionOptions withTrustStorePassword(String truststore_password)
@@ -458,7 +463,7 @@ public class EncryptionOptions
         return new EncryptionOptions(ssl_context_factory, keystore, keystore_password, truststore,
                                      truststore_password, cipher_suites, protocol, accepted_protocols, algorithm,
                                      store_type, require_client_auth, require_endpoint_verification, enabled,
-                                     optional).applyConfig();
+                                     optional, use_metatron_ssl).applyConfig();
     }
 
     public EncryptionOptions withCipherSuites(List<String> cipher_suites)
@@ -466,7 +471,7 @@ public class EncryptionOptions
         return new EncryptionOptions(ssl_context_factory, keystore, keystore_password, truststore,
                                      truststore_password, cipher_suites, protocol, accepted_protocols, algorithm,
                                      store_type, require_client_auth, require_endpoint_verification, enabled,
-                                     optional).applyConfig();
+                                     optional, use_metatron_ssl).applyConfig();
     }
 
     public EncryptionOptions withCipherSuites(String ... cipher_suites)
@@ -474,7 +479,7 @@ public class EncryptionOptions
         return new EncryptionOptions(ssl_context_factory, keystore, keystore_password, truststore,
                                      truststore_password, ImmutableList.copyOf(cipher_suites), protocol,
                                      accepted_protocols, algorithm, store_type, require_client_auth,
-                                     require_endpoint_verification, enabled, optional).applyConfig();
+                                     require_endpoint_verification, enabled, optional, use_metatron_ssl).applyConfig();
     }
 
     public EncryptionOptions withProtocol(String protocol)
@@ -482,7 +487,7 @@ public class EncryptionOptions
         return new EncryptionOptions(ssl_context_factory, keystore, keystore_password, truststore,
                                      truststore_password, cipher_suites, protocol, accepted_protocols, algorithm,
                                      store_type, require_client_auth, require_endpoint_verification, enabled,
-                                     optional).applyConfig();
+                                     optional, use_metatron_ssl).applyConfig();
     }
 
 
@@ -492,7 +497,7 @@ public class EncryptionOptions
                                      truststore_password, cipher_suites,protocol, accepted_protocols == null ? null :
                                                                                   ImmutableList.copyOf(accepted_protocols),
                                      algorithm, store_type, require_client_auth, require_endpoint_verification,
-                                     enabled, optional).applyConfig();
+                                     enabled, optional, use_metatron_ssl).applyConfig();
     }
 
 
@@ -501,7 +506,7 @@ public class EncryptionOptions
         return new EncryptionOptions(ssl_context_factory, keystore, keystore_password, truststore,
                                      truststore_password, cipher_suites, protocol, accepted_protocols, algorithm,
                                      store_type, require_client_auth, require_endpoint_verification, enabled,
-                                     optional).applyConfig();
+                                     optional, use_metatron_ssl).applyConfig();
     }
 
     public EncryptionOptions withStoreType(String store_type)
@@ -509,7 +514,7 @@ public class EncryptionOptions
         return new EncryptionOptions(ssl_context_factory, keystore, keystore_password, truststore,
                                      truststore_password, cipher_suites, protocol, accepted_protocols, algorithm,
                                      store_type, require_client_auth, require_endpoint_verification, enabled,
-                                     optional).applyConfig();
+                                     optional, use_metatron_ssl).applyConfig();
     }
 
     public EncryptionOptions withRequireClientAuth(boolean require_client_auth)
@@ -517,7 +522,7 @@ public class EncryptionOptions
         return new EncryptionOptions(ssl_context_factory, keystore, keystore_password, truststore,
                                      truststore_password, cipher_suites, protocol, accepted_protocols, algorithm,
                                      store_type, require_client_auth, require_endpoint_verification, enabled,
-                                     optional).applyConfig();
+                                     optional, use_metatron_ssl).applyConfig();
     }
 
     public EncryptionOptions withRequireEndpointVerification(boolean require_endpoint_verification)
@@ -525,7 +530,7 @@ public class EncryptionOptions
         return new EncryptionOptions(ssl_context_factory, keystore, keystore_password, truststore,
                                      truststore_password, cipher_suites, protocol, accepted_protocols, algorithm,
                                      store_type, require_client_auth, require_endpoint_verification, enabled,
-                                     optional).applyConfig();
+                                     optional, use_metatron_ssl).applyConfig();
     }
 
     public EncryptionOptions withEnabled(boolean enabled)
@@ -533,7 +538,7 @@ public class EncryptionOptions
         return new EncryptionOptions(ssl_context_factory, keystore, keystore_password, truststore,
                                      truststore_password, cipher_suites, protocol, accepted_protocols, algorithm,
                                      store_type, require_client_auth, require_endpoint_verification, enabled,
-                                     optional).applyConfig();
+                                     optional, use_metatron_ssl).applyConfig();
     }
 
     public EncryptionOptions withOptional(Boolean optional)
@@ -541,7 +546,15 @@ public class EncryptionOptions
         return new EncryptionOptions(ssl_context_factory, keystore, keystore_password, truststore,
                                      truststore_password, cipher_suites, protocol, accepted_protocols, algorithm,
                                      store_type, require_client_auth, require_endpoint_verification, enabled,
-                                     optional).applyConfig();
+                                     optional, use_metatron_ssl).applyConfig();
+    }
+
+    public EncryptionOptions withSslMode(String ssl_mode)
+    {
+        return new EncryptionOptions(ssl_context_factory, keystore, keystore_password, truststore,
+                                     truststore_password, cipher_suites, protocol, accepted_protocols, algorithm,
+                                     store_type, require_client_auth, require_endpoint_verification, enabled,
+                                     optional, use_metatron_ssl).applyConfig();
     }
 
     /**
@@ -620,11 +633,11 @@ public class EncryptionOptions
                                        List<String> cipher_suites, String protocol, List<String> accepted_protocols,
                                        String algorithm, String store_type, boolean require_client_auth,
                                        boolean require_endpoint_verification, Boolean optional,
-                                       InternodeEncryption internode_encryption, boolean legacy_ssl_storage_port_enabled)
+                                       InternodeEncryption internode_encryption, boolean legacy_ssl_storage_port_enabled, Boolean use_metatron_ssl)
         {
             super(sslContextFactoryClass, keystore, keystore_password, truststore, truststore_password, cipher_suites,
             protocol, accepted_protocols, algorithm, store_type, require_client_auth, require_endpoint_verification,
-            null, optional);
+            null, optional, use_metatron_ssl);
             this.internode_encryption = internode_encryption;
             this.legacy_ssl_storage_port_enabled = legacy_ssl_storage_port_enabled;
         }
@@ -709,7 +722,7 @@ public class EncryptionOptions
                                                truststore_password, cipher_suites, protocol, accepted_protocols,
                                                algorithm, store_type, require_client_auth,
                                                require_endpoint_verification, optional, internode_encryption,
-                                               legacy_ssl_storage_port_enabled).applyConfigInternal();
+                                               legacy_ssl_storage_port_enabled, use_metatron_ssl).applyConfigInternal();
         }
 
         public ServerEncryptionOptions withKeyStore(String keystore)
@@ -718,7 +731,7 @@ public class EncryptionOptions
                                                truststore_password, cipher_suites, protocol, accepted_protocols,
                                                algorithm, store_type, require_client_auth,
                                                require_endpoint_verification, optional, internode_encryption,
-                                               legacy_ssl_storage_port_enabled).applyConfigInternal();
+                                               legacy_ssl_storage_port_enabled, use_metatron_ssl).applyConfigInternal();
         }
 
         public ServerEncryptionOptions withKeyStorePassword(String keystore_password)
@@ -727,7 +740,7 @@ public class EncryptionOptions
                                                truststore_password, cipher_suites, protocol, accepted_protocols,
                                                algorithm, store_type, require_client_auth,
                                                require_endpoint_verification, optional, internode_encryption,
-                                               legacy_ssl_storage_port_enabled).applyConfigInternal();
+                                               legacy_ssl_storage_port_enabled, use_metatron_ssl).applyConfigInternal();
         }
 
         public ServerEncryptionOptions withTrustStore(String truststore)
@@ -736,7 +749,7 @@ public class EncryptionOptions
                                                truststore_password, cipher_suites, protocol, accepted_protocols,
                                                algorithm, store_type, require_client_auth,
                                                require_endpoint_verification, optional, internode_encryption,
-                                               legacy_ssl_storage_port_enabled).applyConfigInternal();
+                                               legacy_ssl_storage_port_enabled, use_metatron_ssl).applyConfigInternal();
         }
 
         public ServerEncryptionOptions withTrustStorePassword(String truststore_password)
@@ -745,7 +758,7 @@ public class EncryptionOptions
                                                truststore_password, cipher_suites, protocol, accepted_protocols,
                                                algorithm, store_type, require_client_auth,
                                                require_endpoint_verification, optional, internode_encryption,
-                                               legacy_ssl_storage_port_enabled).applyConfigInternal();
+                                               legacy_ssl_storage_port_enabled, use_metatron_ssl).applyConfigInternal();
         }
 
         public ServerEncryptionOptions withCipherSuites(List<String> cipher_suites)
@@ -754,7 +767,7 @@ public class EncryptionOptions
                                                truststore_password, cipher_suites, protocol, accepted_protocols,
                                                algorithm, store_type, require_client_auth,
                                                require_endpoint_verification, optional, internode_encryption,
-                                               legacy_ssl_storage_port_enabled).applyConfigInternal();
+                                               legacy_ssl_storage_port_enabled, use_metatron_ssl).applyConfigInternal();
         }
 
         public ServerEncryptionOptions withCipherSuites(String ... cipher_suites)
@@ -763,7 +776,7 @@ public class EncryptionOptions
                                                truststore_password, Arrays.asList(cipher_suites), protocol,
                                                accepted_protocols, algorithm, store_type, require_client_auth,
                                                require_endpoint_verification, optional, internode_encryption,
-                                               legacy_ssl_storage_port_enabled).applyConfigInternal();
+                                               legacy_ssl_storage_port_enabled, use_metatron_ssl).applyConfigInternal();
         }
 
         public ServerEncryptionOptions withProtocol(String protocol)
@@ -772,7 +785,7 @@ public class EncryptionOptions
                                                truststore_password, cipher_suites, protocol, accepted_protocols,
                                                algorithm, store_type, require_client_auth,
                                                require_endpoint_verification, optional, internode_encryption,
-                                               legacy_ssl_storage_port_enabled).applyConfigInternal();
+                                               legacy_ssl_storage_port_enabled, use_metatron_ssl).applyConfigInternal();
         }
 
         public ServerEncryptionOptions withAcceptedProtocols(List<String> accepted_protocols)
@@ -781,7 +794,7 @@ public class EncryptionOptions
                                                truststore_password, cipher_suites, protocol, accepted_protocols,
                                                algorithm, store_type, require_client_auth,
                                                require_endpoint_verification, optional, internode_encryption,
-                                               legacy_ssl_storage_port_enabled).applyConfigInternal();
+                                               legacy_ssl_storage_port_enabled, use_metatron_ssl).applyConfigInternal();
         }
 
         public ServerEncryptionOptions withAlgorithm(String algorithm)
@@ -790,7 +803,7 @@ public class EncryptionOptions
                                                truststore_password, cipher_suites, protocol, accepted_protocols,
                                                algorithm, store_type, require_client_auth,
                                                require_endpoint_verification, optional, internode_encryption,
-                                               legacy_ssl_storage_port_enabled).applyConfigInternal();
+                                               legacy_ssl_storage_port_enabled, use_metatron_ssl).applyConfigInternal();
         }
 
         public ServerEncryptionOptions withStoreType(String store_type)
@@ -799,7 +812,7 @@ public class EncryptionOptions
                                                truststore_password, cipher_suites, protocol, accepted_protocols,
                                                algorithm, store_type, require_client_auth,
                                                require_endpoint_verification, optional, internode_encryption,
-                                               legacy_ssl_storage_port_enabled).applyConfigInternal();
+                                               legacy_ssl_storage_port_enabled, use_metatron_ssl).applyConfigInternal();
         }
 
         public ServerEncryptionOptions withRequireClientAuth(boolean require_client_auth)
@@ -808,7 +821,7 @@ public class EncryptionOptions
                                                truststore_password, cipher_suites, protocol, accepted_protocols,
                                                algorithm, store_type, require_client_auth,
                                                require_endpoint_verification, optional, internode_encryption,
-                                               legacy_ssl_storage_port_enabled).applyConfigInternal();
+                                               legacy_ssl_storage_port_enabled, use_metatron_ssl).applyConfigInternal();
         }
 
         public ServerEncryptionOptions withRequireEndpointVerification(boolean require_endpoint_verification)
@@ -817,7 +830,7 @@ public class EncryptionOptions
                                                truststore_password, cipher_suites, protocol, accepted_protocols,
                                                algorithm, store_type, require_client_auth,
                                                require_endpoint_verification, optional, internode_encryption,
-                                               legacy_ssl_storage_port_enabled).applyConfigInternal();
+                                               legacy_ssl_storage_port_enabled, use_metatron_ssl).applyConfigInternal();
         }
 
         public ServerEncryptionOptions withOptional(boolean optional)
@@ -826,7 +839,7 @@ public class EncryptionOptions
                                                truststore_password, cipher_suites, protocol, accepted_protocols,
                                                algorithm, store_type, require_client_auth,
                                                require_endpoint_verification, optional, internode_encryption,
-                                               legacy_ssl_storage_port_enabled).applyConfigInternal();
+                                               legacy_ssl_storage_port_enabled, use_metatron_ssl).applyConfigInternal();
         }
 
         public ServerEncryptionOptions withInternodeEncryption(InternodeEncryption internode_encryption)
@@ -835,7 +848,7 @@ public class EncryptionOptions
                                                truststore_password, cipher_suites, protocol, accepted_protocols,
                                                algorithm, store_type, require_client_auth,
                                                require_endpoint_verification, optional, internode_encryption,
-                                               legacy_ssl_storage_port_enabled).applyConfigInternal();
+                                               legacy_ssl_storage_port_enabled, use_metatron_ssl).applyConfigInternal();
         }
 
         public ServerEncryptionOptions withLegacySslStoragePort(boolean enable_legacy_ssl_storage_port)
@@ -844,7 +857,7 @@ public class EncryptionOptions
                                                truststore_password, cipher_suites, protocol, accepted_protocols,
                                                algorithm, store_type, require_client_auth,
                                                require_endpoint_verification, optional, internode_encryption,
-                                               enable_legacy_ssl_storage_port).applyConfigInternal();
+                                               enable_legacy_ssl_storage_port, use_metatron_ssl).applyConfigInternal();
         }
 
     }

@@ -18,6 +18,8 @@
 
 package org.apache.cassandra.security;
 
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -29,13 +31,17 @@ import javax.net.ssl.TrustManagerFactory;
 
 import com.google.common.collect.ImmutableList;
 
+import com.netflix.metatron.ipc.security.MetatronSslContext;
+import io.netty.handler.ssl.ApplicationProtocolConfig;
 import io.netty.handler.ssl.CipherSuiteFilter;
 import io.netty.handler.ssl.ClientAuth;
+import io.netty.handler.ssl.JdkSslContext;
 import io.netty.handler.ssl.OpenSsl;
 import io.netty.handler.ssl.SslContext;
 import io.netty.handler.ssl.SslContextBuilder;
 import io.netty.handler.ssl.SslProvider;
 import org.apache.cassandra.config.Config;
+import org.apache.cassandra.config.DatabaseDescriptor;
 
 /**
  * Abstract class implementing {@code ISslContextFacotry} to provide most of the functionality that any
@@ -201,6 +207,21 @@ abstract public class AbstractSslContextFactory implements ISslContextFactory
             builder.trustManager(buildTrustManagerFactory());
 
         return builder.build();
+    }
+
+    @Override
+    public SslContext createNettyMetatronSslContext(SocketType socketType, CipherSuiteFilter cipherFilter) throws SSLException
+    {
+        ApplicationProtocolConfig ALPN = new ApplicationProtocolConfig(
+        ApplicationProtocolConfig.Protocol.ALPN, ApplicationProtocolConfig.SelectorFailureBehavior.NO_ADVERTISE,
+        ApplicationProtocolConfig.SelectedListenerFailureBehavior.ACCEPT, Collections.unmodifiableList(Arrays.asList(MetatronSslContext.MetatronSslContextSpi.getDefaultProtocol())));
+
+        if (socketType == SocketType.SERVER)
+               return new JdkSslContext(MetatronSslContext.forServer(), false, null, cipherFilter,
+                        ALPN, this.require_client_auth ? ClientAuth.REQUIRE : ClientAuth.NONE, null, false);
+
+        return new JdkSslContext(MetatronSslContext.forClient(DatabaseDescriptor.getClusterName()), true, null, cipherFilter,
+                ALPN, this.require_client_auth ? ClientAuth.REQUIRE : ClientAuth.NONE, null, false);
     }
 
     /**
