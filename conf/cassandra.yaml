@@ -1248,7 +1248,7 @@ server_encryption_options:
     #     dc   : Encrypt connections to peers in other datacenters but not within datacenters
     #     rack : Encrypt connections to peers in other racks but not within racks
     #     all  : Always use encrypted connections
-    internode_encryption: none
+    internode_encryption: all
     optional: true
     # If enabled, will open up an encrypted listening socket on ssl_storage_port. Should be used
     # during upgrade to 4.0; otherwise, set to false.
