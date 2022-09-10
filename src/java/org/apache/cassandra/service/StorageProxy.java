@@ -3084,4 +3084,16 @@ public class StorageProxy implements StorageProxyMBean
     {
         return PaxosState.getDisableCoordinatorLocking();
     }
+
+    public void enableSelectPartitionRange()
+    {
+        logger.info("Setting enable_select_partition_range = true");
+        DatabaseDescriptor.setEnableSelectPartitionRange(true);
+    }
+
+    public void disableSelectPartitionRange()
+    {
+        logger.info("Setting enable_select_partition_range = false");
+        DatabaseDescriptor.setEnableSelectPartitionRange(false);
+    }
 }

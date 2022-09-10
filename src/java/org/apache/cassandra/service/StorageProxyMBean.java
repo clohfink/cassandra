@@ -135,4 +135,7 @@ public interface StorageProxyMBean
 
     void setPaxosCoordinatorLockingDisabled(boolean disabled);
     boolean getPaxosCoordinatorLockingDisabled();
+
+    void enableSelectPartitionRange();
+    void disableSelectPartitionRange();
 }

@@ -40,6 +40,7 @@ import org.apache.cassandra.db.transform.RTBoundValidator;
 import org.apache.cassandra.db.transform.Transformation;
 import org.apache.cassandra.dht.AbstractBounds;
 import org.apache.cassandra.dht.Bounds;
+import org.apache.cassandra.exceptions.InvalidRequestException;
 import org.apache.cassandra.exceptions.RequestExecutionException;
 import org.apache.cassandra.index.Index;
 import org.apache.cassandra.io.sstable.format.SSTableReader;
@@ -49,6 +50,7 @@ import org.apache.cassandra.io.util.DataOutputPlus;
 import org.apache.cassandra.metrics.TableMetrics;
 import org.apache.cassandra.net.Verb;
 import org.apache.cassandra.schema.IndexMetadata;
+import org.apache.cassandra.schema.SchemaConstants;
 import org.apache.cassandra.schema.TableMetadata;
 import org.apache.cassandra.service.ClientState;
 import org.apache.cassandra.service.StorageProxy;
@@ -76,6 +78,13 @@ public class PartitionRangeReadCommand extends ReadCommand implements PartitionR
                                       boolean trackWarnings)
     {
         super(Kind.PARTITION_RANGE, isDigest, digestVersion, acceptsTransient, metadata, nowInSec, columnFilter, rowFilter, limits, index, trackWarnings);
+        if (!DatabaseDescriptor.enableSelectPartitionRange() &&
+            metadata.keyspace != SchemaConstants.SYSTEM_KEYSPACE_NAME && metadata.keyspace != SchemaConstants.DISTRIBUTED_KEYSPACE_NAME &&
+            metadata.keyspace != SchemaConstants.TRACE_KEYSPACE_NAME && metadata.keyspace != SchemaConstants.AUTH_KEYSPACE_NAME)
+        {
+            throw new InvalidRequestException("Partition Range Reads Have Been Disabled");
+        }
+
         this.dataRange = dataRange;
     }
 

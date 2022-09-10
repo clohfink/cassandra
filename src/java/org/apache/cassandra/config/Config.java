@@ -707,6 +707,8 @@ public class Config
     public volatile String auth_read_consistency_level = "LOCAL_QUORUM";
     public volatile String auth_write_consistency_level = "EACH_QUORUM";
 
+    public volatile boolean enable_select_partition_range = true;
+
     /** This feature allows denying access to operations on certain key partitions, intended for use by operators to
      * provide another tool to manage cluster health vs application access. See CASSANDRA-12106 and CEP-13 for more details.
      */

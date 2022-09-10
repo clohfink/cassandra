@@ -4064,9 +4064,14 @@ public class DatabaseDescriptor
         return conf.denylist_range_reads_enabled;
     }
 
-    public static void setDenylistRangeReadsEnabled(boolean enabled)
-    {
-        conf.denylist_range_reads_enabled = enabled;
+    public static void setDenylistRangeReadsEnabled(boolean enabled) { conf.denylist_range_reads_enabled = enabled; }
+
+    public static boolean enableSelectPartitionRange() {
+        return conf.enable_select_partition_range;
+    }
+
+    public static void setEnableSelectPartitionRange(boolean enable) {
+        conf.enable_select_partition_range = enable;
     }
 
     public static int getDenylistRefreshSeconds()
