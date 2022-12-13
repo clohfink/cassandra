@@ -449,8 +449,8 @@ public class PartitionDenylist
         }
         catch (final RequestExecutionException e)
         {
-            logger.error("Error reading partition_denylist table for {}/{}. Returning empty list.", tmd.keyspace, tmd.name, e);
-            return null;
+            logger.error("Error reading partition_denylist table for {}/{}. Returning empty denylist.", cf.ksName, cf.cfName, e);
+            return new DenylistEntry();
         }
     }
 
