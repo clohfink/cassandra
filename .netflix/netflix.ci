@@ -1,0 +1,7 @@
+#!/bin/bash
+set -ex
+
+# UNKNOWN because we want to subversion behind C* version number (Eg. 3.0.25.1)
+if [[ "$ROCKET_TAG_TYPE" = "UNKNOWN" ]]; then  # Publish on version tag only
+    cd pylib && ./build_and_publish.sh
+fi
