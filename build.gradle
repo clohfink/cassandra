@@ -19,13 +19,21 @@ ext {
     cass_version = ant.properties['version']
     cass_home_dir = "/apps/nfcassandra_server"
     cass_filename = "nf-cassandra-${project.ext.cass_version}-bin.tar.gz"
-    priam_extensions_version = "4.0.0-alpha1"
+    priam_extensions_version = "4.1.0-alpha6"
     priam_extensions_jar = "priam-cass-extensions-${priam_extensions_version}.jar"
 }
 
+allprojects {
+    repositories {
+        maven { url 'https://jitpack.io' }
+    }
+}
+
 dependencies {
-    compile "com.netflix.priam:priam-cass-extensions:${priam_extensions_version}"
+    //compile "com.netflix.priam:priam-cass-extensions:${priam_extensions_version}"
+    compile "com.github.ayushisingh29.priam:priam-cass-extensions:${priam_extensions_version}"
     compile 'org.ow2.asm:asm:7.1'
+    implementation 'netflix:nfcassandra-authn-authz-lib:latest.release'
 }
 
 task unpackTarball(type: Copy, dependsOn: antartifacts) {
@@ -67,6 +75,16 @@ ospackage {
     println "Building deb for nf-cassandra ${version}"
     into("${project.ext.cass_home_dir}/lib") {
         from configurations.runtime.filter { it.name.startsWith('priam') }
+        from configurations.runtime.filter { it.name.startsWith('AmazonCorrettoCryptoProvider') }
+        from configurations.runtime.filter { it.name.startsWith('nfcassandra-authn-authz-lib') }
+        from configurations.runtime.filter { it.name.startsWith('metatron-sign') }
+        from configurations.runtime.filter { it.name.startsWith('bcprov-jdk15on') }
+        from configurations.runtime.filter { it.name.startsWith('authorizable-context') }
+        from configurations.runtime.filter { it.name.startsWith('gandalf-authz-client-shaded') }
+        from configurations.runtime.filter { it.name.startsWith('nflx-e2etokens-common') }
+        from configurations.runtime.filter { it.name.startsWith('nflx-e2etokens-validation') }
+        from configurations.runtime.filter { it.name.startsWith('nflx-e2etokens-validation-spring') }
+        from configurations.runtime.filter { it.name.startsWith('spectator-api') }
     }
 
     // For external packages that depend on Cassandra to be installed
