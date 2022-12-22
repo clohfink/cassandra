@@ -19,19 +19,19 @@ ext {
     cass_version = ant.properties['version']
     cass_home_dir = "/apps/nfcassandra_server"
     cass_filename = "nf-cassandra-${project.ext.cass_version}-bin.tar.gz"
-    priam_extensions_version = "4.1.0-alpha6"
+    priam_extensions_version = "3.11.52"
     priam_extensions_jar = "priam-cass-extensions-${priam_extensions_version}.jar"
 }
 
-allprojects {
-    repositories {
-        maven { url 'https://jitpack.io' }
-    }
-}
+//allprojects {
+//    repositories {
+//        maven { url 'https://jitpack.io' }
+//    }
+//}
 
 dependencies {
-    //implementation "com.netflix.priam:priam-cass-extensions:${priam_extensions_version}"
-    implementation "com.github.ayushisingh29.priam:priam-cass-extensions:${priam_extensions_version}"
+    implementation "com.netflix.priam:priam-cass-extensions:${priam_extensions_version}"
+    //implementation "com.github.ayushisingh29.priam:priam-cass-extensions:${priam_extensions_version}"
     implementation 'software.amazon.cryptools:AmazonCorrettoCryptoProvider:1.1.1:linux-x86_64'
     implementation 'netflix:nfcassandra-authn-authz-lib:latest.release'
 }
