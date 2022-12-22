@@ -33,8 +33,6 @@ import javax.annotation.Nullable;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.Maps;
 
-import org.apache.commons.httpclient.methods.multipart.Part;
-
 import com.codahale.metrics.Meter;
 import org.apache.cassandra.exceptions.CasWriteTimeoutException;
 import org.apache.cassandra.exceptions.ExceptionCode;
@@ -80,7 +78,6 @@ import org.apache.cassandra.locator.InetAddressAndPort;
 import org.apache.cassandra.metrics.ClientRequestMetrics;
 import org.apache.cassandra.service.CASRequest;
 import org.apache.cassandra.service.ClientState;
-import org.apache.cassandra.service.FailureRecordingCallback;
 import org.apache.cassandra.service.FailureRecordingCallback.AsMap;
 import org.apache.cassandra.service.paxos.Commit.Proposal;
 import org.apache.cassandra.service.reads.DataResolver;
@@ -1201,6 +1198,7 @@ public class Paxos
     {
         Preconditions.checkNotNull(paxosVariant);
         PAXOS_VARIANT = paxosVariant;
+        DatabaseDescriptor.setPaxosVariant(paxosVariant);
     }
 
     public static Config.PaxosVariant getPaxosVariant()

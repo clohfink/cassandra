@@ -45,7 +45,7 @@ import org.apache.cassandra.io.util.RandomAccessReader;
 import org.apache.cassandra.service.ActiveRepairService;
 import org.apache.cassandra.utils.*;
 import org.apache.cassandra.utils.concurrent.Refs;
-import org.apache.cassandra.utils.memory.HeapAllocator;
+import org.apache.cassandra.utils.memory.HeapCloner;
 
 import static org.apache.cassandra.utils.TimeUUID.Generator.nextTimeUUID;
 
@@ -280,7 +280,8 @@ public class Scrubber implements Closeable
 
                             outputHandler.warn("Retry failed too. Skipping to next partition (retry's stacktrace follows)", th2);
                             badPartitions++;
-                            seekToNextPartition();
+                            if (!seekToNextPartition())
+                                break;
                         }
                     }
                     else
@@ -290,7 +291,8 @@ public class Scrubber implements Closeable
                         outputHandler.warn("Partition starting at position " + dataStart + " is unreadable; skipping to next");
                         badPartitions++;
                         if (currentIndexKey != null)
-                            seekToNextPartition();
+                            if (!seekToNextPartition())
+                                break;
                     }
                 }
             }
@@ -413,14 +415,14 @@ public class Scrubber implements Closeable
         return indexFile != null && !indexFile.isEOF();
     }
 
-    private void seekToNextPartition()
+    private boolean seekToNextPartition()
     {
         while(nextPartitionPositionFromIndex < dataFile.length())
         {
             try
             {
                 dataFile.seek(nextPartitionPositionFromIndex);
-                return;
+                return true;
             }
             catch (Throwable th)
             {
@@ -431,6 +433,8 @@ public class Scrubber implements Closeable
 
             updateIndexKey();
         }
+
+        return false;
     }
 
     private void saveOutOfOrderPartition(DecoratedKey prevKey, DecoratedKey key, UnfilteredRowIterator iterator)
@@ -824,30 +828,26 @@ public class Scrubber implements Closeable
 
         private Unfiltered fixNegativeLocalExpirationTime(Row row)
         {
-            Row.Builder builder = HeapAllocator.instance.cloningBTreeRowBuilder();
-            builder.newRow(row.clustering());
-            builder.addPrimaryKeyLivenessInfo(row.primaryKeyLivenessInfo().isExpiring() && row.primaryKeyLivenessInfo().localExpirationTime() < 0 ?
-                                              row.primaryKeyLivenessInfo().withUpdatedTimestampAndLocalDeletionTime(row.primaryKeyLivenessInfo().timestamp() + 1, AbstractCell.MAX_DELETION_TIME)
-                                              :row.primaryKeyLivenessInfo());
-            builder.addRowDeletion(row.deletion());
-            for (ColumnData cd : row)
-            {
+            LivenessInfo livenessInfo = row.primaryKeyLivenessInfo();
+            if (livenessInfo.isExpiring() && livenessInfo.localExpirationTime() < 0)
+                livenessInfo = livenessInfo.withUpdatedTimestampAndLocalDeletionTime(livenessInfo.timestamp() + 1, AbstractCell.MAX_DELETION_TIME);
+
+            return row.transformAndFilter(livenessInfo, row.deletion(), cd -> {
                 if (cd.column().isSimple())
                 {
-                    Cell<?> cell = (Cell<?>)cd;
-                    builder.addCell(cell.isExpiring() && cell.localDeletionTime() < 0 ? cell.withUpdatedTimestampAndLocalDeletionTime(cell.timestamp() + 1, AbstractCell.MAX_DELETION_TIME) : cell);
+                    Cell cell = (Cell)cd;
+                    return cell.isExpiring() && cell.localDeletionTime() < 0
+                           ? cell.withUpdatedTimestampAndLocalDeletionTime(cell.timestamp() + 1, AbstractCell.MAX_DELETION_TIME)
+                           : cell;
                 }
                 else
                 {
                     ComplexColumnData complexData = (ComplexColumnData)cd;
-                    builder.addComplexDeletion(complexData.column(), complexData.complexDeletion());
-                    for (Cell<?> cell : complexData)
-                    {
-                        builder.addCell(cell.isExpiring() && cell.localDeletionTime() < 0 ? cell.withUpdatedTimestampAndLocalDeletionTime(cell.timestamp() + 1, AbstractCell.MAX_DELETION_TIME) : cell);
-                    }
+                    return complexData.transformAndFilter(cell -> cell.isExpiring() && cell.localDeletionTime() < 0
+                                                                  ? cell.withUpdatedTimestampAndLocalDeletionTime(cell.timestamp() + 1, AbstractCell.MAX_DELETION_TIME)
+                                                                  : cell);
                 }
-            }
-            return builder.build();
+            }).clone(HeapCloner.instance);
         }
     }
 }

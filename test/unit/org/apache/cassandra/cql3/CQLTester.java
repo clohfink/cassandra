@@ -45,6 +45,7 @@ import javax.management.remote.rmi.RMIConnectorServer;
 import com.google.common.base.Objects;
 import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.Iterables;
 
 import org.junit.*;
 
@@ -67,8 +68,8 @@ import org.apache.cassandra.auth.AuthTestUtils;
 import org.apache.cassandra.auth.IRoleManager;
 import org.apache.cassandra.concurrent.ScheduledExecutors;
 import org.apache.cassandra.concurrent.Stage;
+import org.apache.cassandra.config.DataStorageSpec;
 import org.apache.cassandra.config.EncryptionOptions;
-import org.apache.cassandra.config.SmallestDataStorageMebibytes;
 import org.apache.cassandra.db.virtual.VirtualKeyspaceRegistry;
 import org.apache.cassandra.db.virtual.VirtualSchemaKeyspace;
 import org.apache.cassandra.exceptions.InvalidRequestException;
@@ -130,7 +131,7 @@ public abstract class CQLTester
     public static final String KEYSPACE_PER_TEST = "cql_test_keyspace_alt";
     protected static final boolean USE_PREPARED_VALUES = Boolean.valueOf(System.getProperty("cassandra.test.use_prepared", "true"));
     protected static final boolean REUSE_PREPARED = Boolean.valueOf(System.getProperty("cassandra.test.reuse_prepared", "true"));
-    protected static final long ROW_CACHE_SIZE_IN_MIB = new SmallestDataStorageMebibytes(System.getProperty("cassandra.test.row_cache_size", "0MiB")).toMebibytes();
+    protected static final long ROW_CACHE_SIZE_IN_MIB = new DataStorageSpec.LongMebibytesBound(System.getProperty("cassandra.test.row_cache_size", "0MiB")).toMebibytes();
     private static final AtomicInteger seqNumber = new AtomicInteger();
     protected static final ByteBuffer TOO_BIG = ByteBuffer.allocate(FBUtilities.MAX_UNSIGNED_SHORT + 1024);
     public static final String DATA_CENTER = ServerTestUtils.DATA_CENTER;
@@ -285,7 +286,7 @@ public abstract class CQLTester
         jmxServer = JMXServerUtils.createJMXServer(jmxPort, true);
         jmxServer.start();
     }
-    
+
     public static void createMBeanServerConnection() throws Exception
     {
         assert jmxServer != null : "jmxServer not started";
@@ -428,12 +429,14 @@ public abstract class CQLTester
 
     public static List<String> buildNodetoolArgs(List<String> args)
     {
+        int port = jmxPort == 0 ? Integer.getInteger("cassandra.jmx.local.port", 7199) : jmxPort;
+        String host = jmxHost == null ? "127.0.0.1" : jmxHost;
         List<String> allArgs = new ArrayList<>();
         allArgs.add("bin/nodetool");
         allArgs.add("-p");
-        allArgs.add(Integer.toString(jmxPort));
+        allArgs.add(String.valueOf(port));
         allArgs.add("-h");
-        allArgs.add(jmxHost == null ? "127.0.0.1" : jmxHost);
+        allArgs.add(host);
         allArgs.addAll(args);
         return allArgs;
     }
@@ -842,14 +845,14 @@ public abstract class CQLTester
         logger.info(fullQuery);
         schemaChange(fullQuery);
     }
- 
+
     protected void alterKeyspaceMayThrow(String query) throws Throwable
     {
         String fullQuery = String.format(query, currentKeyspace());
         logger.info(fullQuery);
         QueryProcessor.executeOnceInternal(fullQuery);
     }
-    
+
     protected String createKeyspaceName()
     {
         String currentKeyspace = String.format("keyspace_%02d", seqNumber.getAndIncrement());
@@ -1174,7 +1177,7 @@ public abstract class CQLTester
         Assert.assertNotNull(warnings);
         assertTrue(warnings.stream().anyMatch(s -> s.contains(message)));
     }
-    
+
     protected static void assertWarningsEquals(ResultSet rs, String... messages)
     {
         assertWarningsEquals(rs.getExecutionInfo().getWarnings(), messages);
@@ -1193,7 +1196,7 @@ public abstract class CQLTester
 
     protected static void assertNoWarningContains(List<String> warnings, String message)
     {
-        if (warnings != null) 
+        if (warnings != null)
         {
             assertFalse(warnings.stream().anyMatch(s -> s.contains(message)));
         }
@@ -1248,6 +1251,11 @@ public abstract class CQLTester
     protected com.datastax.driver.core.ResultSet executeNetWithPaging(ProtocolVersion version, String query, int pageSize)
     {
         return sessionNet(version).execute(new SimpleStatement(formatQuery(query)).setFetchSize(pageSize));
+    }
+
+    protected com.datastax.driver.core.ResultSet executeNetWithPaging(ProtocolVersion version, String query, String KS, int pageSize)
+    {
+        return sessionNet(version).execute(new SimpleStatement(formatQuery(KS, query)).setKeyspace(KS).setFetchSize(pageSize));
     }
 
     protected com.datastax.driver.core.ResultSet executeNetWithPaging(String query, int pageSize)
@@ -1427,6 +1435,13 @@ public abstract class CQLTester
 
         Assert.assertTrue(String.format("Got %s rows than expected. Expected %d but got %d (using protocol version %s)",
                                         rows.length>i ? "less" : "more", rows.length, i, protocolVersion), i == rows.length);
+    }
+
+    protected void assertRowCountNet(ResultSet r1, int expectedCount)
+    {
+        Assert.assertFalse("Received a null resultset when expected count was > 0", expectedCount > 0 && r1 == null);
+        int actualRowCount = Iterables.size(r1);
+        Assert.assertEquals(String.format("expected %d rows but received %d", expectedCount, actualRowCount), expectedCount, actualRowCount);
     }
 
     public static void assertRows(UntypedResultSet result, Object[]... rows)
@@ -2120,13 +2135,27 @@ public abstract class CQLTester
         return ImmutableSet.copyOf(values);
     }
 
+    // LinkedHashSets are iterable in insertion order, which is important for some tests
+    protected LinkedHashSet<Object> linkedHashSet(Object...values)
+    {
+        LinkedHashSet<Object> s = new LinkedHashSet<>(values.length);
+        s.addAll(Arrays.asList(values));
+        return s;
+    }
+
     protected Object map(Object...values)
+    {
+        return linkedHashMap(values);
+    }
+
+    // LinkedHashMaps are iterable in insertion order, which is important for some tests
+    protected static LinkedHashMap<Object, Object> linkedHashMap(Object...values)
     {
         if (values.length % 2 != 0)
             throw new IllegalArgumentException("Invalid number of arguments, got " + values.length);
 
         int size = values.length / 2;
-        Map<Object, Object> m = new LinkedHashMap<>(size);
+        LinkedHashMap<Object, Object> m = new LinkedHashMap<>(size);
         for (int i = 0; i < size; i++)
             m.put(values[2 * i], values[(2 * i) + 1]);
         return m;

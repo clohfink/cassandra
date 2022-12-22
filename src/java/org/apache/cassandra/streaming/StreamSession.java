@@ -644,7 +644,7 @@ public class StreamSession implements IEndpointStateChangeSubscriber
      * after completion or because the peer was down, otherwise sends a {@link SessionFailedMessage} and closes
      * the session as {@link State#FAILED}.
      */
-    public synchronized Future<?> onError(Throwable e)
+    public Future<?> onError(Throwable e)
     {
         boolean isEofException = e instanceof EOFException || e instanceof ClosedChannelException;
         if (isEofException)
@@ -668,10 +668,13 @@ public class StreamSession implements IEndpointStateChangeSubscriber
         }
 
         logError(e);
-        // send session failure message
+
         if (channel.connected())
-            channel.sendControlMessage(new SessionFailedMessage()).syncUninterruptibly();
-        // fail session
+        {
+            state(State.FAILED); // make sure subsequent error handling sees the session in a final state 
+            channel.sendControlMessage(new SessionFailedMessage()).awaitUninterruptibly();
+        }
+
         return closeSession(State.FAILED);
     }
 
@@ -679,11 +682,11 @@ public class StreamSession implements IEndpointStateChangeSubscriber
     {
         if (e instanceof SocketTimeoutException)
         {
-            logger.error("[Stream #{}] Did not receive response from peer {}{} for {} secs. Is peer down? " +
-                         "If not, maybe try increasing streaming_keep_alive_period.", planId(),
+            logger.error("[Stream #{}] Timeout from peer {}{}. Is peer down? " +
+                         "If not, and earlier failure detection is required enable (or lower) streaming_keep_alive_period.",
+                         planId(),
                          hostAddressAndPort(channel.peer()),
                          channel.peer().equals(channel.connectedTo()) ? "" : " through " + hostAddressAndPort(channel.connectedTo()),
-                         2 * DatabaseDescriptor.getStreamingKeepAlivePeriod(),
                          e);
         }
         else
@@ -1116,6 +1119,12 @@ public class StreamSession implements IEndpointStateChangeSubscriber
 
     public synchronized void abort()
     {
+        if (state.isFinalState())
+        {
+            logger.debug("[Stream #{}] Stream session with peer {} is already in a final state on abort.", planId(), peer);
+            return;
+        }
+
         logger.info("[Stream #{}] Aborting stream session with peer {}...", planId(), peer);
 
         if (channel.connected())

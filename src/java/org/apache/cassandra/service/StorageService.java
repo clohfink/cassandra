@@ -32,7 +32,6 @@ import java.util.Map.Entry;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -399,7 +398,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
     {
         if (gossipActive)
         {
-            if (!isNormal())
+            if (!isNormal() && joinRing)
                 throw new IllegalStateException("Unable to stop gossip because the node is not in the normal state. Try to stop the node instead.");
 
             logger.warn("Stopping gossip by operator request");
@@ -1525,11 +1524,29 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
 
     public void setStreamThroughputMbitPerSec(int value)
     {
-        int oldValue = DatabaseDescriptor.getStreamThroughputOutboundMegabitsPerSec();
+        double oldValue = DatabaseDescriptor.getStreamThroughputOutboundMegabitsPerSecAsDouble();
         DatabaseDescriptor.setStreamThroughputOutboundMegabitsPerSec(value);
         StreamManager.StreamRateLimiter.updateThroughput();
-        logger.info("setstreamthroughput: throttle set to {}{} megabits per second (was {} megabits per second)",
+        logger.info("setstreamthroughput: throttle set to {}{} megabits per second (was approximately {} megabits per second)",
                     value, value <= 0 ? " (unlimited)" : "", oldValue);
+    }
+
+    public void setStreamThroughputMebibytesPerSec(int value)
+    {
+        double oldValue = DatabaseDescriptor.getStreamThroughputOutboundMebibytesPerSec();
+        DatabaseDescriptor.setStreamThroughputOutboundMebibytesPerSecAsInt(value);
+        StreamManager.StreamRateLimiter.updateThroughput();
+        logger.info("setstreamthroughput: throttle set to {}{} MiB/s (was {} MiB/s)", value, value <= 0 ? " (unlimited)" : "", oldValue);
+    }
+
+    public double getStreamThroughputMebibytesPerSecAsDouble()
+    {
+        return DatabaseDescriptor.getStreamThroughputOutboundMebibytesPerSec();
+    }
+
+    public int getStreamThroughputMebibytesPerSec()
+    {
+        return DatabaseDescriptor.getStreamThroughputOutboundMebibytesPerSecAsInt();
     }
 
     @Deprecated
@@ -1538,23 +1555,29 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
         return getStreamThroughputMbitPerSec();
     }
 
+    @Deprecated
     public int getStreamThroughputMbitPerSec()
     {
         return DatabaseDescriptor.getStreamThroughputOutboundMegabitsPerSec();
     }
 
+    public double getStreamThroughputMbitPerSecAsDouble()
+    {
+        return DatabaseDescriptor.getStreamThroughputOutboundMegabitsPerSecAsDouble();
+    }
+
     public void setEntireSSTableStreamThroughputMebibytesPerSec(int value)
     {
-        int oldValue = DatabaseDescriptor.getEntireSSTableStreamThroughputOutboundMebibytesPerSecAsInt();
+        double oldValue = DatabaseDescriptor.getEntireSSTableStreamThroughputOutboundMebibytesPerSec();
         DatabaseDescriptor.setEntireSSTableStreamThroughputOutboundMebibytesPerSec(value);
         StreamManager.StreamRateLimiter.updateEntireSSTableThroughput();
         logger.info("setstreamthroughput (entire SSTable): throttle set to {}{} MiB/s (was {} MiB/s)",
                     value, value <= 0 ? " (unlimited)" : "", oldValue);
     }
 
-    public int getEntireSSTableStreamThroughputMebibytesPerSec()
+    public double getEntireSSTableStreamThroughputMebibytesPerSecAsDouble()
     {
-        return DatabaseDescriptor.getEntireSSTableStreamThroughputOutboundMebibytesPerSecAsInt();
+        return DatabaseDescriptor.getEntireSSTableStreamThroughputOutboundMebibytesPerSec();
     }
 
     @Deprecated
@@ -1565,7 +1588,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
 
     public void setInterDCStreamThroughputMbitPerSec(int value)
     {
-        int oldValue = DatabaseDescriptor.getInterDCStreamThroughputOutboundMegabitsPerSec();
+        double oldValue = DatabaseDescriptor.getInterDCStreamThroughputOutboundMegabitsPerSecAsDouble();
         DatabaseDescriptor.setInterDCStreamThroughputOutboundMegabitsPerSec(value);
         StreamManager.StreamRateLimiter.updateInterDCThroughput();
         logger.info("setinterdcstreamthroughput: throttle set to {}{} megabits per second (was {} megabits per second)", value, value <= 0 ? " (unlimited)" : "", oldValue);
@@ -1577,24 +1600,59 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
         return getInterDCStreamThroughputMbitPerSec();
     }
 
+    @Deprecated
     public int getInterDCStreamThroughputMbitPerSec()
     {
         return DatabaseDescriptor.getInterDCStreamThroughputOutboundMegabitsPerSec();
     }
 
+    public double getInterDCStreamThroughputMbitPerSecAsDouble()
+    {
+        return DatabaseDescriptor.getInterDCStreamThroughputOutboundMegabitsPerSecAsDouble();
+    }
+
+    public void setInterDCStreamThroughputMebibytesPerSec(int value)
+    {
+        double oldValue = DatabaseDescriptor.getInterDCStreamThroughputOutboundMebibytesPerSec();
+        DatabaseDescriptor.setInterDCStreamThroughputOutboundMebibytesPerSecAsInt(value);
+        StreamManager.StreamRateLimiter.updateInterDCThroughput();
+        logger.info("setinterdcstreamthroughput: throttle set to {}{} MiB/s (was {} MiB/s)", value, value <= 0 ? " (unlimited)" : "", oldValue);
+    }
+
+    public int getInterDCStreamThroughputMebibytesPerSec()
+    {
+        return DatabaseDescriptor.getInterDCStreamThroughputOutboundMebibytesPerSecAsInt();
+    }
+
+    public double getInterDCStreamThroughputMebibytesPerSecAsDouble()
+    {
+        return DatabaseDescriptor.getInterDCStreamThroughputOutboundMebibytesPerSec();
+    }
+
     public void setEntireSSTableInterDCStreamThroughputMebibytesPerSec(int value)
     {
-        int oldValue = DatabaseDescriptor.getEntireSSTableInterDCStreamThroughputOutboundMebibytesPerSecAsInt();
+        double oldValue = DatabaseDescriptor.getEntireSSTableInterDCStreamThroughputOutboundMebibytesPerSec();
         DatabaseDescriptor.setEntireSSTableInterDCStreamThroughputOutboundMebibytesPerSec(value);
         StreamManager.StreamRateLimiter.updateEntireSSTableInterDCThroughput();
         logger.info("setinterdcstreamthroughput (entire SSTable): throttle set to {}{} MiB/s (was {} MiB/s)", value, value <= 0 ? " (unlimited)" : "", oldValue);
     }
 
-    public int getEntireSSTableInterDCStreamThroughputMebibytesPerSec()
+    public double getEntireSSTableInterDCStreamThroughputMebibytesPerSecAsDouble()
     {
-        return DatabaseDescriptor.getEntireSSTableInterDCStreamThroughputOutboundMebibytesPerSecAsInt();
+        return DatabaseDescriptor.getEntireSSTableInterDCStreamThroughputOutboundMebibytesPerSec();
     }
 
+    public double getCompactionThroughtputMibPerSecAsDouble()
+    {
+        return DatabaseDescriptor.getCompactionThroughputMebibytesPerSec();
+    }
+
+    public long getCompactionThroughtputBytesPerSec()
+    {
+        return (long)DatabaseDescriptor.getCompactionThroughputBytesPerSec();
+    }
+
+    @Deprecated
     public int getCompactionThroughputMbPerSec()
     {
         return DatabaseDescriptor.getCompactionThroughputMebibytesPerSecAsInt();
@@ -1602,9 +1660,10 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
 
     public void setCompactionThroughputMbPerSec(int value)
     {
-        int oldValue = DatabaseDescriptor.getCompactionThroughputMebibytesPerSecAsInt();
+        double oldValue = DatabaseDescriptor.getCompactionThroughputMebibytesPerSec();
         DatabaseDescriptor.setCompactionThroughputMebibytesPerSec(value);
-        CompactionManager.instance.setRate(value);
+        double valueInBytes = value * 1024.0 * 1024.0;
+        CompactionManager.instance.setRateInBytes(valueInBytes);
         logger.info("compactionthroughput: throttle set to {} mebibytes per second (was {} mebibytes per second)",
                     value, oldValue);
     }
@@ -2076,10 +2135,31 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
                 throw new RuntimeException(e);
             }
         }
-        else if (Gossiper.instance.getEndpointStateForEndpoint(endpoint).getApplicationState(ApplicationState.RPC_ADDRESS) == null)
-            return endpoint.getAddress().getHostAddress() + ":" + DatabaseDescriptor.getNativeTransportPort();
         else
-            return Gossiper.instance.getEndpointStateForEndpoint(endpoint).getApplicationState(ApplicationState.RPC_ADDRESS).value + ":" + DatabaseDescriptor.getNativeTransportPort();
+        {
+             final String ipAddress;
+             // If RPC_ADDRESS present in gossip for this endpoint use it.  This is expected for 3.x nodes.
+             if (Gossiper.instance.getEndpointStateForEndpoint(endpoint).getApplicationState(ApplicationState.RPC_ADDRESS) != null)
+             {
+                 ipAddress = Gossiper.instance.getEndpointStateForEndpoint(endpoint).getApplicationState(ApplicationState.RPC_ADDRESS).value;
+             }
+             else
+             {
+                 // otherwise just use the IP of the endpoint itself.
+                 ipAddress = endpoint.getHostAddress(false);
+             }
+
+             // include the configured native_transport_port.
+             try
+             {
+                 InetAddressAndPort address = InetAddressAndPort.getByNameOverrideDefaults(ipAddress, DatabaseDescriptor.getNativeTransportPort());
+                 return address.getHostAddress(withPort);
+             }
+             catch (UnknownHostException e)
+             {
+                 throw new RuntimeException(e);
+             }
+         }
     }
 
     public Map<List<String>, List<String>> getRangeToRpcaddressMap(String keyspace)
@@ -3885,7 +3965,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
     @Override
     public void takeSnapshot(String tag, Map<String, String> options, String... entities) throws IOException
     {
-        DurationSpec ttl = options.containsKey("ttl") ? new DurationSpec(options.get("ttl")) : null;
+        DurationSpec.IntSecondsBound ttl = options.containsKey("ttl") ? new DurationSpec.IntSecondsBound(options.get("ttl")) : null;
         if (ttl != null)
         {
             int minAllowedTtlSecs = CassandraRelevantProperties.SNAPSHOT_MIN_ALLOWED_TTL_SECONDS.getInt();
@@ -3988,7 +4068,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
      * @param skipFlush Skip blocking flush of memtable
      * @param keyspaceNames the names of the keyspaces to snapshot; empty means "all."
      */
-    private void takeSnapshot(String tag, boolean skipFlush, DurationSpec ttl, String... keyspaceNames) throws IOException
+    private void takeSnapshot(String tag, boolean skipFlush, DurationSpec.IntSecondsBound ttl, String... keyspaceNames) throws IOException
     {
         if (operationMode == Mode.JOINING)
             throw new IOException("Cannot snapshot until bootstrap completes");
@@ -4034,7 +4114,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
      * @param tableList
      *            list of tables from different keyspace in the form of ks1.cf1 ks2.cf2
      */
-    private void takeMultipleTableSnapshot(String tag, boolean skipFlush, DurationSpec ttl, String... tableList)
+    private void takeMultipleTableSnapshot(String tag, boolean skipFlush, DurationSpec.IntSecondsBound ttl, String... tableList)
             throws IOException
     {
         Map<Keyspace, List<String>> keyspaceColumnfamily = new HashMap<Keyspace, List<String>>();
@@ -4538,6 +4618,8 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
     {
         IEndpointSnitch snitch = DatabaseDescriptor.getEndpointSnitch();
         TokenMetadata tokenMetadata = this.tokenMetadata.cloneOnlyTokenMap();
+        if (!tokenMetadata.isMember(referenceEndpoint))
+            return Collections.emptySet();
         String dc = snitch.getDatacenter(referenceEndpoint);
         Set<Token> tokens = new HashSet<>(tokenMetadata.getTokens(referenceEndpoint));
 
@@ -5450,7 +5532,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
         if (isShutdown()) // do not rely on operationMode in case it gets changed to decomissioned or other
             throw new IllegalStateException(String.format("Unable to start %s because the node was drained.", service));
 
-        if (!isNormal())
+        if (!isNormal() && joinRing) // if the node is not joining the ring, it is gossipping-only member which is in STARTING state forever
             throw new IllegalStateException(String.format("Unable to start %s because the node is not in the normal state.", service));
     }
 
@@ -6008,11 +6090,13 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
         return DatabaseDescriptor.getPartitionerName();
     }
 
+    /** Negative number for disabled */
     public void setSSTablePreemptiveOpenIntervalInMB(int intervalInMB)
     {
         DatabaseDescriptor.setSSTablePreemptiveOpenIntervalInMiB(intervalInMB);
     }
 
+    /** This method can return negative number for disabled */
     public int getSSTablePreemptiveOpenIntervalInMB()
     {
         return DatabaseDescriptor.getSSTablePreemptiveOpenIntervalInMiB();
@@ -6520,11 +6604,11 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
         logger.info("set default keyspace rf to {}", value);
     }
 
-    private static DataStorageSpec parseDataStorageSpec(String threshold)
+    private static DataStorageSpec.LongBytesBound parseDataStorageSpec(String threshold)
     {
         return threshold == null
                ? null
-               : new DataStorageSpec(threshold);
+               : new DataStorageSpec.LongBytesBound(threshold);
     }
 
     public int getDefaultKeyspaceReplicationFactor()
@@ -6597,7 +6681,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
 
     public void setPaxosPurgeGraceSeconds(long v)
     {
-        DatabaseDescriptor.setPaxosPurgeGrace(v, SECONDS);
+        DatabaseDescriptor.setPaxosPurgeGrace(v);
         logger.info("paxos purging grace seconds set to {} via jmx", v);
     }
 
@@ -6727,13 +6811,13 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
     @Override
     public String getMinTrackedPartitionSize()
     {
-        return DatabaseDescriptor.getMinTrackedPartitionSize().toString();
+        return DatabaseDescriptor.getMinTrackedPartitionSizeInBytes().toString();
     }
 
     @Override
     public void setMinTrackedPartitionSize(String value)
     {
-        DatabaseDescriptor.setMinTrackedPartitionSize(parseDataStorageSpec(value));
+        DatabaseDescriptor.setMinTrackedPartitionSizeInBytes(parseDataStorageSpec(value));
     }
 
     @Override

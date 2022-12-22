@@ -93,6 +93,9 @@ import org.apache.cassandra.utils.FBUtilities;
 import static org.apache.cassandra.config.CassandraRelevantProperties.OS_ARCH;
 import static org.apache.cassandra.config.CassandraRelevantProperties.SUN_ARCH_DATA_MODEL;
 import static org.apache.cassandra.config.CassandraRelevantProperties.TEST_JVM_DTEST_DISABLE_SSL;
+import static org.apache.cassandra.config.DataRateSpec.DataRateUnit.BYTES_PER_SECOND;
+import static org.apache.cassandra.config.DataRateSpec.DataRateUnit.MEBIBYTES_PER_SECOND;
+import static org.apache.cassandra.config.DataStorageSpec.DataStorageUnit.MEBIBYTES;
 import static org.apache.cassandra.io.util.FileUtils.ONE_GIB;
 import static org.apache.cassandra.io.util.FileUtils.ONE_MIB;
 import static org.apache.cassandra.utils.Clock.Global.logInitializationOutcome;
@@ -119,7 +122,7 @@ public class DatabaseDescriptor
     /**
      * Request timeouts can not be less than below defined value (see CASSANDRA-9375)
      */
-    static final SmallestDurationMilliseconds LOWEST_ACCEPTED_TIMEOUT = SmallestDurationMilliseconds.inMilliseconds(10L);
+    static final DurationSpec.LongMillisecondsBound LOWEST_ACCEPTED_TIMEOUT = new DurationSpec.LongMillisecondsBound(10L);
 
     private static Supplier<IFailureDetector> newFailureDetector;
     private static IEndpointSnitch snitch;
@@ -162,7 +165,7 @@ public class DatabaseDescriptor
     private static boolean daemonInitialized;
 
     private static final int searchConcurrencyFactor = Integer.parseInt(System.getProperty(Config.PROPERTY_PREFIX + "search_concurrency_factor", "1"));
-    private static DurationSpec autoSnapshoTtl;
+    private static DurationSpec.IntSecondsBound autoSnapshoTtl;
 
     private static volatile boolean disableSTCSInL0 = Boolean.getBoolean(Config.PROPERTY_PREFIX + "disable_stcs_in_l0");
     private static final boolean unsafeSystem = Boolean.getBoolean(Config.PROPERTY_PREFIX + "unsafesystem");
@@ -280,7 +283,7 @@ public class DatabaseDescriptor
         if (clientInitialized)
             return;
         clientInitialized = true;
-
+        setDefaultFailureDetector();
         Config.setClientMode(true);
         conf = new Config();
         diskOptimizationStrategy = new SpinningDiskOptimizationStrategy();
@@ -397,11 +400,13 @@ public class DatabaseDescriptor
         //InetAddressAndPort and get the right defaults
         InetAddressAndPort.initializeDefaultPort(getStoragePort());
 
+        validateUpperBoundStreamingConfig();
+
         if (conf.auto_snapshot_ttl != null)
         {
             try
             {
-                autoSnapshoTtl = new DurationSpec(conf.auto_snapshot_ttl);
+                autoSnapshoTtl = new DurationSpec.IntSecondsBound(conf.auto_snapshot_ttl);
             }
             catch (IllegalArgumentException e)
             {
@@ -490,24 +495,24 @@ public class DatabaseDescriptor
             logger.warn("concurrent_replicates has been deprecated and should be removed from cassandra.yaml");
 
         if (conf.networking_cache_size == null)
-            conf.networking_cache_size = SmallestDataStorageMebibytes.inMebibytes(Math.min(128, (int) (Runtime.getRuntime().maxMemory() / (16 * 1048576))));
+            conf.networking_cache_size = new DataStorageSpec.IntMebibytesBound(Math.min(128, (int) (Runtime.getRuntime().maxMemory() / (16 * 1048576))));
 
         if (conf.file_cache_size == null)
-            conf.file_cache_size = SmallestDataStorageMebibytes.inMebibytes(Math.min(512, (int) (Runtime.getRuntime().maxMemory() / (4 * 1048576))));
+            conf.file_cache_size = new DataStorageSpec.IntMebibytesBound(Math.min(512, (int) (Runtime.getRuntime().maxMemory() / (4 * 1048576))));
 
         // round down for SSDs and round up for spinning disks
         if (conf.file_cache_round_up == null)
             conf.file_cache_round_up = conf.disk_optimization_strategy == Config.DiskOptimizationStrategy.spinning;
 
         if (conf.memtable_offheap_space == null)
-            conf.memtable_offheap_space = SmallestDataStorageMebibytes.inMebibytes( (int) (Runtime.getRuntime().maxMemory() / (4 * 1048576)));
+            conf.memtable_offheap_space = new DataStorageSpec.IntMebibytesBound((int) (Runtime.getRuntime().maxMemory() / (4 * 1048576)));
         // for the moment, we default to twice as much on-heap space as off-heap, as heap overhead is very large
         if (conf.memtable_heap_space == null)
-            conf.memtable_heap_space = SmallestDataStorageMebibytes.inMebibytes((int) (Runtime.getRuntime().maxMemory() / (4 * 1048576)));
-        if (conf.memtable_heap_space.toMebibytesAsInt() == 0)
+            conf.memtable_heap_space = new DataStorageSpec.IntMebibytesBound((int) (Runtime.getRuntime().maxMemory() / (4 * 1048576)));
+        if (conf.memtable_heap_space.toMebibytes() == 0)
             throw new ConfigurationException("memtable_heap_space must be positive, but was " + conf.memtable_heap_space, false);
         logger.info("Global memtable on-heap threshold is enabled at {}", conf.memtable_heap_space);
-        if (conf.memtable_offheap_space.toMebibytesAsInt() == 0)
+        if (conf.memtable_offheap_space.toMebibytes() == 0)
             logger.info("Global memtable off-heap threshold is disabled, HeapAllocator will be used instead");
         else
             logger.info("Global memtable off-heap threshold is enabled at {}", conf.memtable_offheap_space);
@@ -526,7 +531,7 @@ public class DatabaseDescriptor
         }
 
         if (conf.repair_session_space == null)
-            conf.repair_session_space = SmallestDataStorageMebibytes.inMebibytes(Math.max(1, (int) (Runtime.getRuntime().maxMemory() / (16 * 1048576))));
+            conf.repair_session_space = new DataStorageSpec.IntMebibytesBound(Math.max(1, (int) (Runtime.getRuntime().maxMemory() / (16 * 1048576))));
 
         if (conf.repair_session_space.toMebibytes() < 1)
             throw new ConfigurationException("repair_session_space must be > 0, but was " + conf.repair_session_space);
@@ -536,12 +541,10 @@ public class DatabaseDescriptor
         checkForLowestAcceptedTimeouts(conf);
 
         long valueInBytes = conf.native_transport_max_frame_size.toBytes();
-        if (valueInBytes < 0 || valueInBytes > Integer.MAX_VALUE)
+        if (valueInBytes < 0 || valueInBytes > Integer.MAX_VALUE-1)
         {
-            throw new ConfigurationException(String.format("%s must be positive value < %dB, but was %dB",
-                                                           "native_transport_max_frame_size",
-                                                           conf.native_transport_max_frame_size.getUnit()
-                                                                .convert(Integer.MAX_VALUE, DataStorageSpec.DataStorageUnit.BYTES),
+            throw new ConfigurationException(String.format("native_transport_max_frame_size must be positive value < %dB, but was %dB",
+                                                           Integer.MAX_VALUE,
                                                            valueInBytes),
                                              false);
         }
@@ -568,14 +571,14 @@ public class DatabaseDescriptor
 
         if (conf.native_transport_max_request_data_in_flight == null)
         {
-            conf.native_transport_max_request_data_in_flight = DataStorageSpec.inBytes(Runtime.getRuntime().maxMemory() / 10);
+            conf.native_transport_max_request_data_in_flight = new DataStorageSpec.LongBytesBound(Runtime.getRuntime().maxMemory() / 10);
         }
 
         if (conf.native_transport_max_request_data_in_flight_per_ip == null)
         {
-            conf.native_transport_max_request_data_in_flight_per_ip = DataStorageSpec.inBytes(Runtime.getRuntime().maxMemory() / 40);
+            conf.native_transport_max_request_data_in_flight_per_ip = new DataStorageSpec.LongBytesBound(Runtime.getRuntime().maxMemory() / 40);
         }
-        
+
         if (conf.native_transport_rate_limiting_enabled)
             logger.info("Native transport rate-limiting enabled at {} requests/second.", conf.native_transport_max_requests_per_second);
         else
@@ -591,7 +594,7 @@ public class DatabaseDescriptor
                                                                "commitlog_total_space",
                                                                preferredSizeInMiB,
                                                                totalSpaceInBytes, 1, 4);
-            conf.commitlog_total_space = SmallestDataStorageMebibytes.inMebibytes(defaultSpaceInMiB);
+            conf.commitlog_total_space = new DataStorageSpec.IntMebibytesBound(defaultSpaceInMiB);
         }
 
         if (conf.cdc_enabled)
@@ -611,7 +614,7 @@ public class DatabaseDescriptor
                                                                    "cdc_total_space",
                                                                    preferredSizeInMiB,
                                                                    totalSpaceInBytes, 1, 8);
-                conf.cdc_total_space = SmallestDataStorageMebibytes.inMebibytes(defaultSpaceInMiB);
+                conf.cdc_total_space = new DataStorageSpec.IntMebibytesBound(defaultSpaceInMiB);
             }
 
             logger.info("cdc_enabled is true. Starting casssandra node with Change-Data-Capture enabled.");
@@ -719,6 +722,9 @@ public class DatabaseDescriptor
 
             if (preparedStatementsCacheSizeInMiB == 0)
                 throw new NumberFormatException(); // to escape duplicating error message
+
+            // we need this assignment for the Settings virtual table - CASSANDRA-17734
+            conf.prepared_statements_cache_size = new DataStorageSpec.LongMebibytesBound(preparedStatementsCacheSizeInMiB);
         }
         catch (NumberFormatException e)
         {
@@ -735,6 +741,9 @@ public class DatabaseDescriptor
 
             if (keyCacheSizeInMiB < 0)
                 throw new NumberFormatException(); // to escape duplicating error message
+
+            // we need this assignment for the Settings Virtual Table - CASSANDRA-17734
+            conf.key_cache_size = new DataStorageSpec.LongMebibytesBound(keyCacheSizeInMiB);
         }
         catch (NumberFormatException e)
         {
@@ -774,6 +783,9 @@ public class DatabaseDescriptor
                     + conf.paxos_cache_size + "', supported values are <integer> >= 0.", false);
         }
 
+        // we need this assignment for the Settings virtual table - CASSANDRA-17735
+        conf.counter_cache_size = new DataStorageSpec.LongMebibytesBound(counterCacheSizeInMiB);
+
         // if set to empty/"auto" then use 5% of Heap size
         indexSummaryCapacityInMiB = (conf.index_summary_capacity == null)
                                    ? Math.max(1, (int) (Runtime.getRuntime().totalMemory() * 0.05 / 1024 / 1024))
@@ -782,6 +794,9 @@ public class DatabaseDescriptor
         if (indexSummaryCapacityInMiB < 0)
             throw new ConfigurationException("index_summary_capacity option was set incorrectly to '"
                                              + conf.index_summary_capacity.toString() + "', it should be a non-negative integer.", false);
+
+        // we need this assignment for the Settings virtual table - CASSANDRA-17735
+        conf.index_summary_capacity = new DataStorageSpec.LongMebibytesBound(indexSummaryCapacityInMiB);
 
         if (conf.user_defined_functions_fail_timeout.toMilliseconds() < conf.user_defined_functions_warn_timeout.toMilliseconds())
             throw new ConfigurationException("user_defined_functions_warn_timeout must less than user_defined_function_fail_timeout", false);
@@ -803,7 +818,7 @@ public class DatabaseDescriptor
                                              + conf.commitlog_segment_size.toString(), false);
 
         if (conf.max_mutation_size == null)
-            conf.max_mutation_size = SmallestDataStorageKibibytes.inKibibytes(conf.commitlog_segment_size.toKibibytes() / 2);
+            conf.max_mutation_size = new DataStorageSpec.IntKibibytesBound(conf.commitlog_segment_size.toKibibytes() / 2);
         else if (conf.commitlog_segment_size.toKibibytes() < 2 * conf.max_mutation_size.toKibibytes())
             throw new ConfigurationException("commitlog_segment_size must be at least twice the size of max_mutation_size / 1024", false);
 
@@ -872,7 +887,7 @@ public class DatabaseDescriptor
             Math.min(conf.internode_application_receive_queue_reserve_endpoint_capacity.toBytes(),
                      conf.internode_application_send_queue_reserve_endpoint_capacity.toBytes());
 
-            conf.internode_max_message_size = DataStorageSpec.inBytes(maxMessageSizeInBytes);
+            conf.internode_max_message_size = new DataStorageSpec.IntBytesBound(maxMessageSizeInBytes);
         }
 
         validateMaxConcurrentAutoUpgradeTasksConf(conf.max_concurrent_automatic_sstable_upgrades);
@@ -891,6 +906,36 @@ public class DatabaseDescriptor
             conf.paxos_state_purging = PaxosStatePurging.legacy;
 
         logInitializationOutcome(logger);
+    }
+
+    @VisibleForTesting
+    static void validateUpperBoundStreamingConfig() throws ConfigurationException
+    {
+        // below 2 checks are needed in order to match the pre-CASSANDRA-15234 upper bound for those parameters which were still in megabits per second
+        if (conf.stream_throughput_outbound.toMegabitsPerSecond() >= Integer.MAX_VALUE)
+        {
+            throw new ConfigurationException("Invalid value of stream_throughput_outbound: " + conf.stream_throughput_outbound.toString(), false);
+        }
+
+        if (conf.inter_dc_stream_throughput_outbound.toMegabitsPerSecond() >= Integer.MAX_VALUE)
+        {
+            throw new ConfigurationException("Invalid value of inter_dc_stream_throughput_outbound: " + conf.inter_dc_stream_throughput_outbound.toString(), false);
+        }
+
+        if (conf.entire_sstable_stream_throughput_outbound.toMebibytesPerSecond() >= Integer.MAX_VALUE)
+        {
+            throw new ConfigurationException("Invalid value of entire_sstable_stream_throughput_outbound: " + conf.entire_sstable_stream_throughput_outbound.toString(), false);
+        }
+
+        if (conf.entire_sstable_inter_dc_stream_throughput_outbound.toMebibytesPerSecond() >= Integer.MAX_VALUE)
+        {
+            throw new ConfigurationException("Invalid value of entire_sstable_inter_dc_stream_throughput_outbound: " + conf.entire_sstable_inter_dc_stream_throughput_outbound.toString(), false);
+        }
+
+        if (conf.compaction_throughput.toMebibytesPerSecond() >= Integer.MAX_VALUE)
+        {
+            throw new ConfigurationException("Invalid value of compaction_throughput: " + conf.compaction_throughput.toString(), false);
+        }
     }
 
     @VisibleForTesting
@@ -922,7 +967,7 @@ public class DatabaseDescriptor
         validateReadThresholds("row_index_read_size", config.row_index_read_size_warn_threshold, config.row_index_read_size_fail_threshold);
     }
 
-    private static void validateReadThresholds(String name, DataStorageSpec warn, DataStorageSpec fail)
+    private static void validateReadThresholds(String name, DataStorageSpec.LongBytesBound warn, DataStorageSpec.LongBytesBound fail)
     {
         if (fail != null && warn != null && fail.toBytes() < warn.toBytes())
             throw new ConfigurationException(String.format("%s (%s) must be greater than or equal to %s (%s)",
@@ -1135,49 +1180,49 @@ public class DatabaseDescriptor
     @VisibleForTesting
     static void checkForLowestAcceptedTimeouts(Config conf)
     {
-        if(conf.read_request_timeout.toMillisecondsAsInt() < LOWEST_ACCEPTED_TIMEOUT.toMillisecondsAsInt())
+        if(conf.read_request_timeout.toMilliseconds() < LOWEST_ACCEPTED_TIMEOUT.toMilliseconds())
         {
             logInfo("read_request_timeout", conf.read_request_timeout, LOWEST_ACCEPTED_TIMEOUT);
-            conf.read_request_timeout = new SmallestDurationMilliseconds("10ms");
+            conf.read_request_timeout = new DurationSpec.LongMillisecondsBound("10ms");
         }
 
-        if(conf.range_request_timeout.toMillisecondsAsInt() < LOWEST_ACCEPTED_TIMEOUT.toMillisecondsAsInt())
+        if(conf.range_request_timeout.toMilliseconds() < LOWEST_ACCEPTED_TIMEOUT.toMilliseconds())
         {
             logInfo("range_request_timeout", conf.range_request_timeout, LOWEST_ACCEPTED_TIMEOUT);
-            conf.range_request_timeout = new SmallestDurationMilliseconds("10ms");
+            conf.range_request_timeout = new DurationSpec.LongMillisecondsBound("10ms");
         }
 
-        if(conf.request_timeout.toMillisecondsAsInt() < LOWEST_ACCEPTED_TIMEOUT.toMillisecondsAsInt())
+        if(conf.request_timeout.toMilliseconds() < LOWEST_ACCEPTED_TIMEOUT.toMilliseconds())
         {
             logInfo("request_timeout", conf.request_timeout, LOWEST_ACCEPTED_TIMEOUT);
-            conf.request_timeout = new SmallestDurationMilliseconds("10ms");
+            conf.request_timeout = new DurationSpec.LongMillisecondsBound("10ms");
         }
 
-        if(conf.write_request_timeout.toMillisecondsAsInt() < LOWEST_ACCEPTED_TIMEOUT.toMillisecondsAsInt())
+        if(conf.write_request_timeout.toMilliseconds() < LOWEST_ACCEPTED_TIMEOUT.toMilliseconds())
         {
             logInfo("write_request_timeout", conf.write_request_timeout, LOWEST_ACCEPTED_TIMEOUT);
-            conf.write_request_timeout = new SmallestDurationMilliseconds("10ms");
+            conf.write_request_timeout = new DurationSpec.LongMillisecondsBound("10ms");
         }
 
-        if(conf.cas_contention_timeout.toMillisecondsAsInt() < LOWEST_ACCEPTED_TIMEOUT.toMillisecondsAsInt())
+        if(conf.cas_contention_timeout.toMilliseconds() < LOWEST_ACCEPTED_TIMEOUT.toMilliseconds())
         {
             logInfo("cas_contention_timeout", conf.cas_contention_timeout, LOWEST_ACCEPTED_TIMEOUT);
-            conf.cas_contention_timeout = new SmallestDurationMilliseconds("10ms");
+            conf.cas_contention_timeout = new DurationSpec.LongMillisecondsBound("10ms");
         }
 
-        if(conf.counter_write_request_timeout.toMillisecondsAsInt()< LOWEST_ACCEPTED_TIMEOUT.toMillisecondsAsInt())
+        if(conf.counter_write_request_timeout.toMilliseconds()< LOWEST_ACCEPTED_TIMEOUT.toMilliseconds())
         {
             logInfo("counter_write_request_timeout", conf.counter_write_request_timeout, LOWEST_ACCEPTED_TIMEOUT);
-            conf.counter_write_request_timeout = new SmallestDurationMilliseconds("10ms");
+            conf.counter_write_request_timeout = new DurationSpec.LongMillisecondsBound("10ms");
         }
-        if(conf.truncate_request_timeout.toMillisecondsAsInt() < LOWEST_ACCEPTED_TIMEOUT.toMillisecondsAsInt())
+        if(conf.truncate_request_timeout.toMilliseconds() < LOWEST_ACCEPTED_TIMEOUT.toMilliseconds())
         {
             logInfo("truncate_request_timeout", conf.truncate_request_timeout, LOWEST_ACCEPTED_TIMEOUT);
             conf.truncate_request_timeout = LOWEST_ACCEPTED_TIMEOUT;
         }
     }
 
-    private static void logInfo(String property, SmallestDurationMilliseconds actualValue, SmallestDurationMilliseconds lowestAcceptedValue)
+    private static void logInfo(String property, DurationSpec.LongMillisecondsBound actualValue, DurationSpec.LongMillisecondsBound lowestAcceptedValue)
     {
         logger.info("found {}::{} less than lowest acceptable value {}, continuing with {}",
                     property,
@@ -1359,19 +1404,19 @@ public class DatabaseDescriptor
 
     public static int getPermissionsValidity()
     {
-        return conf.permissions_validity.toMillisecondsAsInt();
+        return conf.permissions_validity.toMilliseconds();
     }
 
     public static void setPermissionsValidity(int timeout)
     {
-        conf.permissions_validity = SmallestDurationMilliseconds.inMilliseconds(timeout);
+        conf.permissions_validity = new DurationSpec.IntMillisecondsBound(timeout);
     }
 
     public static int getPermissionsUpdateInterval()
     {
         return conf.permissions_update_interval == null
-             ? conf.permissions_validity.toMillisecondsAsInt()
-             : conf.permissions_update_interval.toMillisecondsAsInt();
+             ? conf.permissions_validity.toMilliseconds()
+             : conf.permissions_update_interval.toMilliseconds();
     }
 
     public static void setPermissionsUpdateInterval(int updateInterval)
@@ -1379,16 +1424,7 @@ public class DatabaseDescriptor
         if (updateInterval == -1)
             conf.permissions_update_interval = null;
         else
-        {
-            try
-            {
-                conf.permissions_update_interval = SmallestDurationMilliseconds.inMilliseconds(updateInterval);
-            }
-            catch (ConfigurationException e)
-            {
-                throw new IllegalArgumentException("permissions_update_interval should be >= -1");
-            }
-        }
+            conf.permissions_update_interval = new DurationSpec.IntMillisecondsBound(updateInterval);
     }
 
     public static int getPermissionsCacheMaxEntries()
@@ -1413,19 +1449,19 @@ public class DatabaseDescriptor
 
     public static int getRolesValidity()
     {
-        return conf.roles_validity.toMillisecondsAsInt();
+        return conf.roles_validity.toMilliseconds();
     }
 
     public static void setRolesValidity(int validity)
     {
-        conf.roles_validity = SmallestDurationMilliseconds.inMilliseconds(validity);
+        conf.roles_validity = new DurationSpec.IntMillisecondsBound(validity);
     }
 
     public static int getRolesUpdateInterval()
     {
         return conf.roles_update_interval == null
-             ? conf.roles_validity.toMillisecondsAsInt()
-             : conf.roles_update_interval.toMillisecondsAsInt();
+             ? conf.roles_validity.toMilliseconds()
+             : conf.roles_update_interval.toMilliseconds();
     }
 
     public static void setRolesCacheActiveUpdate(boolean update)
@@ -1443,16 +1479,7 @@ public class DatabaseDescriptor
         if (interval == -1)
             conf.roles_update_interval = null;
         else
-        {
-            try
-            {
-                conf.roles_update_interval = SmallestDurationMilliseconds.inMilliseconds(interval);
-            }
-            catch(ConfigurationException e)
-            {
-                throw new IllegalArgumentException("roles_update_interval should be >= -1");
-            }
-        }
+            conf.roles_update_interval = new DurationSpec.IntMillisecondsBound(interval);
     }
 
     public static int getRolesCacheMaxEntries()
@@ -1467,19 +1494,19 @@ public class DatabaseDescriptor
 
     public static int getCredentialsValidity()
     {
-        return conf.credentials_validity.toMillisecondsAsInt();
+        return conf.credentials_validity.toMilliseconds();
     }
 
     public static void setCredentialsValidity(int timeout)
     {
-        conf.credentials_validity = SmallestDurationMilliseconds.inMilliseconds(timeout);
+        conf.credentials_validity = new DurationSpec.IntMillisecondsBound(timeout);
     }
 
     public static int getCredentialsUpdateInterval()
     {
         return conf.credentials_update_interval == null
-               ? conf.credentials_validity.toMillisecondsAsInt()
-               : conf.credentials_update_interval.toMillisecondsAsInt();
+               ? conf.credentials_validity.toMilliseconds()
+               : conf.credentials_update_interval.toMilliseconds();
     }
 
     public static void setCredentialsUpdateInterval(int updateInterval)
@@ -1487,16 +1514,7 @@ public class DatabaseDescriptor
         if (updateInterval == -1)
             conf.credentials_update_interval = null;
         else
-        {
-            try
-            {
-                conf.credentials_update_interval = SmallestDurationMilliseconds.inMilliseconds(updateInterval);
-            }
-            catch (ConfigurationException e)
-            {
-                throw new IllegalArgumentException("credentials_update_interval should be >= -1.");
-            }
-        }
+            conf.credentials_update_interval = new DurationSpec.IntMillisecondsBound(updateInterval);
     }
 
     public static int getCredentialsCacheMaxEntries()
@@ -1521,12 +1539,13 @@ public class DatabaseDescriptor
 
     public static int getMaxValueSize()
     {
-        return conf.max_value_size.toBytesAsInt();
+        return Ints.saturatedCast(conf.max_value_size.toMebibytes() * 1024L * 1024);
     }
 
     public static void setMaxValueSize(int maxValueSizeInBytes)
     {
-        conf.max_value_size = SmallestDataStorageMebibytes.inBytes(maxValueSizeInBytes);
+        // the below division is safe as this setter is used only in tests with values that won't lead to precision loss
+        conf.max_value_size = new DataStorageSpec.IntMebibytesBound((maxValueSizeInBytes / (1024L * 1024)), MEBIBYTES);
     }
 
     /**
@@ -1613,56 +1632,52 @@ public class DatabaseDescriptor
 
     public static int getColumnIndexSize()
     {
-        return conf.column_index_size.toBytesAsInt();
+        return conf.column_index_size.toBytes();
     }
 
     public static int getColumnIndexSizeInKiB()
     {
-        return conf.column_index_size.toKibibytesAsInt();
+        return conf.column_index_size.toKibibytes();
     }
 
     public static void setColumnIndexSize(int val)
     {
-        SmallestDataStorageKibibytes memory = SmallestDataStorageKibibytes.inKibibytes(val);
-        checkValidForByteConversion(memory, "column_index_size");
-        conf.column_index_size = SmallestDataStorageKibibytes.inKibibytes(val);
+        conf.column_index_size =  createIntKibibyteBoundAndEnsureItIsValidForByteConversion(val,"column_index_size");
     }
 
     public static int getColumnIndexCacheSize()
     {
-        return conf.column_index_cache_size.toBytesAsInt();
+        return conf.column_index_cache_size.toBytes();
     }
 
     public static int getColumnIndexCacheSizeInKiB()
     {
-        return conf.column_index_cache_size.toKibibytesAsInt();
+        return conf.column_index_cache_size.toKibibytes();
     }
 
     public static void setColumnIndexCacheSize(int val)
     {
-        SmallestDataStorageKibibytes memory = SmallestDataStorageKibibytes.inKibibytes(val);
-        checkValidForByteConversion(memory, "column_index_cache_size");
-        conf.column_index_cache_size = SmallestDataStorageKibibytes.inKibibytes(val);
+        conf.column_index_cache_size = createIntKibibyteBoundAndEnsureItIsValidForByteConversion(val,"column_index_cache_size");
     }
 
     public static int getBatchSizeWarnThreshold()
     {
-        return conf.batch_size_warn_threshold.toBytesAsInt();
+        return conf.batch_size_warn_threshold.toBytes();
     }
 
     public static int getBatchSizeWarnThresholdInKiB()
     {
-        return conf.batch_size_warn_threshold.toKibibytesAsInt();
+        return conf.batch_size_warn_threshold.toKibibytes();
     }
 
     public static long getBatchSizeFailThreshold()
     {
-        return conf.batch_size_fail_threshold.toBytesAsInt();
+        return conf.batch_size_fail_threshold.toBytesInLong();
     }
 
     public static int getBatchSizeFailThresholdInKiB()
     {
-        return conf.batch_size_fail_threshold.toKibibytesAsInt();
+        return conf.batch_size_fail_threshold.toKibibytes();
     }
 
     public static int getUnloggedBatchAcrossPartitionsWarnThreshold()
@@ -1672,14 +1687,12 @@ public class DatabaseDescriptor
 
     public static void setBatchSizeWarnThresholdInKiB(int threshold)
     {
-        SmallestDataStorageKibibytes storage = SmallestDataStorageKibibytes.inKibibytes(threshold);
-        checkValidForByteConversion(storage, "batch_size_warn_threshold");
-        conf.batch_size_warn_threshold = SmallestDataStorageKibibytes.inKibibytes(threshold);
+        conf.batch_size_warn_threshold = createIntKibibyteBoundAndEnsureItIsValidForByteConversion(threshold,"batch_size_warn_threshold");
     }
 
     public static void setBatchSizeFailThresholdInKiB(int threshold)
     {
-        conf.batch_size_fail_threshold = SmallestDataStorageKibibytes.inKibibytes(threshold);
+        conf.batch_size_fail_threshold = new DataStorageSpec.IntKibibytesBound(threshold);
     }
 
     public static Collection<String> getInitialTokens()
@@ -1765,7 +1778,7 @@ public class DatabaseDescriptor
 
     public static void setNativeTransportIdleTimeout(long nativeTransportTimeout)
     {
-        conf.native_transport_idle_timeout= SmallestDurationMilliseconds.inMilliseconds(nativeTransportTimeout);
+        conf.native_transport_idle_timeout = new DurationSpec.LongMillisecondsBound(nativeTransportTimeout);
     }
 
     public static long getRpcTimeout(TimeUnit unit)
@@ -1775,7 +1788,7 @@ public class DatabaseDescriptor
 
     public static void setRpcTimeout(long timeOutInMillis)
     {
-        conf.request_timeout = SmallestDurationMilliseconds.inMilliseconds(timeOutInMillis);
+        conf.request_timeout = new DurationSpec.LongMillisecondsBound(timeOutInMillis);
     }
 
     public static long getReadRpcTimeout(TimeUnit unit)
@@ -1785,7 +1798,7 @@ public class DatabaseDescriptor
 
     public static void setReadRpcTimeout(long timeOutInMillis)
     {
-        conf.read_request_timeout = SmallestDurationMilliseconds.inMilliseconds(timeOutInMillis);
+        conf.read_request_timeout = new DurationSpec.LongMillisecondsBound(timeOutInMillis);
     }
 
     public static long getRangeRpcTimeout(TimeUnit unit)
@@ -1795,7 +1808,7 @@ public class DatabaseDescriptor
 
     public static void setRangeRpcTimeout(long timeOutInMillis)
     {
-        conf.range_request_timeout = SmallestDurationMilliseconds.inMilliseconds(timeOutInMillis);
+        conf.range_request_timeout = new DurationSpec.LongMillisecondsBound(timeOutInMillis);
     }
 
     public static long getWriteRpcTimeout(TimeUnit unit)
@@ -1805,7 +1818,7 @@ public class DatabaseDescriptor
 
     public static void setWriteRpcTimeout(long timeOutInMillis)
     {
-        conf.write_request_timeout = SmallestDurationMilliseconds.inMilliseconds(timeOutInMillis);
+        conf.write_request_timeout = new DurationSpec.LongMillisecondsBound(timeOutInMillis);
     }
 
     public static long getCounterWriteRpcTimeout(TimeUnit unit)
@@ -1815,7 +1828,7 @@ public class DatabaseDescriptor
 
     public static void setCounterWriteRpcTimeout(long timeOutInMillis)
     {
-        conf.counter_write_request_timeout = SmallestDurationMilliseconds.inMilliseconds(timeOutInMillis);
+        conf.counter_write_request_timeout = new DurationSpec.LongMillisecondsBound(timeOutInMillis);
     }
 
     public static long getCasContentionTimeout(TimeUnit unit)
@@ -1825,7 +1838,7 @@ public class DatabaseDescriptor
 
     public static void setCasContentionTimeout(long timeOutInMillis)
     {
-        conf.cas_contention_timeout = SmallestDurationMilliseconds.inMilliseconds(timeOutInMillis);
+        conf.cas_contention_timeout = new DurationSpec.LongMillisecondsBound(timeOutInMillis);
     }
 
     public static long getTruncateRpcTimeout(TimeUnit unit)
@@ -1835,7 +1848,7 @@ public class DatabaseDescriptor
 
     public static void setTruncateRpcTimeout(long timeOutInMillis)
     {
-        conf.truncate_request_timeout = SmallestDurationMilliseconds.inMilliseconds(timeOutInMillis);
+        conf.truncate_request_timeout = new DurationSpec.LongMillisecondsBound(timeOutInMillis);
     }
 
     public static long getRepairRpcTimeout(TimeUnit unit)
@@ -1845,7 +1858,7 @@ public class DatabaseDescriptor
 
     public static void setRepairRpcTimeout(Long timeOutInMillis)
     {
-        conf.repair_request_timeout = SmallestDurationMilliseconds.inMilliseconds(timeOutInMillis);
+        conf.repair_request_timeout = new DurationSpec.LongMillisecondsBound(timeOutInMillis);
     }
 
     public static boolean hasCrossNodeTimeout()
@@ -1972,17 +1985,38 @@ public class DatabaseDescriptor
         return conf.compaction_throughput.toMebibytesPerSecondAsInt();
     }
 
+    public static double getCompactionThroughputBytesPerSec()
+    {
+        return conf.compaction_throughput.toBytesPerSecond();
+    }
+
     public static double getCompactionThroughputMebibytesPerSec()
     {
         return conf.compaction_throughput.toMebibytesPerSecond();
     }
 
-    public static void setCompactionThroughputMebibytesPerSec(int value)
+    @VisibleForTesting // only for testing!
+    public static void setCompactionThroughputBytesPerSec(int value)
     {
-        conf.compaction_throughput = DataRateSpec.inMebibytesPerSecond(value);
+        if (BYTES_PER_SECOND.toMebibytesPerSecond(value) >= Integer.MAX_VALUE)
+            throw new IllegalArgumentException("compaction_throughput: " + value +
+                                               " is too large; it should be less than " +
+                                               Integer.MAX_VALUE + " in MiB/s");
+
+        conf.compaction_throughput = new DataRateSpec.LongBytesPerSecondBound(value);
     }
 
-    public static long getCompactionLargePartitionWarningThreshold() { return conf.compaction_large_partition_warning_threshold.toBytes(); }
+    public static void setCompactionThroughputMebibytesPerSec(int value)
+    {
+        if (value == Integer.MAX_VALUE)
+            throw new IllegalArgumentException("compaction_throughput: " + value +
+                                               " is too large; it should be less than " +
+                                               Integer.MAX_VALUE + " in MiB/s");
+
+        conf.compaction_throughput = new DataRateSpec.LongBytesPerSecondBound(value, MEBIBYTES_PER_SECOND);
+    }
+
+    public static long getCompactionLargePartitionWarningThreshold() { return conf.compaction_large_partition_warning_threshold.toBytesInLong(); }
 
     public static int getCompactionTombstoneWarningThreshold()
     {
@@ -2017,7 +2051,7 @@ public class DatabaseDescriptor
 
     public static long getMinFreeSpacePerDriveInBytes()
     {
-        return conf.min_free_space_per_drive.toBytes();
+        return conf.min_free_space_per_drive.toBytesInLong();
     }
 
     public static boolean getDisableSTCSInL0()
@@ -2035,19 +2069,44 @@ public class DatabaseDescriptor
         return conf.stream_throughput_outbound.toMegabitsPerSecondAsInt();
     }
 
+    public static double getStreamThroughputOutboundMegabitsPerSecAsDouble()
+    {
+        return conf.stream_throughput_outbound.toMegabitsPerSecond();
+    }
+
     public static double getStreamThroughputOutboundMebibytesPerSec()
     {
         return conf.stream_throughput_outbound.toMebibytesPerSecond();
     }
 
-    public static void setStreamThroughputOutboundMegabitsPerSec(int value)
+    public static double getStreamThroughputOutboundBytesPerSec()
     {
-        conf.stream_throughput_outbound = DataRateSpec.megabitsPerSecondInMebibytesPerSecond(value);
+        return conf.stream_throughput_outbound.toBytesPerSecond();
     }
 
-    public static int getEntireSSTableStreamThroughputOutboundMebibytesPerSecAsInt()
+    public static int getStreamThroughputOutboundMebibytesPerSecAsInt()
     {
-        return conf.entire_sstable_stream_throughput_outbound.toMebibytesPerSecondAsInt();
+        return conf.stream_throughput_outbound.toMebibytesPerSecondAsInt();
+    }
+
+    public static void setStreamThroughputOutboundMebibytesPerSecAsInt(int value)
+    {
+        if (MEBIBYTES_PER_SECOND.toMegabitsPerSecond(value) >= Integer.MAX_VALUE)
+            throw new IllegalArgumentException("stream_throughput_outbound: " + value  +
+                                               " is too large; it should be less than " +
+                                               Integer.MAX_VALUE + " in megabits/s");
+
+        conf.stream_throughput_outbound = new DataRateSpec.LongBytesPerSecondBound(value, MEBIBYTES_PER_SECOND);
+    }
+
+    public static void setStreamThroughputOutboundBytesPerSec(long value)
+    {
+        conf.stream_throughput_outbound = new DataRateSpec.LongBytesPerSecondBound(value, BYTES_PER_SECOND);
+    }
+
+    public static void setStreamThroughputOutboundMegabitsPerSec(int value)
+    {
+        conf.stream_throughput_outbound = DataRateSpec.LongBytesPerSecondBound.megabitsPerSecondInBytesPerSecond(value);
     }
 
     public static double getEntireSSTableStreamThroughputOutboundMebibytesPerSec()
@@ -2055,9 +2114,19 @@ public class DatabaseDescriptor
         return conf.entire_sstable_stream_throughput_outbound.toMebibytesPerSecond();
     }
 
+    public static double getEntireSSTableStreamThroughputOutboundBytesPerSec()
+    {
+        return conf.entire_sstable_stream_throughput_outbound.toBytesPerSecond();
+    }
+
     public static void setEntireSSTableStreamThroughputOutboundMebibytesPerSec(int value)
     {
-        conf.entire_sstable_stream_throughput_outbound = DataRateSpec.inMebibytesPerSecond(value);
+        if (value == Integer.MAX_VALUE)
+            throw new IllegalArgumentException("entire_sstable_stream_throughput_outbound: " + value +
+                                               " is too large; it should be less than " +
+                                               Integer.MAX_VALUE + " in MiB/s");
+
+        conf.entire_sstable_stream_throughput_outbound = new DataRateSpec.LongBytesPerSecondBound(value, MEBIBYTES_PER_SECOND);
     }
 
     public static int getInterDCStreamThroughputOutboundMegabitsPerSec()
@@ -2065,14 +2134,49 @@ public class DatabaseDescriptor
         return conf.inter_dc_stream_throughput_outbound.toMegabitsPerSecondAsInt();
     }
 
+    public static double getInterDCStreamThroughputOutboundMegabitsPerSecAsDouble()
+    {
+        return conf.inter_dc_stream_throughput_outbound.toMegabitsPerSecond();
+    }
+
     public static double getInterDCStreamThroughputOutboundMebibytesPerSec()
     {
         return conf.inter_dc_stream_throughput_outbound.toMebibytesPerSecond();
     }
 
+    public static double getInterDCStreamThroughputOutboundBytesPerSec()
+    {
+        return conf.inter_dc_stream_throughput_outbound.toBytesPerSecond();
+    }
+
+    public static int getInterDCStreamThroughputOutboundMebibytesPerSecAsInt()
+    {
+        return conf.inter_dc_stream_throughput_outbound.toMebibytesPerSecondAsInt();
+    }
+
+    public static void setInterDCStreamThroughputOutboundMebibytesPerSecAsInt(int value)
+    {
+        if (MEBIBYTES_PER_SECOND.toMegabitsPerSecond(value) >= Integer.MAX_VALUE)
+            throw new IllegalArgumentException("inter_dc_stream_throughput_outbound: " + value +
+                                               " is too large; it should be less than " +
+                                               Integer.MAX_VALUE + " in megabits/s");
+
+        conf.inter_dc_stream_throughput_outbound = new DataRateSpec.LongBytesPerSecondBound(value, MEBIBYTES_PER_SECOND);
+    }
+
+    public static void setInterDCStreamThroughputOutboundBytesPerSec(long value)
+    {
+        conf.inter_dc_stream_throughput_outbound = new DataRateSpec.LongBytesPerSecondBound(value, BYTES_PER_SECOND);
+    }
+
     public static void setInterDCStreamThroughputOutboundMegabitsPerSec(int value)
     {
-        conf.inter_dc_stream_throughput_outbound = DataRateSpec.megabitsPerSecondInMebibytesPerSecond(value);
+        conf.inter_dc_stream_throughput_outbound = DataRateSpec.LongBytesPerSecondBound.megabitsPerSecondInBytesPerSecond(value);
+    }
+
+    public static double getEntireSSTableInterDCStreamThroughputOutboundBytesPerSec()
+    {
+        return conf.entire_sstable_inter_dc_stream_throughput_outbound.toBytesPerSecond();
     }
 
     public static double getEntireSSTableInterDCStreamThroughputOutboundMebibytesPerSec()
@@ -2080,14 +2184,14 @@ public class DatabaseDescriptor
         return conf.entire_sstable_inter_dc_stream_throughput_outbound.toMebibytesPerSecond();
     }
 
-    public static int getEntireSSTableInterDCStreamThroughputOutboundMebibytesPerSecAsInt()
-    {
-        return conf.entire_sstable_inter_dc_stream_throughput_outbound.toMebibytesPerSecondAsInt();
-    }
-
     public static void setEntireSSTableInterDCStreamThroughputOutboundMebibytesPerSec(int value)
     {
-        conf.entire_sstable_inter_dc_stream_throughput_outbound = DataRateSpec.inMebibytesPerSecond(value);
+        if (value == Integer.MAX_VALUE)
+            throw new IllegalArgumentException("entire_sstable_inter_dc_stream_throughput_outbound: " + value +
+                                               " is too large; it should be less than " +
+                                               Integer.MAX_VALUE + " in MiB/s");
+
+        conf.entire_sstable_inter_dc_stream_throughput_outbound = new DataRateSpec.LongBytesPerSecondBound(value, MEBIBYTES_PER_SECOND);
     }
 
     /**
@@ -2189,7 +2293,7 @@ public class DatabaseDescriptor
 
     public static int getMaxMutationSize()
     {
-        return conf.max_mutation_size.toBytesAsInt();
+        return conf.max_mutation_size.toBytes();
     }
 
     public static int getTombstoneWarnThreshold()
@@ -2237,7 +2341,7 @@ public class DatabaseDescriptor
      */
     public static int getCommitLogSegmentSize()
     {
-        return conf.commitlog_segment_size.toBytesAsInt();
+        return conf.commitlog_segment_size.toBytes();
     }
 
     /**
@@ -2249,7 +2353,7 @@ public class DatabaseDescriptor
     @VisibleForTesting /* Only for testing */
     public static void setCommitLogSegmentSize(int sizeMebibytes)
     {
-        conf.commitlog_segment_size = SmallestDataStorageMebibytes.inMebibytes(sizeMebibytes);
+        conf.commitlog_segment_size = new DataStorageSpec.IntMebibytesBound(sizeMebibytes);
     }
 
     public static String getSavedCachesLocation()
@@ -2354,83 +2458,83 @@ public class DatabaseDescriptor
 
     public static int getInternodeSocketSendBufferSizeInBytes()
     {
-        return conf.internode_socket_send_buffer_size.toBytesAsInt();
+        return conf.internode_socket_send_buffer_size.toBytes();
     }
 
     public static int getInternodeSocketReceiveBufferSizeInBytes()
     {
-        return conf.internode_socket_receive_buffer_size.toBytesAsInt();
+        return conf.internode_socket_receive_buffer_size.toBytes();
     }
 
     public static int getInternodeApplicationSendQueueCapacityInBytes()
     {
-        return conf.internode_application_send_queue_capacity.toBytesAsInt();
+        return conf.internode_application_send_queue_capacity.toBytes();
     }
 
     public static int getInternodeApplicationSendQueueReserveEndpointCapacityInBytes()
     {
-        return conf.internode_application_send_queue_reserve_endpoint_capacity.toBytesAsInt();
+        return conf.internode_application_send_queue_reserve_endpoint_capacity.toBytes();
     }
 
     public static int getInternodeApplicationSendQueueReserveGlobalCapacityInBytes()
     {
-        return conf.internode_application_send_queue_reserve_global_capacity.toBytesAsInt();
+        return conf.internode_application_send_queue_reserve_global_capacity.toBytes();
     }
 
     public static int getInternodeApplicationReceiveQueueCapacityInBytes()
     {
-        return conf.internode_application_receive_queue_capacity.toBytesAsInt();
+        return conf.internode_application_receive_queue_capacity.toBytes();
     }
 
     public static int getInternodeApplicationReceiveQueueReserveEndpointCapacityInBytes()
     {
-        return conf.internode_application_receive_queue_reserve_endpoint_capacity.toBytesAsInt();
+        return conf.internode_application_receive_queue_reserve_endpoint_capacity.toBytes();
     }
 
     public static int getInternodeApplicationReceiveQueueReserveGlobalCapacityInBytes()
     {
-        return conf.internode_application_receive_queue_reserve_global_capacity.toBytesAsInt();
+        return conf.internode_application_receive_queue_reserve_global_capacity.toBytes();
     }
 
     public static int getInternodeTcpConnectTimeoutInMS()
     {
-        return conf.internode_tcp_connect_timeout.toMillisecondsAsInt();
+        return conf.internode_tcp_connect_timeout.toMilliseconds();
     }
 
     public static void setInternodeTcpConnectTimeoutInMS(int value)
     {
-        conf.internode_tcp_connect_timeout = SmallestDurationMilliseconds.inMilliseconds(value);
+        conf.internode_tcp_connect_timeout = new DurationSpec.IntMillisecondsBound(value);
     }
 
     public static int getInternodeTcpUserTimeoutInMS()
     {
-        return conf.internode_tcp_user_timeout.toMillisecondsAsInt();
+        return conf.internode_tcp_user_timeout.toMilliseconds();
     }
 
     public static void setInternodeTcpUserTimeoutInMS(int value)
     {
-        conf.internode_tcp_user_timeout = SmallestDurationMilliseconds.inMilliseconds(value);
+        conf.internode_tcp_user_timeout = new DurationSpec.IntMillisecondsBound(value);
     }
 
     public static int getInternodeStreamingTcpUserTimeoutInMS()
     {
-        return conf.internode_streaming_tcp_user_timeout.toMillisecondsAsInt();
+        return conf.internode_streaming_tcp_user_timeout.toMilliseconds();
     }
 
     public static void setInternodeStreamingTcpUserTimeoutInMS(int value)
     {
-        conf.internode_streaming_tcp_user_timeout = SmallestDurationMilliseconds.inMilliseconds(value);
+        conf.internode_streaming_tcp_user_timeout = new DurationSpec.IntMillisecondsBound(value);
     }
 
     public static int getInternodeMaxMessageSizeInBytes()
     {
-        return conf.internode_max_message_size.toBytesAsInt();
+        return conf.internode_max_message_size.toBytes();
     }
 
     @VisibleForTesting
     public static void setInternodeMaxMessageSizeInBytes(int value)
     {
-        conf.internode_max_message_size = DataStorageSpec.inBytes(value);
+        conf.internode_max_message_size = new DataStorageSpec.IntBytesBound(value);
     }
 
     public static boolean startNativeTransport()
@@ -2476,12 +2580,12 @@ public class DatabaseDescriptor
 
     public static int getNativeTransportMaxFrameSize()
     {
-        return conf.native_transport_max_frame_size.toBytesAsInt();
+        return conf.native_transport_max_frame_size.toBytes();
     }
 
     public static void setNativeTransportMaxFrameSize(int bytes)
     {
-        conf.native_transport_max_frame_size = SmallestDataStorageMebibytes.inMebibytes(bytes);
+        conf.native_transport_max_frame_size = new DataStorageSpec.IntMebibytesBound(bytes);
     }
 
     public static long getNativeTransportMaxConcurrentConnections()
@@ -2526,17 +2630,17 @@ public class DatabaseDescriptor
 
     public static void setCommitLogSyncGroupWindow(long windowMillis)
     {
-        conf.commitlog_sync_group_window = SmallestDurationMilliseconds.inMilliseconds(windowMillis);
+        conf.commitlog_sync_group_window = new DurationSpec.IntMillisecondsBound(windowMillis);
     }
 
     public static int getNativeTransportReceiveQueueCapacityInBytes()
     {
-        return conf.native_transport_receive_queue_capacity.toBytesAsInt();
+        return conf.native_transport_receive_queue_capacity.toBytes();
     }
 
     public static void setNativeTransportReceiveQueueCapacityInBytes(int queueSize)
     {
-        conf.native_transport_receive_queue_capacity = DataStorageSpec.inBytes(queueSize);
+        conf.native_transport_receive_queue_capacity = new DataStorageSpec.IntBytesBound(queueSize);
     }
 
     public static long getNativeTransportMaxRequestDataInFlightPerIpInBytes()
@@ -2609,9 +2713,9 @@ public class DatabaseDescriptor
         return conf.paxos_purge_grace_period.to(units);
     }
 
-    public static void setPaxosPurgeGrace(long value, TimeUnit units)
+    public static void setPaxosPurgeGrace(long seconds)
     {
-        conf.paxos_purge_grace_period = new DurationSpec(value, units);
+        conf.paxos_purge_grace_period = new DurationSpec.LongSecondsBound(seconds);
     }
 
     public static PaxosOnLinearizabilityViolation paxosOnLinearizabilityViolations()
@@ -2669,15 +2773,7 @@ public class DatabaseDescriptor
         if (maxRequestDataInFlightInBytes == -1)
             maxRequestDataInFlightInBytes = Runtime.getRuntime().maxMemory() / 40;
 
-        try
-        {
-            conf.native_transport_max_request_data_in_flight_per_ip = DataStorageSpec.inBytes(maxRequestDataInFlightInBytes);
-        }
-        catch (ConfigurationException e)
-        {
-            throw new IllegalArgumentException("native_transport_max_request_data_in_flight_per_ip can be only -1 which gets default value or >= 0");
-        }
-
+        conf.native_transport_max_request_data_in_flight_per_ip = new DataStorageSpec.LongBytesBound(maxRequestDataInFlightInBytes);
     }
 
     public static long getNativeTransportMaxRequestDataInFlightInBytes()
@@ -2690,14 +2786,7 @@ public class DatabaseDescriptor
         if (maxRequestDataInFlightInBytes == -1)
             maxRequestDataInFlightInBytes = Runtime.getRuntime().maxMemory() / 10;
 
-        try
-        {
-            conf.native_transport_max_request_data_in_flight = DataStorageSpec.inBytes(maxRequestDataInFlightInBytes);
-        }
-        catch (ConfigurationException e)
-        {
-            throw new IllegalArgumentException("native_transport_max_request_data_in_flight can be only -1 which gets default value or >= 0");
-        }
+        conf.native_transport_max_request_data_in_flight = new DataStorageSpec.LongBytesBound(maxRequestDataInFlightInBytes);
     }
 
     public static int getNativeTransportMaxRequestsPerSecond()
@@ -2724,12 +2813,12 @@ public class DatabaseDescriptor
 
     public static int getCommitLogSyncPeriod()
     {
-        return conf.commitlog_sync_period.toMillisecondsAsInt();
+        return conf.commitlog_sync_period.toMilliseconds();
     }
 
     public static long getPeriodicCommitLogSyncBlock()
     {
-        SmallestDurationMilliseconds blockMillis = conf.periodic_commitlog_sync_lag_block;
+        DurationSpec.IntMillisecondsBound blockMillis = conf.periodic_commitlog_sync_lag_block;
         return blockMillis == null
                ? (long)(getCommitLogSyncPeriod() * 1.5)
                : blockMillis.toMilliseconds();
@@ -2737,7 +2826,7 @@ public class DatabaseDescriptor
 
     public static void setCommitLogSyncPeriod(int periodMillis)
     {
-        conf.commitlog_sync_period = SmallestDurationMilliseconds.inMilliseconds(periodMillis);
+        conf.commitlog_sync_period = new DurationSpec.IntMillisecondsBound(periodMillis);
     }
 
     public static Config.CommitLogSync getCommitLogSync()
@@ -2804,13 +2893,13 @@ public class DatabaseDescriptor
         return conf.auto_snapshot;
     }
 
-    public static DurationSpec getAutoSnapshotTtl()
+    public static DurationSpec.IntSecondsBound getAutoSnapshotTtl()
     {
         return autoSnapshoTtl;
     }
 
     @VisibleForTesting
-    public static void setAutoSnapshotTtl(DurationSpec newTtl)
+    public static void setAutoSnapshotTtl(DurationSpec.IntSecondsBound newTtl)
     {
         autoSnapshoTtl = newTtl;
     }
@@ -2886,22 +2975,23 @@ public class DatabaseDescriptor
 
     public static void setMaxHintWindow(int ms)
     {
-        conf.max_hint_window = SmallestDurationMilliseconds.inMilliseconds(ms);
+        conf.max_hint_window = new DurationSpec.IntMillisecondsBound(ms);
     }
 
     public static int getMaxHintWindow()
     {
-        return conf.max_hint_window.toMillisecondsAsInt();
+        return conf.max_hint_window.toMilliseconds();
     }
 
     public static void setMaxHintsSizePerHostInMiB(int value)
     {
-        conf.max_hints_size_per_host = DataStorageSpec.inMebibytes(value);
+        conf.max_hints_size_per_host = new DataStorageSpec.LongBytesBound(value, MEBIBYTES);
     }
 
     public static int getMaxHintsSizePerHostInMiB()
     {
-        return conf.max_hints_size_per_host.toMebibytesAsInt();
+        // Warnings: this conversion rounds down while converting bytes to mebibytes
+        return Ints.saturatedCast(conf.max_hints_size_per_host.unit().toMebibytes(conf.max_hints_size_per_host.quantity()));
     }
 
     public static long getMaxHintsSizePerHost()
@@ -2928,20 +3018,20 @@ public class DatabaseDescriptor
 
     public static int getDynamicUpdateInterval()
     {
-        return conf.dynamic_snitch_update_interval.toMillisecondsAsInt();
+        return conf.dynamic_snitch_update_interval.toMilliseconds();
     }
     public static void setDynamicUpdateInterval(int dynamicUpdateInterval)
     {
-        conf.dynamic_snitch_update_interval = SmallestDurationMilliseconds.inMilliseconds(dynamicUpdateInterval);
+        conf.dynamic_snitch_update_interval = new DurationSpec.IntMillisecondsBound(dynamicUpdateInterval);
     }
 
     public static int getDynamicResetInterval()
     {
-        return conf.dynamic_snitch_reset_interval.toMillisecondsAsInt();
+        return conf.dynamic_snitch_reset_interval.toMilliseconds();
     }
     public static void setDynamicResetInterval(int dynamicResetInterval)
     {
-        conf.dynamic_snitch_reset_interval = SmallestDurationMilliseconds.inMilliseconds(dynamicResetInterval);
+        conf.dynamic_snitch_reset_interval = new DurationSpec.IntMillisecondsBound(dynamicResetInterval);
     }
 
     public static double getDynamicBadnessThreshold()
@@ -2977,22 +3067,22 @@ public class DatabaseDescriptor
 
     public static int getHintedHandoffThrottleInKiB()
     {
-        return conf.hinted_handoff_throttle.toKibibytesAsInt();
+        return conf.hinted_handoff_throttle.toKibibytes();
     }
 
     public static void setHintedHandoffThrottleInKiB(int throttleInKiB)
     {
-        conf.hinted_handoff_throttle = SmallestDataStorageKibibytes.inKibibytes(throttleInKiB);
+        conf.hinted_handoff_throttle = new DataStorageSpec.IntKibibytesBound(throttleInKiB);
     }
 
     public static int getBatchlogReplayThrottleInKiB()
     {
-        return conf.batchlog_replay_throttle.toKibibytesAsInt();
+        return conf.batchlog_replay_throttle.toKibibytes();
     }
 
     public static void setBatchlogReplayThrottleInKiB(int throttleInKiB)
     {
-        conf.batchlog_replay_throttle = SmallestDataStorageKibibytes.inKibibytes(throttleInKiB);
+        conf.batchlog_replay_throttle = new DataStorageSpec.IntKibibytesBound(throttleInKiB);
     }
 
     public static int getMaxHintsDeliveryThreads()
@@ -3002,12 +3092,12 @@ public class DatabaseDescriptor
 
     public static int getHintsFlushPeriodInMS()
     {
-        return conf.hints_flush_period.toMillisecondsAsInt();
+        return conf.hints_flush_period.toMilliseconds();
     }
 
     public static long getMaxHintsFileSize()
     {
-        return  conf.max_hints_file_size.toBytes();
+        return  conf.max_hints_file_size.toBytesInLong();
     }
 
     public static ParameterizedClass getHintsCompression()
@@ -3054,7 +3144,7 @@ public class DatabaseDescriptor
             return 0;
         }
 
-        return conf.file_cache_size.toMebibytesAsInt();
+        return conf.file_cache_size.toMebibytes();
     }
 
     public static int getNetworkingCacheSizeInMiB()
@@ -3065,7 +3155,7 @@ public class DatabaseDescriptor
             assert DatabaseDescriptor.isClientInitialized();
             return 0;
         }
-        return conf.networking_cache_size.toMebibytesAsInt();
+        return conf.networking_cache_size.toMebibytes();
     }
 
     public static boolean getFileCacheRoundUp()
@@ -3105,14 +3195,21 @@ public class DatabaseDescriptor
         conf.key_cache_migrate_during_compaction = migrateCacheEntry;
     }
 
+    /** This method can return negative number for disabled */
     public static int getSSTablePreemptiveOpenIntervalInMiB()
     {
-        return conf.sstable_preemptive_open_interval.toMebibytesAsInt();
+        if (conf.sstable_preemptive_open_interval == null)
+            return -1;
+        return conf.sstable_preemptive_open_interval.toMebibytes();
     }
 
+    /** Negative number for disabled */
     public static void setSSTablePreemptiveOpenIntervalInMiB(int mib)
     {
-        conf.sstable_preemptive_open_interval = SmallestDataStorageMebibytes.inMebibytes(mib);
+        if (mib < 0)
+            conf.sstable_preemptive_open_interval = null;
+        else
+            conf.sstable_preemptive_open_interval = new DataStorageSpec.IntMebibytesBound(mib);
     }
 
     public static boolean getTrickleFsync()
@@ -3122,7 +3219,7 @@ public class DatabaseDescriptor
 
     public static int getTrickleFsyncIntervalInKiB()
     {
-        return conf.trickle_fsync_interval.toKibibytesAsInt();
+        return conf.trickle_fsync_interval.toKibibytes();
     }
 
     public static long getKeyCacheSizeInMiB()
@@ -3137,12 +3234,12 @@ public class DatabaseDescriptor
 
     public static int getKeyCacheSavePeriod()
     {
-        return conf.key_cache_save_period.toSecondsAsInt();
+        return conf.key_cache_save_period.toSeconds();
     }
 
     public static void setKeyCacheSavePeriod(int keyCacheSavePeriod)
     {
-        conf.key_cache_save_period = SmallestDurationSeconds.inSeconds(keyCacheSavePeriod);
+        conf.key_cache_save_period = new DurationSpec.IntSecondsBound(keyCacheSavePeriod);
     }
 
     public static int getKeyCacheKeysToSave()
@@ -3168,17 +3265,17 @@ public class DatabaseDescriptor
     @VisibleForTesting
     public static void setRowCacheSizeInMiB(long val)
     {
-        conf.row_cache_size = SmallestDataStorageMebibytes.inMebibytes(val);
+        conf.row_cache_size = new DataStorageSpec.LongMebibytesBound(val);
     }
 
     public static int getRowCacheSavePeriod()
     {
-        return conf.row_cache_save_period.toSecondsAsInt();
+        return conf.row_cache_save_period.toSeconds();
     }
 
     public static void setRowCacheSavePeriod(int rowCacheSavePeriod)
     {
-        conf.row_cache_save_period = SmallestDurationSeconds.inSeconds(rowCacheSavePeriod);
+        conf.row_cache_save_period = new DurationSpec.IntSecondsBound(rowCacheSavePeriod);
     }
 
     public static int getRowCacheKeysToSave()
@@ -3203,23 +3300,23 @@ public class DatabaseDescriptor
 
     public static int getCounterCacheSavePeriod()
     {
-        return conf.counter_cache_save_period.toSecondsAsInt();
+        return conf.counter_cache_save_period.toSeconds();
     }
 
     public static void setCounterCacheSavePeriod(int counterCacheSavePeriod)
     {
-        conf.counter_cache_save_period = SmallestDurationSeconds.inSeconds(counterCacheSavePeriod);
+        conf.counter_cache_save_period = new DurationSpec.IntSecondsBound(counterCacheSavePeriod);
     }
 
     public static int getCacheLoadTimeout()
     {
-        return conf.cache_load_timeout.toSecondsAsInt();
+        return conf.cache_load_timeout.toSeconds();
     }
 
     @VisibleForTesting
     public static void setCacheLoadTimeout(int seconds)
     {
-        conf.cache_load_timeout = SmallestDurationSeconds.inSeconds(seconds);
+        conf.cache_load_timeout = new DurationSpec.IntSecondsBound(seconds);
     }
 
     public static int getCounterCacheKeysToSave()
@@ -3234,7 +3331,7 @@ public class DatabaseDescriptor
 
     public static int getStreamingKeepAlivePeriod()
     {
-        return conf.streaming_keep_alive_period.toSecondsAsInt();
+        return conf.streaming_keep_alive_period.toSeconds();
     }
 
     public static int getStreamingConnectionsPerHost()
@@ -3305,7 +3402,7 @@ public class DatabaseDescriptor
 
     public static int getRepairSessionSpaceInMiB()
     {
-        return conf.repair_session_space.toMebibytesAsInt();
+        return conf.repair_session_space.toMebibytes();
     }
 
     public static void setRepairSessionSpaceInMiB(int sizeInMiB)
@@ -3317,7 +3414,7 @@ public class DatabaseDescriptor
             logger.warn("A repair_session_space of " + conf.repair_session_space +
                         " is likely to cause heap pressure.");
 
-        conf.repair_session_space = SmallestDataStorageMebibytes.inMebibytes(sizeInMiB);
+        conf.repair_session_space = new DataStorageSpec.IntMebibytesBound(sizeInMiB);
     }
 
     public static int getPaxosRepairParallelism()
@@ -3345,7 +3442,18 @@ public class DatabaseDescriptor
 
     public static int getIndexSummaryResizeIntervalInMinutes()
     {
-        return conf.index_summary_resize_interval.toMinutesAsInt();
+        if (conf.index_summary_resize_interval == null)
+            return -1;
+
+        return conf.index_summary_resize_interval.toMinutes();
+    }
+
+    public static void setIndexSummaryResizeIntervalInMinutes(int value)
+    {
+        if (value == -1)
+            conf.index_summary_resize_interval = null;
+        else
+            conf.index_summary_resize_interval = new DurationSpec.IntMinutesBound(value);
     }
 
     public static boolean hasLargeAddressSpace()
@@ -3366,12 +3474,12 @@ public class DatabaseDescriptor
 
     public static int getTracetypeRepairTTL()
     {
-        return conf.trace_type_repair_ttl.toSecondsAsInt();
+        return conf.trace_type_repair_ttl.toSeconds();
     }
 
     public static int getTracetypeQueryTTL()
     {
-        return conf.trace_type_query_ttl.toSecondsAsInt();
+        return conf.trace_type_query_ttl.toSeconds();
     }
 
     public static long getPreparedStatementsCacheSizeMiB()
@@ -3406,7 +3514,7 @@ public class DatabaseDescriptor
 
     public static void setUserDefinedFunctionWarnTimeout(long userDefinedFunctionWarnTimeout)
     {
-        conf.user_defined_functions_warn_timeout = SmallestDurationMilliseconds.inMilliseconds(userDefinedFunctionWarnTimeout);
+        conf.user_defined_functions_warn_timeout = new DurationSpec.LongMillisecondsBound(userDefinedFunctionWarnTimeout);
     }
 
     public static boolean allowInsecureUDFs()
@@ -3477,7 +3585,7 @@ public class DatabaseDescriptor
 
     public static void setUserDefinedFunctionFailTimeout(long userDefinedFunctionFailTimeout)
     {
-        conf.user_defined_functions_fail_timeout = SmallestDurationMilliseconds.inMilliseconds(userDefinedFunctionFailTimeout);
+        conf.user_defined_functions_fail_timeout = new DurationSpec.LongMillisecondsBound(userDefinedFunctionFailTimeout);
     }
 
     public static Config.UserFunctionTimeoutPolicy getUserFunctionTimeoutPolicy()
@@ -3495,6 +3603,11 @@ public class DatabaseDescriptor
         return conf.gc_log_threshold.toMilliseconds();
     }
 
+    public static void setGCLogThreshold(int gcLogThreshold)
+    {
+        conf.gc_log_threshold = new DurationSpec.IntMillisecondsBound(gcLogThreshold);
+    }
+
     public static EncryptionContext getEncryptionContext()
     {
         return encryptionContext;
@@ -3503,6 +3616,11 @@ public class DatabaseDescriptor
     public static long getGCWarnThreshold()
     {
         return conf.gc_warn_threshold.toMilliseconds();
+    }
+
+    public static void setGCWarnThreshold(int threshold)
+    {
+        conf.gc_warn_threshold = new DurationSpec.IntMillisecondsBound(threshold);
     }
 
     public static boolean isCDCEnabled()
@@ -3531,20 +3649,20 @@ public class DatabaseDescriptor
         return conf.cdc_raw_directory;
     }
 
-    public static int getCDCSpaceInMiB()
+    public static long getCDCTotalSpace()
     {
-        return conf.cdc_total_space.toMebibytesAsInt();
+        return conf.cdc_total_space.toBytesInLong();
     }
 
     @VisibleForTesting
-    public static void setCDCSpaceInMiB(int input)
+    public static void setCDCTotalSpaceInMiB(int mibs)
     {
-        conf.cdc_total_space = SmallestDataStorageMebibytes.inMebibytes(input);
+        conf.cdc_total_space = new DataStorageSpec.IntMebibytesBound(mibs);
     }
 
     public static int getCDCDiskCheckInterval()
     {
-        return conf.cdc_free_space_check_interval.toMillisecondsAsInt();
+        return conf.cdc_free_space_check_interval.toMilliseconds();
     }
 
     @VisibleForTesting
@@ -3640,7 +3758,7 @@ public class DatabaseDescriptor
         if (value > getConcurrentCompactors())
             logger.warn("max_concurrent_automatic_sstable_upgrades ({}) is larger than concurrent_compactors ({})", value, getConcurrentCompactors());
     }
-    
+
     public static AuditLogOptions getAuditLoggingOptions()
     {
         return conf.audit_logging_options;
@@ -3737,17 +3855,24 @@ public class DatabaseDescriptor
         commitLogSegmentMgrProvider = provider;
     }
 
+    private static DataStorageSpec.IntKibibytesBound createIntKibibyteBoundAndEnsureItIsValidForByteConversion(int kibibytes, String propertyName)
+    {
+        DataStorageSpec.IntKibibytesBound intKibibytesBound = new DataStorageSpec.IntKibibytesBound(kibibytes);
+        checkValidForByteConversion(intKibibytesBound, propertyName);
+        return intKibibytesBound;
+    }
+
     /**
      * Ensures passed in configuration value is positive and will not overflow when converted to Bytes
      */
-    private static void checkValidForByteConversion(final SmallestDataStorageKibibytes value, String name)
+    private static void checkValidForByteConversion(final DataStorageSpec.IntKibibytesBound value, String name)
     {
-        long valueInBytes = value.toBytes();
-        if (valueInBytes < 0 || valueInBytes > Integer.MAX_VALUE)
+        long valueInBytes = value.toBytesInLong();
+        if (valueInBytes < 0 || valueInBytes > Integer.MAX_VALUE - 1)
         {
             throw new ConfigurationException(String.format("%s must be positive value <= %dB, but was %dB",
                                                            name,
-                                                           Integer.MAX_VALUE,
+                                                           Integer.MAX_VALUE - 1,
                                                            valueInBytes),
                                              false);
         }
@@ -3755,7 +3880,7 @@ public class DatabaseDescriptor
 
     public static int getValidationPreviewPurgeHeadStartInSec()
     {
-        return conf.validation_preview_purge_head_start.toSecondsAsInt();
+        return conf.validation_preview_purge_head_start.toSeconds();
     }
 
     public static boolean checkForDuplicateRowsDuringReads()
@@ -3946,7 +4071,7 @@ public class DatabaseDescriptor
 
     public static int getDenylistRefreshSeconds()
     {
-        return conf.denylist_refresh.toSecondsAsInt();
+        return conf.denylist_refresh.toSeconds();
     }
 
     public static void setDenylistRefreshSeconds(int seconds)
@@ -3954,12 +4079,12 @@ public class DatabaseDescriptor
         if (seconds <= 0)
             throw new IllegalArgumentException("denylist_refresh must be a positive integer.");
 
-        conf.denylist_refresh = SmallestDurationSeconds.inSeconds(seconds);
+        conf.denylist_refresh = new DurationSpec.IntSecondsBound(seconds);
     }
 
     public static int getDenylistInitialLoadRetrySeconds()
     {
-        return conf.denylist_initial_load_retry.toSecondsAsInt();
+        return conf.denylist_initial_load_retry.toSeconds();
     }
 
     public static void setDenylistInitialLoadRetrySeconds(int seconds)
@@ -3967,7 +4092,7 @@ public class DatabaseDescriptor
         if (seconds <= 0)
             throw new IllegalArgumentException("denylist_initial_load_retry must be a positive integer.");
 
-        conf.denylist_initial_load_retry = SmallestDurationSeconds.inSeconds(seconds);
+        conf.denylist_initial_load_retry = new DurationSpec.IntSecondsBound(seconds);
     }
 
     public static ConsistencyLevel getDenylistConsistencyLevel()
@@ -4034,72 +4159,72 @@ public class DatabaseDescriptor
     }
 
     @Nullable
-    public static DataStorageSpec getCoordinatorReadSizeWarnThreshold()
+    public static DataStorageSpec.LongBytesBound getCoordinatorReadSizeWarnThreshold()
     {
         return conf.coordinator_read_size_warn_threshold;
     }
 
-    public static void setCoordinatorReadSizeWarnThreshold(@Nullable DataStorageSpec value)
+    public static void setCoordinatorReadSizeWarnThreshold(@Nullable DataStorageSpec.LongBytesBound value)
     {
         logger.info("updating  coordinator_read_size_warn_threshold to {}", value);
         conf.coordinator_read_size_warn_threshold = value;
     }
 
     @Nullable
-    public static DataStorageSpec getCoordinatorReadSizeFailThreshold()
+    public static DataStorageSpec.LongBytesBound getCoordinatorReadSizeFailThreshold()
     {
         return conf.coordinator_read_size_fail_threshold;
     }
 
-    public static void setCoordinatorReadSizeFailThreshold(@Nullable DataStorageSpec value)
+    public static void setCoordinatorReadSizeFailThreshold(@Nullable DataStorageSpec.LongBytesBound value)
     {
         logger.info("updating  coordinator_read_size_fail_threshold to {}", value);
         conf.coordinator_read_size_fail_threshold = value;
     }
 
     @Nullable
-    public static DataStorageSpec getLocalReadSizeWarnThreshold()
+    public static DataStorageSpec.LongBytesBound getLocalReadSizeWarnThreshold()
     {
         return conf.local_read_size_warn_threshold;
     }
 
-    public static void setLocalReadSizeWarnThreshold(@Nullable DataStorageSpec value)
+    public static void setLocalReadSizeWarnThreshold(@Nullable DataStorageSpec.LongBytesBound value)
     {
         logger.info("updating  local_read_size_warn_threshold to {}", value);
         conf.local_read_size_warn_threshold = value;
     }
 
     @Nullable
-    public static DataStorageSpec getLocalReadSizeFailThreshold()
+    public static DataStorageSpec.LongBytesBound getLocalReadSizeFailThreshold()
     {
         return conf.local_read_size_fail_threshold;
     }
 
-    public static void setLocalReadSizeFailThreshold(@Nullable DataStorageSpec value)
+    public static void setLocalReadSizeFailThreshold(@Nullable DataStorageSpec.LongBytesBound value)
     {
         logger.info("updating  local_read_size_fail_threshold to {}", value);
         conf.local_read_size_fail_threshold = value;
     }
 
     @Nullable
-    public static DataStorageSpec getRowIndexReadSizeWarnThreshold()
+    public static DataStorageSpec.LongBytesBound getRowIndexReadSizeWarnThreshold()
     {
         return conf.row_index_read_size_warn_threshold;
     }
 
-    public static void setRowIndexReadSizeWarnThreshold(@Nullable DataStorageSpec value)
+    public static void setRowIndexReadSizeWarnThreshold(@Nullable DataStorageSpec.LongBytesBound value)
     {
         logger.info("updating  row_index_size_warn_threshold to {}", value);
         conf.row_index_read_size_warn_threshold = value;
     }
 
     @Nullable
-    public static DataStorageSpec getRowIndexReadSizeFailThreshold()
+    public static DataStorageSpec.LongBytesBound getRowIndexReadSizeFailThreshold()
     {
         return conf.row_index_read_size_fail_threshold;
     }
 
-    public static void setRowIndexReadSizeFailThreshold(@Nullable DataStorageSpec value)
+    public static void setRowIndexReadSizeFailThreshold(@Nullable DataStorageSpec.LongBytesBound value)
     {
         logger.info("updating  row_index_read_size_fail_threshold to {}", value);
         conf.row_index_read_size_fail_threshold = value;
@@ -4107,16 +4232,16 @@ public class DatabaseDescriptor
 
     public static int getDefaultKeyspaceRF() { return conf.default_keyspace_rf; }
 
-    public static void setDefaultKeyspaceRF(int value) throws ConfigurationException
+    public static void setDefaultKeyspaceRF(int value) throws IllegalArgumentException
     {
         if (value < 1)
         {
-            throw new ConfigurationException("default_keyspace_rf cannot be less than 1");
+            throw new IllegalArgumentException("default_keyspace_rf cannot be less than 1");
         }
 
         if (value < guardrails.getMinimumReplicationFactorFailThreshold())
         {
-            throw new ConfigurationException(String.format("default_keyspace_rf to be set (%d) cannot be less than minimum_replication_factor_fail_threshold (%d)", value, guardrails.getMinimumReplicationFactorFailThreshold()));
+            throw new IllegalArgumentException(String.format("default_keyspace_rf to be set (%d) cannot be less than minimum_replication_factor_fail_threshold (%d)", value, guardrails.getMinimumReplicationFactorFailThreshold()));
         }
 
         conf.default_keyspace_rf = value;
@@ -4151,12 +4276,12 @@ public class DatabaseDescriptor
         }
     }
 
-    public static DurationSpec getStreamingStateExpires()
+    public static DurationSpec.LongNanosecondsBound getStreamingStateExpires()
     {
         return conf.streaming_state_expires;
     }
 
-    public static void setStreamingStateExpires(DurationSpec duration)
+    public static void setStreamingStateExpires(DurationSpec.LongNanosecondsBound duration)
     {
         if (!conf.streaming_state_expires.equals(Objects.requireNonNull(duration, "duration")))
         {
@@ -4165,12 +4290,12 @@ public class DatabaseDescriptor
         }
     }
 
-    public static DataStorageSpec getStreamingStateSize()
+    public static DataStorageSpec.LongBytesBound getStreamingStateSize()
     {
         return conf.streaming_state_size;
     }
 
-    public static void setStreamingStateSize(DataStorageSpec duration)
+    public static void setStreamingStateSize(DataStorageSpec.LongBytesBound duration)
     {
         if (!conf.streaming_state_size.equals(Objects.requireNonNull(duration, "duration")))
         {
@@ -4181,15 +4306,15 @@ public class DatabaseDescriptor
 
     public static boolean isUUIDSSTableIdentifiersEnabled()
     {
-        return conf.enable_uuid_sstable_identifiers;
+        return conf.uuid_sstable_identifiers_enabled;
     }
 
-    public static DurationSpec getRepairStateExpires()
+    public static DurationSpec.LongNanosecondsBound getRepairStateExpires()
     {
         return conf.repair_state_expires;
     }
 
-    public static void setRepairStateExpires(DurationSpec duration)
+    public static void setRepairStateExpires(DurationSpec.LongNanosecondsBound duration)
     {
         if (!conf.repair_state_expires.equals(Objects.requireNonNull(duration, "duration")))
         {
@@ -4237,14 +4362,14 @@ public class DatabaseDescriptor
         conf.max_top_tombstone_partition_count = value;
     }
 
-    public static DataStorageSpec getMinTrackedPartitionSize()
+    public static DataStorageSpec.LongBytesBound getMinTrackedPartitionSizeInBytes()
     {
-        return conf.min_tracked_partition_size_bytes;
+        return conf.min_tracked_partition_size;
     }
 
-    public static void setMinTrackedPartitionSize(DataStorageSpec spec)
+    public static void setMinTrackedPartitionSizeInBytes(DataStorageSpec.LongBytesBound spec)
     {
-        conf.min_tracked_partition_size_bytes = spec;
+        conf.min_tracked_partition_size = spec;
     }
 
     public static long getMinTrackedPartitionTombstoneCount()

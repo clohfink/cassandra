@@ -28,18 +28,19 @@ import java.util.stream.Collectors;
 
 import com.codahale.metrics.Meter;
 import com.google.common.base.Ticker;
-import org.apache.cassandra.config.DatabaseDescriptor;
-import org.apache.cassandra.metrics.CassandraMetricsRegistry;
-import org.apache.cassandra.service.StorageService;
+import org.awaitility.Awaitility;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
+import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.cql3.CQLTester;
 import org.apache.cassandra.cql3.QueryOptions;
 import org.apache.cassandra.exceptions.OverloadedException;
+import org.apache.cassandra.metrics.CassandraMetricsRegistry;
+import org.apache.cassandra.service.StorageService;
 import org.apache.cassandra.transport.messages.QueryMessage;
 import org.apache.cassandra.utils.Throwables;
 
@@ -59,6 +60,8 @@ public class RateLimitingTest extends CQLTester
     
     private static final int LARGE_PAYLOAD_THRESHOLD_BYTES = 1000;
     private static final int OVERLOAD_PERMITS_PER_SECOND = 1;
+
+    private static final long MAX_LONG_CONFIG_VALUE = Long.MAX_VALUE - 1;
 
     @Parameterized.Parameter
     public ProtocolVersion version;
@@ -99,7 +102,7 @@ public class RateLimitingTest extends CQLTester
             }
         };
 
-        ClientResourceLimits.setGlobalLimit(Long.MAX_VALUE);
+        ClientResourceLimits.setGlobalLimit(MAX_LONG_CONFIG_VALUE);
     }
 
     @Test
@@ -167,7 +170,7 @@ public class RateLimitingTest extends CQLTester
         finally
         {
             // Sanity check bytes in flight limiter.
-            assertEquals(0, ClientResourceLimits.getCurrentGlobalUsage());
+            Awaitility.await().untilAsserted(() -> assertEquals(0, ClientResourceLimits.getCurrentGlobalUsage()));
             StorageService.instance.setNativeTransportRateLimitingEnabled(false);
         }
     }
@@ -193,7 +196,7 @@ public class RateLimitingTest extends CQLTester
         finally
         {
             // Sanity the check bytes in flight limiter.
-            assertEquals(0, ClientResourceLimits.getCurrentGlobalUsage());
+            Awaitility.await().untilAsserted(() -> assertEquals(0, ClientResourceLimits.getCurrentGlobalUsage()));
             StorageService.instance.setNativeTransportRateLimitingEnabled(false);
         }
     }

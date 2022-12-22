@@ -97,7 +97,6 @@ import org.apache.cassandra.utils.Shared.Recursive;
 import org.apache.cassandra.utils.concurrent.Condition;
 import org.reflections.Reflections;
 import org.reflections.scanners.Scanners;
-import org.reflections.scanners.TypeAnnotationsScanner;
 import org.reflections.util.ConfigurationBuilder;
 import org.reflections.util.NameHelper;
 
@@ -395,6 +394,8 @@ public abstract class AbstractCluster<I extends IInstance> implements ICluster<I
                 }
                 throw t;
             }
+            // This duplicates work done in Instance startup, but keeping as other Instance implementations
+            // do not, so to permit older releases to be tested, repeat the setup
             updateMessagingVersions();
 
             if (instanceInitializer != null)

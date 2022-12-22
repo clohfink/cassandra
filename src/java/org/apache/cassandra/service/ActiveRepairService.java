@@ -40,7 +40,6 @@ import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Multimap;
-import com.google.common.util.concurrent.MoreExecutors;
 
 import org.apache.cassandra.concurrent.ExecutorPlus;
 import org.apache.cassandra.config.Config;
@@ -53,13 +52,11 @@ import org.apache.cassandra.utils.ExecutorUtils;
 import org.apache.cassandra.repair.state.CoordinatorState;
 import org.apache.cassandra.repair.state.ParticipateState;
 import org.apache.cassandra.repair.state.ValidationState;
-import org.apache.cassandra.utils.ObjectSizes;
 import org.apache.cassandra.utils.Simulate;
 import org.apache.cassandra.locator.EndpointsForToken;
 import org.apache.cassandra.schema.Schema;
 import org.apache.cassandra.schema.TableMetadata;
 import org.apache.cassandra.streaming.PreviewKind;
-import org.apache.cassandra.utils.Simulate;
 import org.apache.cassandra.utils.TimeUUID;
 import org.apache.cassandra.utils.concurrent.CountDownLatch;
 import org.slf4j.Logger;
@@ -115,7 +112,6 @@ import org.apache.cassandra.utils.Pair;
 import org.apache.cassandra.utils.concurrent.Future;
 import org.apache.cassandra.utils.concurrent.FutureCombiner;
 import org.apache.cassandra.utils.concurrent.ImmediateFuture;
-import org.checkerframework.checker.nullness.qual.Nullable;
 
 import static com.google.common.collect.Iterables.concat;
 import static com.google.common.collect.Iterables.transform;
@@ -129,7 +125,6 @@ import static org.apache.cassandra.net.Verb.PREPARE_MSG;
 import static org.apache.cassandra.utils.Clock.Global.currentTimeMillis;
 import static org.apache.cassandra.utils.Simulate.With.MONITORS;
 import static org.apache.cassandra.utils.Clock.Global.nanoTime;
-import static org.apache.cassandra.utils.TimeUUID.Generator.nextTimeUUID;
 import static org.apache.cassandra.utils.concurrent.CountDownLatch.newCountDownLatch;
 
 /**
@@ -216,9 +211,9 @@ public class ActiveRepairService implements IEndpointStateChangeSubscriber, IFai
     private final Gossiper gossiper;
     private final Cache<Integer, Pair<ParentRepairStatus, List<String>>> repairStatusByCmd;
 
-    private final ExecutorPlus clearSnapshotExecutor = executorFactory().configurePooled("RepairClearSnapshot", 1)
-                                                                        .withKeepAlive(1, TimeUnit.HOURS)
-                                                                        .build();
+    public final ExecutorPlus snapshotExecutor = executorFactory().configurePooled("RepairSnapshotExecutor", 1)
+                                                                  .withKeepAlive(1, TimeUnit.HOURS)
+                                                                  .build();
 
     public ActiveRepairService(IFailureDetector failureDetector, Gossiper gossiper)
     {
@@ -234,7 +229,7 @@ public class ActiveRepairService implements IEndpointStateChangeSubscriber, IFai
                                              .maximumSize(Long.getLong("cassandra.parent_repair_status_cache_size", 100_000))
                                              .build();
 
-        DurationSpec duration = getRepairStateExpires();
+        DurationSpec.LongNanosecondsBound duration = getRepairStateExpires();
         int numElements = getRepairStateSize();
         logger.info("Storing repair state for {} or for {} elements", duration, numElements);
         repairs = CacheBuilder.newBuilder()
@@ -745,7 +740,7 @@ public class ActiveRepairService implements IEndpointStateChangeSubscriber, IFai
     /**
      * We assume when calling this method that a parent session for the provided identifier
      * exists, and that session is still in progress. When it doesn't, that should mean either
-     * {@link #abort(Predicate, String)} or {@link #failRepair(UUID, String)} have removed it.
+     * {@link #abort(Predicate, String)} or {@link #failRepair(TimeUUID, String)} have removed it.
      *
      * @param parentSessionId an identifier for an active parent repair session
      * @return the {@link ParentRepairSession} associated with the provided identifier
@@ -767,6 +762,7 @@ public class ActiveRepairService implements IEndpointStateChangeSubscriber, IFai
      *
      * @param parentSessionId an identifier for an active parent repair session
      * @return the {@link ParentRepairSession} associated with the provided identifier
+     * @see org.apache.cassandra.db.repair.CassandraTableRepairManager#snapshot(String, Collection, boolean)
      */
     public synchronized ParentRepairSession removeParentRepairSession(TimeUUID parentSessionId)
     {
@@ -777,7 +773,7 @@ public class ActiveRepairService implements IEndpointStateChangeSubscriber, IFai
 
         if (session.hasSnapshots)
         {
-            clearSnapshotExecutor.submit(() -> {
+            snapshotExecutor.submit(() -> {
                 logger.info("[repair #{}] Clearing snapshots for {}", parentSessionId,
                             session.columnFamilyStores.values()
                                                       .stream()
@@ -1069,7 +1065,7 @@ public class ActiveRepairService implements IEndpointStateChangeSubscriber, IFai
 
     public void shutdownNowAndWait(long timeout, TimeUnit unit) throws InterruptedException, TimeoutException
     {
-        ExecutorUtils.shutdownNowAndWait(timeout, unit, clearSnapshotExecutor);
+        ExecutorUtils.shutdownNowAndWait(timeout, unit, snapshotExecutor);
     }
 
     public Collection<CoordinatorState> coordinators()

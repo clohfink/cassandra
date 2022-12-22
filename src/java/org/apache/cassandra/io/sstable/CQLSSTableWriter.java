@@ -32,6 +32,7 @@ import java.util.stream.Collectors;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.Sets;
 
+import org.apache.cassandra.config.CassandraRelevantProperties;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.cql3.statements.schema.CreateTableStatement;
 import org.apache.cassandra.cql3.statements.schema.CreateTypeStatement;
@@ -46,7 +47,6 @@ import org.apache.cassandra.cql3.statements.ModificationStatement;
 import org.apache.cassandra.db.Clustering;
 import org.apache.cassandra.db.Slice;
 import org.apache.cassandra.db.Slices;
-import org.apache.cassandra.db.SystemKeyspace;
 import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.dht.IPartitioner;
 import org.apache.cassandra.dht.Murmur3Partitioner;
@@ -105,7 +105,7 @@ public class CQLSSTableWriter implements Closeable
 
     static
     {
-        System.setProperty("cassandra.schema.force_load_local_keyspaces", "true");
+        CassandraRelevantProperties.FORCE_LOAD_LOCAL_KEYSPACES.setBoolean(true);
         DatabaseDescriptor.clientInitialization(false);
         // Partitioner is not set in client mode.
         if (DatabaseDescriptor.getPartitioner() == null)
@@ -502,6 +502,26 @@ public class CQLSSTableWriter implements Closeable
         }
 
         /**
+         * This method is deprecated in favor of the new withBufferSizeInMiB(int size)
+         * The size of the buffer to use.
+         * <p>
+         * This defines how much data will be buffered before being written as
+         * a new SSTable. This correspond roughly to the data size that will have the created
+         * sstable.
+         * <p>
+         * The default is 128MiB, which should be reasonable for a 1GiB heap. If you experience
+         * OOM while using the writer, you should lower this value.
+         *
+         * @param size the size to use in MiB.
+         * @return this builder.
+         */
+        @Deprecated
+        public Builder withBufferSizeInMB(int size)
+        {
+            return withBufferSizeInMiB(size);
+        }
+
+        /**
          * Creates a CQLSSTableWriter that expects sorted inputs.
          * <p>
          * If this option is used, the resulting writer will expect rows to be
@@ -535,7 +555,8 @@ public class CQLSSTableWriter implements Closeable
                 throw new IllegalStateException("No modification (INSERT/UPDATE/DELETE) statement specified, you should provide a modification statement through using()");
 
             Preconditions.checkState(Sets.difference(SchemaConstants.LOCAL_SYSTEM_KEYSPACE_NAMES, Schema.instance.getKeyspaces()).isEmpty(),
-                                     "Local keyspaces were not loaded. If this is running as a client, please make sure to add %s=true system property.", Schema.FORCE_LOAD_LOCAL_KEYSPACES_PROP);
+                                     "Local keyspaces were not loaded. If this is running as a client, please make sure to add %s=true system property.",
+                                     CassandraRelevantProperties.FORCE_LOAD_LOCAL_KEYSPACES.getKey());
             synchronized (CQLSSTableWriter.class)
             {
 

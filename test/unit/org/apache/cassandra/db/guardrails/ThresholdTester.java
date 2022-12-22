@@ -29,10 +29,10 @@ import org.junit.Before;
 import org.junit.Test;
 
 import org.apache.cassandra.config.DataStorageSpec;
-import org.apache.cassandra.exceptions.ConfigurationException;
 import org.assertj.core.api.Assertions;
 
 import static java.lang.String.format;
+import static org.apache.cassandra.config.DataStorageSpec.DataStorageUnit.BYTES;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.fail;
@@ -92,12 +92,12 @@ public abstract class ThresholdTester extends GuardrailTester
                               Function<Guardrails, String> failGetter)
     {
         super(threshold);
-        this.warnThreshold = new DataStorageSpec(warnThreshold).toBytes();
-        this.failThreshold = new DataStorageSpec(failThreshold).toBytes();
-        this.setter = (g, w, a) -> setter.accept(g, w == null ? null : DataStorageSpec.inBytes(w).toString(), a == null ? null : DataStorageSpec.inBytes(a).toString());
-        this.warnGetter = g -> new DataStorageSpec(warnGetter.apply(g)).toBytes();
-        this.failGetter = g -> new DataStorageSpec(failGetter.apply(g)).toBytes();
-        maxValue = Long.MAX_VALUE;
+        this.warnThreshold = new DataStorageSpec.LongBytesBound(warnThreshold).toBytes();
+        this.failThreshold = new DataStorageSpec.LongBytesBound(failThreshold).toBytes();
+        this.setter = (g, w, a) -> setter.accept(g, w == null ? null : new DataStorageSpec.LongBytesBound(w, BYTES).toString(), a == null ? null : new DataStorageSpec.LongBytesBound(a, BYTES).toString());
+        this.warnGetter = g -> new DataStorageSpec.LongBytesBound(warnGetter.apply(g)).toBytes();
+        this.failGetter = g -> new DataStorageSpec.LongBytesBound(failGetter.apply(g)).toBytes();
+        maxValue = Long.MAX_VALUE - 1;
         disabledValue = null;
     }
 
@@ -229,15 +229,6 @@ public abstract class ThresholdTester extends GuardrailTester
             assertValidProperty(setter, value);
             fail(format("Expected exception for guardrails.%s value: %d", name, value));
         }
-        catch (ConfigurationException e)
-        {
-            String expectedMessage = null;
-
-            if (value < 0)
-                expectedMessage = "Invalid data storage: value must be positive";
-
-            Assertions.assertThat(e.getMessage()).contains(expectedMessage);
-        }
         catch (IllegalArgumentException e)
         {
             String expectedMessage = null;
@@ -245,14 +236,18 @@ public abstract class ThresholdTester extends GuardrailTester
             if (value > maxValue)
                 expectedMessage = format("Invalid value %d for %s: maximum allowed value is %d",
                                          value, name, maxValue);
+
             if (value == 0 && value != disabledValue)
                 expectedMessage = format("Invalid value for %s: 0 is not allowed; if attempting to disable use %s",
                                          name, disabledValue);
 
-            if (value < 0 && value != disabledValue)
+            if (value < 0 && disabledValue != null && value != disabledValue)
                 expectedMessage = format("Invalid value %d for %s: negative values are not "
                                          + "allowed, outside of %s which disables the guardrail",
                                          value, name, disabledValue);
+
+            if (expectedMessage == null && value < 0)
+                expectedMessage = format("Invalid data storage: value must be non-negative");
 
             assertEquals(format("Exception message '%s' does not contain '%s'", e.getMessage(), expectedMessage),
                          expectedMessage, e.getMessage());

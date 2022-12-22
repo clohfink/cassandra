@@ -31,7 +31,6 @@ import org.junit.Test;
 import org.apache.cassandra.ServerTestUtils;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.db.Keyspace;
-import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.locator.AbstractEndpointSnitch;
 import org.apache.cassandra.locator.IEndpointSnitch;
 import org.apache.cassandra.locator.InetAddressAndPort;
@@ -264,7 +263,7 @@ public class GuardrailMinimumReplicationFactorTest extends ThresholdTester
             DatabaseDescriptor.setDefaultKeyspaceRF(1);
             guardrails().setMinimumReplicationFactorThreshold(MINIMUM_REPLICATION_FACTOR_WARN_THRESHOLD, MINIMUM_REPLICATION_FACTOR_FAIL_THRESHOLD);
         }
-        catch (ConfigurationException e)
+        catch (IllegalArgumentException e)
         {
             String expectedMessage = "";
 

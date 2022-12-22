@@ -26,15 +26,10 @@ import java.util.Collection;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 
 import javax.annotation.Nullable;
 
-import org.apache.cassandra.locator.InetAddressAndPort;
-import org.apache.cassandra.streaming.StreamDeserializingTask;
-import org.apache.cassandra.streaming.StreamingChannel;
-import org.apache.cassandra.streaming.StreamingDataOutputPlus;
-import org.apache.cassandra.utils.concurrent.ImmediateFuture;
-import org.apache.cassandra.utils.concurrent.Semaphore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -42,10 +37,19 @@ import io.netty.channel.Channel;
 import io.netty.channel.ChannelFuture;
 import io.netty.util.concurrent.Future; // checkstyle: permit this import
 import org.apache.cassandra.concurrent.ExecutorPlus;
+import org.apache.cassandra.config.DatabaseDescriptor;
+import org.apache.cassandra.db.SystemKeyspace;
+import org.apache.cassandra.locator.InetAddressAndPort;
+import org.apache.cassandra.streaming.StreamDeserializingTask;
+import org.apache.cassandra.streaming.StreamingChannel;
+import org.apache.cassandra.streaming.StreamingDataOutputPlus;
 import org.apache.cassandra.streaming.StreamSession;
 import org.apache.cassandra.streaming.messages.IncomingStreamMessage;
+import org.apache.cassandra.streaming.messages.KeepAliveMessage;
 import org.apache.cassandra.streaming.messages.OutgoingStreamMessage;
 import org.apache.cassandra.streaming.messages.StreamMessage;
+import org.apache.cassandra.utils.concurrent.ImmediateFuture;
+import org.apache.cassandra.utils.concurrent.Semaphore;
 import org.apache.cassandra.utils.concurrent.UncheckedInterruptedException;
 
 import static com.google.common.base.Throwables.getRootCause;
@@ -54,6 +58,7 @@ import static java.lang.String.format;
 import static java.lang.System.getProperty;
 import static java.lang.Thread.currentThread;
 import static java.util.concurrent.TimeUnit.*;
+
 import static org.apache.cassandra.concurrent.ExecutorFactory.Global.executorFactory;
 import static org.apache.cassandra.config.Config.PROPERTY_PREFIX;
 import static org.apache.cassandra.streaming.StreamSession.createLogTag;
@@ -64,8 +69,6 @@ import static org.apache.cassandra.utils.FBUtilities.getAvailableProcessors;
 import static org.apache.cassandra.utils.JVMStabilityInspector.inspectThrowable;
 import static org.apache.cassandra.utils.concurrent.BlockingQueues.newBlockingQueue;
 import static org.apache.cassandra.utils.concurrent.Semaphore.newFairSemaphore;
-
-import static org.apache.cassandra.utils.Clock.Global.nanoTime;
 
 /**
  * Responsible for sending {@link StreamMessage}s to a given peer. We manage an array of netty {@link Channel}s
@@ -155,24 +158,35 @@ public class StreamingMultiplexedChannel
              *  b) for streaming receiver (note: both initiator and follower can receive streaming files) to reveive files,
              *     in {@link Handler#setupStreamingPipeline}
              */
-            controlChannel = createChannel(StreamingChannel.Kind.CONTROL);
+            controlChannel = createControlChannel();
         }
     }
 
-    private StreamingChannel createChannel(StreamingChannel.Kind kind) throws IOException
+    private StreamingChannel createControlChannel() throws IOException
     {
         logger.debug("Creating stream session to {} as {}", to, session.isFollower() ? "follower" : "initiator");
 
-        StreamingChannel channel = factory.create(to, messagingVersion, kind);
-        if (kind == StreamingChannel.Kind.CONTROL)
-        {
-            executorFactory().startThread(String.format("Stream-Deserializer-%s-%s", to.toString(), channel.id()),
-                                          new StreamDeserializingTask(session, channel, messagingVersion));
-            session.attachInbound(channel);
-        }
+        StreamingChannel channel = factory.create(to, messagingVersion, StreamingChannel.Kind.CONTROL);
+        executorFactory().startThread(String.format("Stream-Deserializer-%s-%s", to.toString(), channel.id()),
+                                      new StreamDeserializingTask(session, channel, messagingVersion));
+
+        session.attachInbound(channel);
         session.attachOutbound(channel);
 
-        logger.debug("Creating {}", channel.description());
+        scheduleKeepAliveTask(channel);
+
+        logger.debug("Creating control {}", channel.description());
+        return channel;
+    }
+    
+    private StreamingChannel createFileChannel(InetAddressAndPort connectTo) throws IOException
+    {
+        logger.debug("Creating stream session to {} as {}", to, session.isFollower() ? "follower" : "initiator");
+
+        StreamingChannel channel = factory.create(to, connectTo, messagingVersion, StreamingChannel.Kind.FILE);
+        session.attachOutbound(channel);
+
+        logger.debug("Creating file {}", channel.description());
         return channel;
     }
 
@@ -202,7 +216,9 @@ public class StreamingMultiplexedChannel
                 throw new RuntimeException("Cannot send stream data messages for preview streaming sessions");
             if (logger.isDebugEnabled())
                 logger.debug("{} Sending {}", createLogTag(session), message);
-            return fileTransferExecutor.submit(new FileStreamTask((OutgoingStreamMessage)message));
+
+            InetAddressAndPort connectTo = factory.supportsPreferredIp() ? SystemKeyspace.getPreferredIP(to) : to;
+            return fileTransferExecutor.submit(new FileStreamTask((OutgoingStreamMessage) message, connectTo));
         }
 
         try
@@ -236,7 +252,7 @@ public class StreamingMultiplexedChannel
      *
      * Note: this is called from the netty event loop.
      *
-     * @return null if the message was processed sucessfully; else, a {@link java.util.concurrent.Future} to indicate
+     * @return null if the message was processed successfully; else, a {@link java.util.concurrent.Future} to indicate
      * the status of aborting any remaining tasks in the session.
      */
     Future<?> onMessageComplete(Future<?> future, StreamMessage msg)
@@ -268,9 +284,12 @@ public class StreamingMultiplexedChannel
          */
         private final StreamMessage msg;
 
-        FileStreamTask(OutgoingStreamMessage ofm)
+        private final InetAddressAndPort connectTo;
+
+        FileStreamTask(OutgoingStreamMessage ofm, InetAddressAndPort connectTo)
         {
             this.msg = ofm;
+            this.connectTo = connectTo;
         }
 
         /**
@@ -279,6 +298,7 @@ public class StreamingMultiplexedChannel
         FileStreamTask(StreamMessage msg)
         {
             this.msg = msg;
+            this.connectTo = null;
         }
 
         @Override
@@ -290,7 +310,7 @@ public class StreamingMultiplexedChannel
             StreamingChannel channel = null;
             try
             {
-                channel = getOrCreateChannel();
+                channel = getOrCreateFileChannel(connectTo);
 
                 // close the DataOutputStreamPlus as we're done with it - but don't close the channel
                 try (StreamingDataOutputPlus out = channel.acquireOut())
@@ -353,7 +373,7 @@ public class StreamingMultiplexedChannel
             }
         }
 
-        private StreamingChannel getOrCreateChannel()
+        private StreamingChannel getOrCreateFileChannel(InetAddressAndPort connectTo)
         {
             Thread currentThread = currentThread();
             try
@@ -362,7 +382,7 @@ public class StreamingMultiplexedChannel
                 if (channel != null)
                     return channel;
 
-                channel = createChannel(StreamingChannel.Kind.FILE);
+                channel = createFileChannel(connectTo);
                 threadToChannelMap.put(currentThread, channel);
                 return channel;
             }
@@ -391,6 +411,72 @@ public class StreamingMultiplexedChannel
         {
             threadToChannelMap.remove(currentThread());
         }
+    }
+
+    /**
+     * Periodically sends the {@link KeepAliveMessage}.
+     * <p>
+     * NOTE: this task, and the callback function are executed in the netty event loop.
+     */
+    class KeepAliveTask implements Runnable
+    {
+        private final StreamingChannel channel;
+
+        /**
+         * A reference to the scheduled task for this instance so that it may be cancelled.
+         */
+        ScheduledFuture<?> future;
+
+        KeepAliveTask(StreamingChannel channel)
+        {
+            this.channel = channel;
+        }
+
+        @Override
+        public void run()
+        {
+            // if the channel has been closed, cancel the scheduled task and return
+            if (!channel.connected() || closed)
+            {
+                if (null != future)
+                    future.cancel(false);
+                return;
+            }
+
+            if (logger.isTraceEnabled())
+                logger.trace("{} Sending keep-alive to {}.", createLogTag(session, channel), session.peer);
+
+            sendControlMessage(new KeepAliveMessage()).addListener(f ->
+            {
+                if (f.isSuccess() || f.isCancelled())
+                    return;
+
+                if (logger.isDebugEnabled())
+                    logger.debug("{} Could not send keep-alive message (perhaps stream session is finished?).",
+                                 createLogTag(session, channel), f.cause());
+            });
+        }
+    }
+
+    private void scheduleKeepAliveTask(StreamingChannel channel)
+    {
+        if (!(channel instanceof NettyStreamingChannel))
+            return;
+
+        int keepAlivePeriod = DatabaseDescriptor.getStreamingKeepAlivePeriod();
+        if (keepAlivePeriod <= 0)
+            return;
+
+        if (logger.isDebugEnabled())
+            logger.debug("{} Scheduling keep-alive task with {}s period.", createLogTag(session, channel), keepAlivePeriod);
+
+        KeepAliveTask task = new KeepAliveTask(channel);
+        ScheduledFuture<?> scheduledFuture =
+            ((NettyStreamingChannel)channel).channel
+                                            .eventLoop()
+                                            .scheduleAtFixedRate(task, keepAlivePeriod, keepAlivePeriod, TimeUnit.SECONDS);
+        task.future = scheduledFuture;
+        channelKeepAlives.add(scheduledFuture);
     }
 
     /**

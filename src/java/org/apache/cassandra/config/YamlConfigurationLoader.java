@@ -21,8 +21,6 @@ import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URL;
-import java.nio.file.Files;
-import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -31,8 +29,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
+
+import javax.annotation.Nullable;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.Lists;
@@ -116,7 +114,6 @@ public class YamlConfigurationLoader implements ConfigurationLoader
         if (storageConfigURL == null)
             storageConfigURL = getStorageConfigURL();
 
-        validateConfigFile();
         return loadConfig(storageConfigURL);
     }
 
@@ -208,46 +205,6 @@ public class YamlConfigurationLoader implements ConfigurationLoader
         Map<String, Object> rawConfig = rawYaml.load(new ByteArrayInputStream(configBytes));
         verifyReplacements(replacements, rawConfig);
 
-    }
-
-    private static String readStorageConfig(URL url)
-    {
-        String content;
-
-        try
-        {
-            content = new String (Files.readAllBytes(Paths.get(String.valueOf(url).substring(5))));
-        }
-        catch (IOException e)
-        {
-            throw new ConfigurationException("Invalid yaml: " + url, e);
-        }
-
-        return content;
-    }
-
-    private static void validateConfigFile()
-    {
-        String content = YamlConfigurationLoader.readStorageConfig(storageConfigURL);
-
-        if (isBlank("commitlog_sync_period", content))
-            throw new IllegalArgumentException("You should provide a value for commitlog_sync_period or comment it in " +
-                                               "order to get a default one");
-
-        if (isBlank("commitlog_sync_group_window", content))
-            throw new IllegalArgumentException("You should provide a value for commitlog_sync_group_window or comment it in " +
-                                               "order to get a default one");
-    }
-
-    /**
-     * This method helps to preserve the behavior of parameters which were originally of primitive type and
-     * without default value in Config.java (CASSANDRA-15234)
-     */
-    private static boolean isBlank(String property, String content)
-    {
-        Pattern p = Pattern.compile(String.format("%s%s *: *$", '^', property), Pattern.MULTILINE);
-        Matcher m = p.matcher(content);
-        return m.find();
     }
 
     @VisibleForTesting
@@ -408,10 +365,13 @@ public class YamlConfigurationLoader implements ConfigurationLoader
 
             return new ForwardingProperty(result.getName(), result)
             {
+                boolean allowsNull = result.getAnnotation(Nullable.class) != null;
+
                 @Override
                 public void set(Object object, Object value) throws Exception
                 {
-                    if (value == null && get(object) != null)
+                    // TODO: CASSANDRA-17785, add @Nullable to all nullable Config properties and remove value == null
+                    if (value == null && get(object) != null && !allowsNull)
                         nullProperties.add(getName());
 
                     result.set(object, value);

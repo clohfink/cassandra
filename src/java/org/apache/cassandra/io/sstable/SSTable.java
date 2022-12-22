@@ -46,6 +46,7 @@ import org.apache.cassandra.dht.IPartitioner;
 import org.apache.cassandra.dht.Token;
 import org.apache.cassandra.io.FSWriteError;
 import org.apache.cassandra.io.util.DiskOptimizationStrategy;
+import org.apache.cassandra.io.util.FileOutputStreamPlus;
 import org.apache.cassandra.io.util.FileUtils;
 import org.apache.cassandra.io.util.RandomAccessReader;
 import org.apache.cassandra.schema.TableMetadata;
@@ -53,7 +54,7 @@ import org.apache.cassandra.schema.TableMetadataRef;
 import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.Pair;
 import org.apache.cassandra.utils.TimeUUID;
-import org.apache.cassandra.utils.memory.HeapAllocator;
+import org.apache.cassandra.utils.memory.HeapCloner;
 
 import static org.apache.cassandra.io.util.File.WriteMode.APPEND;
 import static org.apache.cassandra.service.ActiveRepairService.NO_PENDING_REPAIR;
@@ -163,7 +164,7 @@ public abstract class SSTable
     public static DecoratedKey getMinimalKey(DecoratedKey key)
     {
         return key.getKey().position() > 0 || key.getKey().hasRemaining() || !key.getKey().hasArray()
-                                       ? new BufferDecoratedKey(key.getToken(), HeapAllocator.instance.clone(key.getKey()))
+                                       ? new BufferDecoratedKey(key.getToken(), HeapCloner.instance.clone(key.getKey()))
                                        : key;
     }
 
@@ -351,10 +352,13 @@ public abstract class SSTable
     protected static void appendTOC(Descriptor descriptor, Collection<Component> components)
     {
         File tocFile = new File(descriptor.filenameFor(Component.TOC));
-        try (PrintWriter w = new PrintWriter(tocFile.newWriter(APPEND)))
+        try (FileOutputStreamPlus out = tocFile.newOutputStream(APPEND);
+             PrintWriter w = new PrintWriter(out))
         {
             for (Component component : components)
                 w.println(component.name);
+            w.flush();
+            out.sync();
         }
         catch (IOException e)
         {

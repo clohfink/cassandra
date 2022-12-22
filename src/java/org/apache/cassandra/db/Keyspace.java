@@ -126,7 +126,10 @@ public class Keyspace
 
     public static void setInitialized()
     {
-        initialized = true;
+        synchronized (Schema.instance)
+        {
+            initialized = true;
+        }
     }
 
     /**
@@ -137,7 +140,10 @@ public class Keyspace
     @VisibleForTesting
     public static void unsetInitialized()
     {
-        initialized = false;
+        synchronized (Schema.instance)
+        {
+            initialized = false;
+        }
     }
 
     public static Keyspace open(String keyspaceName)
@@ -230,7 +236,7 @@ public class Keyspace
      * @param rateLimiter Rate limiter for hardlinks-per-second
      * @throws IOException if the column family doesn't exist
      */
-    public void snapshot(String snapshotName, String columnFamilyName, boolean skipFlush, DurationSpec ttl, RateLimiter rateLimiter, Instant creationTime) throws IOException
+    public void snapshot(String snapshotName, String columnFamilyName, boolean skipFlush, DurationSpec.IntSecondsBound ttl, RateLimiter rateLimiter, Instant creationTime) throws IOException
     {
         assert snapshotName != null;
         boolean tookSnapShot = false;
