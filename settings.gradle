@@ -1,2 +1,8 @@
 rootProject.name='nfcassandra'
 
+//sourceControl {
+//    gitRepository("https://github.com/ayushisingh29/Priam.git") {
+//        producesModule("com.github.ayushisingh29.priam:priam-cass-extensions")
+//    }
+//}
+

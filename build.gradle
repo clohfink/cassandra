@@ -19,15 +19,16 @@ ext {
     cass_version = ant.properties['version']
     cass_home_dir = "/apps/nfcassandra_server"
     cass_filename = "nf-cassandra-${project.ext.cass_version}-bin.tar.gz"
+    //priam_extensions_version = "3.11.52"
     priam_extensions_version = "4.1.0-rc1"
     priam_extensions_jar = "priam-cass-extensions-${priam_extensions_version}.jar"
 }
 
-//allprojects {
-//    repositories {
-//        maven { url 'https://jitpack.io' }
-//    }
-//}
+repositories {
+    maven { url 'https://repo1.maven.org/maven2' }
+    maven {url 'https://repo.maven.apache.org/maven2'}
+    maven { url 'https://jitpack.io'}
+}
 
 dependencies {
     //implementation "com.netflix.priam:priam-cass-extensions:${priam_extensions_version}"
