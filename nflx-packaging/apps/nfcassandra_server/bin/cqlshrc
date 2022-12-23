@@ -1,0 +1,6 @@
+[ssl]
+certfile = /metatron/certificates/metatronClient.trust.pem
+validate = true
+userkey = /run/metatron/certificates/client.key
+usercert = /run/metatron/certificates/client.crt
+version = TLSv1_2
