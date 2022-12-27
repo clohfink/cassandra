@@ -93,6 +93,8 @@ public final class SystemDistributedKeyspace
 
     public static final String PARTITION_DENYLIST_TABLE = "partition_denylist";
 
+    public static final String QUOTAS_TABLE = "quotas";
+
     private static final TableMetadata RepairHistory =
         parse(REPAIR_HISTORY,
                 "Repair history",
@@ -157,6 +159,19 @@ public final class SystemDistributedKeyspace
           + "key blob,"
           + "PRIMARY KEY ((ks_name, table_name), key))")
     .build();
+
+    public static final TableMetadata QuotasTable =
+    parse(QUOTAS_TABLE,
+            "System metrics by node and cf",
+            "CREATE TABLE system_distributed.quotas ("
+            + "type text,"
+            + "scope text,"
+            + "nodeid text,"
+            + "value bigint,"
+            + "total bigint,"
+            + "PRIMARY KEY ((type, scope), nodeid)")
+    .build();
+
 
     private static TableMetadata.Builder parse(String table, String description, String cql)
     {
