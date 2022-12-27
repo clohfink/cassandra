@@ -94,7 +94,7 @@ public final class SystemDistributedKeyspace
 
     public static final String PARTITION_DENYLIST_TABLE = "partition_denylist";
 
-    public static final String DISK_USAGE_TABLE = "disk_usage";
+    public static final String RESOURCE_USAGE_TABLE = "resource_usage";
 
     private static final TableMetadata RepairHistory =
         parse(REPAIR_HISTORY,
@@ -162,13 +162,14 @@ public final class SystemDistributedKeyspace
     .build();
 
     public static final TableMetadata DiskUsageTable =
-    parse(DISK_USAGE_TABLE,
-            "System metrics by node and cf",
+    parse(RESOURCE_USAGE_TABLE,
+          "System metrics by type and scope",
           "CREATE TABLE %s ("
-          + "keyspace_name text,"
-          + "table_name text,"
-          + "mebibytes text,"
-          + "PRIMARY KEY (keyspace_name, table_name))")
+          + "type text,"
+          + "bucket int,"
+          + "scope text,"
+          + "value double,"
+          + "PRIMARY KEY ((type, bucket), scope))")
     .build();
 
 
