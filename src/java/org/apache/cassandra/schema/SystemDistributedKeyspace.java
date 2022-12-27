@@ -82,8 +82,9 @@ public final class SystemDistributedKeyspace
      * gen 4: compression chunk length reduced to 16KiB, memtable_flush_period_in_ms now unset on all tables in 4.0
      * gen 5: add ttl and TWCS to repair_history tables
      * gen 6: add denylist table
+     * gen 7: add disk usage table (netflix internal)
      */
-    public static final long GENERATION = 6;
+    public static final long GENERATION = 7;
 
     public static final String REPAIR_HISTORY = "repair_history";
 
@@ -93,7 +94,7 @@ public final class SystemDistributedKeyspace
 
     public static final String PARTITION_DENYLIST_TABLE = "partition_denylist";
 
-    public static final String QUOTAS_TABLE = "quotas";
+    public static final String DISK_USAGE_TABLE = "disk_usage";
 
     private static final TableMetadata RepairHistory =
         parse(REPAIR_HISTORY,
@@ -160,16 +161,14 @@ public final class SystemDistributedKeyspace
           + "PRIMARY KEY ((ks_name, table_name), key))")
     .build();
 
-    public static final TableMetadata QuotasTable =
-    parse(QUOTAS_TABLE,
+    public static final TableMetadata DiskUsageTable =
+    parse(DISK_USAGE_TABLE,
             "System metrics by node and cf",
-            "CREATE TABLE system_distributed.quotas ("
-            + "type text,"
-            + "scope text,"
-            + "nodeid text,"
-            + "value bigint,"
-            + "total bigint,"
-            + "PRIMARY KEY ((type, scope), nodeid)")
+          "CREATE TABLE %s ("
+          + "keyspace_name text,"
+          + "table_name text,"
+          + "mebibytes text,"
+          + "PRIMARY KEY (keyspace_name, table_name))")
     .build();
 
 
@@ -182,7 +181,7 @@ public final class SystemDistributedKeyspace
 
     public static KeyspaceMetadata metadata()
     {
-        return KeyspaceMetadata.create(SchemaConstants.DISTRIBUTED_KEYSPACE_NAME, KeyspaceParams.simple(Math.max(DEFAULT_RF, DatabaseDescriptor.getDefaultKeyspaceRF())), Tables.of(RepairHistory, ParentRepairHistory, ViewBuildStatus, PartitionDenylistTable, QuotasTable));
+        return KeyspaceMetadata.create(SchemaConstants.DISTRIBUTED_KEYSPACE_NAME, KeyspaceParams.simple(Math.max(DEFAULT_RF, DatabaseDescriptor.getDefaultKeyspaceRF())), Tables.of(RepairHistory, ParentRepairHistory, ViewBuildStatus, PartitionDenylistTable, DiskUsageTable));
     }
 
     public static void startParentRepair(TimeUUID parent_id, String keyspaceName, String[] cfnames, RepairOption options)
