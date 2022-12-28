@@ -39,6 +39,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.Callable;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -2416,7 +2417,7 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean, Memtable.Owner
             partitionKeySetIgnoreGcGrace.clear();
 
             for (String key : partitionKeysIgnoreGcGrace) {
-                DecoratedKey dk = decorateKey(metadata.getKeyValidator().fromString(key));
+                DecoratedKey dk = decorateKey(ByteBuffer.wrap(key.getBytes()));
                 partitionKeySetIgnoreGcGrace.add(dk);
             }
 

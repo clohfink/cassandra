@@ -771,7 +771,6 @@
              this that the new assertj's `assertj-parent-pom` depends on. -->
           <dependency groupId="org.junit" artifactId="junit-bom" version="5.6.0" type="pom" scope="test"/>
           <!-- when updating assertj, make sure to also update the corresponding junit-bom dependency -->
-
           <dependency groupId="org.assertj" artifactId="assertj-core" version="3.15.0" scope="provided"/>
           <dependency groupId="org.awaitility" artifactId="awaitility" version="4.0.3"  scope="test">
             <exclusion groupId="org.hamcrest" artifactId="hamcrest"/>
@@ -781,7 +780,6 @@
           <dependency groupId="netflix" artifactId="metatron-ipc-common-shaded" version="1.307.6" />
           <dependency groupId="com.github.luben" artifactId="zstd-jni" version="1.5.0-4"/>
           <dependency groupId="com.amazonaws" artifactId="aws-java-sdk-core" version="1.12.129" />
-
         </dependencyManagement>
         <developer id="adelapena" name="Andres de la Peña"/>
         <developer id="alakshman" name="Avinash Lakshman"/>
@@ -965,9 +963,9 @@
         <dependency groupId="org.jboss.byteman" artifactId="byteman-submit"/>
         <dependency groupId="org.jboss.byteman" artifactId="byteman-bmunit"/>
         <dependency groupId="com.github.seancfoley" artifactId="ipaddress" />
-        <dependency groupId="netflix" artifactId="metatron-ipc-common-shaded" version="1.307.6" />
+        <dependency groupId="netflix" artifactId="metatron-ipc-common-shaded" version="1.307.6"/>
         <dependency groupId="com.github.luben" artifactId="zstd-jni" version="1.5.0-4"/>
-        <dependency groupId="com.amazonaws" artifactId="aws-java-sdk-core" version="1.12.129" />
+        <dependency groupId="com.amazonaws" artifactId="aws-java-sdk-core" version="1.12.129"/>
       </artifact:pom>
     </target>
 
