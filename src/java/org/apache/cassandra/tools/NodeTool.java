@@ -46,7 +46,6 @@ import java.util.Scanner;
 import java.util.SortedMap;
 
 import com.google.common.base.Joiner;
-import com.google.common.base.Preconditions;
 import com.google.common.base.Throwables;
 
 import org.apache.cassandra.locator.EndpointSnitchInfoMBean;
@@ -67,7 +66,6 @@ import io.airlift.airline.ParseCommandUnrecognizedException;
 import io.airlift.airline.ParseOptionConversionException;
 import io.airlift.airline.ParseOptionMissingException;
 import io.airlift.airline.ParseOptionMissingValueException;
-import org.apache.cassandra.utils.Pair;
 
 public class NodeTool
 {
