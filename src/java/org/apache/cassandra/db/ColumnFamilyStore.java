@@ -322,7 +322,9 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean, Memtable.Owner
 
     private volatile boolean compactionSpaceCheck = true;
 
-    @VisibleForTesting
+    // Tombtone partitions that ignore the gc_grace_seconds during compaction
+    private final Set<DecoratedKey> partitionKeySetIgnoreGcGrace = ConcurrentHashMap.newKeySet();
+
     final DiskBoundaryManager diskBoundaryManager = new DiskBoundaryManager();
     private volatile ShardBoundaries cachedShardBoundaries = null;
 
@@ -350,9 +352,6 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean, Memtable.Owner
     }
 
     private final PaxosRepairHistoryLoader paxosRepairHistory = new PaxosRepairHistoryLoader();
-
-    // Tombtone partitions that ignore the gc_grace_seconds during compaction
-    private final Set<DecoratedKey> partitionKeySetIgnoreGcGrace = ConcurrentHashMap.newKeySet();
 
     public static void shutdownPostFlushExecutor() throws InterruptedException
     {
@@ -2435,28 +2434,31 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean, Memtable.Owner
         CompactionManager.instance.forceCompactionForKey(this, key);
     }
 
-    public void forceMajorCompaction(boolean splitOutput, String... partitionKeysIgnoreGcGrace)
+    public void forceCompactionKeysIgnoringGcGrace(String... partitionKeysIgnoreGcGrace)
     {
+        List<DecoratedKey> decoratedKeys = new ArrayList<>();
         try
         {
             partitionKeySetIgnoreGcGrace.clear();
 
             for (String key : partitionKeysIgnoreGcGrace) {
-                DecoratedKey dk = decorateKey(ByteBuffer.wrap(key.getBytes()));
+                DecoratedKey dk = decorateKey(metadata().partitionKeyType.fromString(key));
                 partitionKeySetIgnoreGcGrace.add(dk);
+                decoratedKeys.add(dk);
             }
 
-            forceMajorCompaction(splitOutput);
+            CompactionManager.instance.forceCompactionForKeys(this, decoratedKeys);
         } finally
         {
             partitionKeySetIgnoreGcGrace.clear();
         }
     }
 
-    public boolean shouldIgnoreGcGraceForPartition(DecoratedKey dk)
+    public boolean shouldIgnoreGcGraceForKey(DecoratedKey dk)
     {
         return partitionKeySetIgnoreGcGrace.contains(dk);
     }
+
 
     public static Iterable<ColumnFamilyStore> all()
     {

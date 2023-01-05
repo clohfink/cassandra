@@ -16,7 +16,7 @@
  * limitations under the License.
  */
 
-package org.apache.cassandra.db.compaction;
+package org.apache.cassandra.tools.nodetool;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -237,7 +237,7 @@ public class ForceCompactionTest extends CQLTester
         ColumnFamilyStore cfs = getCurrentColumnFamilyStore();
         if (cfs != null)
         {
-            cfs.forceMajorCompaction(false, partitionKeysIgnoreGcGrace);
+            cfs.forceCompactionKeysIgnoringGcGrace(partitionKeysIgnoreGcGrace);
         }
     }
 

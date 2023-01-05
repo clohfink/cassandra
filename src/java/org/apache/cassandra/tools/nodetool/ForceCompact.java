@@ -20,7 +20,6 @@ package org.apache.cassandra.tools.nodetool;
 
 import io.airlift.airline.Arguments;
 import io.airlift.airline.Command;
-import io.airlift.airline.Option;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -36,9 +35,6 @@ public class ForceCompact extends NodeToolCmd
     @Arguments(usage = "[<keyspace> <table> <keys>]", description = "The keyspace, table, and a list of partition keys ignoring the gc_grace_seconds")
     private List<String> args = new ArrayList<>();
 
-    @Option(title = "split_output", name = {"-s", "--split-output"}, description = "Use -s to not create a single big file")
-    private boolean splitOutput = false;
-
     @Override
     public void execute(NodeProbe probe)
     {
@@ -52,7 +48,7 @@ public class ForceCompact extends NodeToolCmd
 
         try
         {
-            probe.compactKeysIgnoringGcGrace(splitOutput, keyspaceName, tableName, partitionKeysIgnoreGcGrace);
+            probe.forceCompactionKeysIgnoringGcGrace(keyspaceName, tableName, partitionKeysIgnoreGcGrace);
         }
         catch (Exception e)
         {

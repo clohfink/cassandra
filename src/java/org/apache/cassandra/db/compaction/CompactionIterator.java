@@ -342,15 +342,15 @@ public class CompactionIterator extends CompactionInfo.Holder implements Unfilte
         }
 
         /*
-        * Called at the beginning of each new partition
-        * Return true if the current partitionKey ignores the gc_grace_seconds during compaction.
-        * Note that this method should be called after the onNewPartition because it depends on the currentKey
-        * which is set in the onNewPartition
-        */
+         * Called at the beginning of each new partition
+         * Return true if the current partitionKey ignores the gc_grace_seconds during compaction.
+         * Note that this method should be called after the onNewPartition because it depends on the currentKey
+         * which is set in the onNewPartition
+         */
         @Override
         protected boolean shouldIgnoreGcGrace()
         {
-            return controller.cfs.shouldIgnoreGcGraceForPartition(currentKey);
+            return controller.cfs.shouldIgnoreGcGraceForKey(currentKey);
         }
 
         /*
