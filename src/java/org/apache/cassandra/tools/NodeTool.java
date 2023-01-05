@@ -46,9 +46,11 @@ import java.util.Scanner;
 import java.util.SortedMap;
 
 import com.google.common.base.Joiner;
+import com.google.common.base.Preconditions;
 import com.google.common.base.Throwables;
 
 import org.apache.cassandra.locator.EndpointSnitchInfoMBean;
+import org.apache.cassandra.schema.Schema;
 import org.apache.cassandra.tools.nodetool.*;
 import org.apache.cassandra.utils.FBUtilities;
 
@@ -65,6 +67,7 @@ import io.airlift.airline.ParseCommandUnrecognizedException;
 import io.airlift.airline.ParseOptionConversionException;
 import io.airlift.airline.ParseOptionMissingException;
 import io.airlift.airline.ParseOptionMissingValueException;
+import org.apache.cassandra.utils.Pair;
 
 public class NodeTool
 {
@@ -483,7 +486,17 @@ public class NodeTool
 
         protected String[] parseOptionalTables(List<String> cmdArgs)
         {
-            return cmdArgs.size() <= 1 ? EMPTY_STRING_ARRAY : toArray(cmdArgs.subList(1, cmdArgs.size()), String.class);
+            if (cmdArgs.size() <= 1) return EMPTY_STRING_ARRAY;
+
+            String keyspace = cmdArgs.get(0);
+            List<String> tables = cmdArgs.subList(1, cmdArgs.size());
+            Schema.instance.loadFromDisk();
+
+            tables.forEach(table -> {
+                Schema.instance.validateTable(keyspace, table);
+            });
+
+            return toArray(tables, String.class);
         }
 
         protected String[] parsePartitionKeys(List<String> cmdArgs)
