@@ -610,6 +610,18 @@ public class CompactionStrategyManager implements INotificationConsumer
         }
     }
 
+    public boolean isLeveledCompaction()
+    {
+        readLock.lock();
+        try
+        {
+            return repaired.first() instanceof LeveledCompactionStrategy;
+        } finally
+        {
+            readLock.unlock();
+        }
+    }
+
     static int[] sumArrays(int[] a, int[] b)
     {
         int[] res = new int[Math.max(a.length, b.length)];

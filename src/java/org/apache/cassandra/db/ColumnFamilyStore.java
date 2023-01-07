@@ -166,6 +166,7 @@ import org.apache.cassandra.utils.FBUtilities;
 import org.apache.cassandra.utils.JVMStabilityInspector;
 import org.apache.cassandra.utils.MBeanWrapper;
 import org.apache.cassandra.utils.NoSpamLogger;
+import org.apache.cassandra.utils.Pair;
 import org.apache.cassandra.utils.TimeUUID;
 import org.apache.cassandra.utils.WrappedRunnable;
 import org.apache.cassandra.utils.concurrent.CountDownLatch;
@@ -1912,18 +1913,42 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean, Memtable.Owner
 
     public List<String> getSSTablesForKey(String key, boolean hexFormat)
     {
+        return withSSTablesForKey(key, hexFormat, SSTableReader::getFilename);
+    }
+
+    public Map<Integer, Set<String>> getSSTablesForKeyWithLevel(String key, boolean hexFormat)
+    {
+        List<Pair<Integer, String>> ssts = withSSTablesForKey(key, hexFormat, sstr -> Pair.create(sstr.getSSTableLevel(), sstr.getFilename()));
+        HashMap<Integer, Set<String>> result = new HashMap<>();
+        for (Pair<Integer, String> sst : ssts)
+        {
+            Set<String> perLevel = result.get(sst.left);
+            if (perLevel == null)
+            {
+                perLevel = new HashSet<>();
+                result.put(sst.left, perLevel);
+            }
+
+            perLevel.add(sst.right);
+        }
+
+        return result;
+    }
+
+    public <T> List<T> withSSTablesForKey(String key, boolean hexFormat, Function<SSTableReader, T> mapper)
+    {
         ByteBuffer keyBuffer = hexFormat ? ByteBufferUtil.hexToBytes(key) : metadata().partitionKeyType.fromString(key);
         DecoratedKey dk = decorateKey(keyBuffer);
         try (OpOrder.Group op = readOrdering.start())
         {
-            List<String> files = new ArrayList<>();
+            List<T> mapped = new ArrayList<>();
             for (SSTableReader sstr : select(View.select(SSTableSet.LIVE, dk)).sstables)
             {
                 // check if the key actually exists in this sstable, without updating cache and stats
                 if (sstr.getPosition(dk, SSTableReader.Operator.EQ, false) != null)
-                    files.add(sstr.getFilename());
+                    mapped.add(mapper.apply(sstr));
             }
-            return files;
+            return mapped;
         }
     }
 
@@ -3029,6 +3054,12 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean, Memtable.Owner
     public int getLevelFanoutSize()
     {
         return compactionStrategyManager.getLevelFanoutSize();
+    }
+
+    @Override
+    public boolean isLeveledCompaction()
+    {
+        return compactionStrategyManager.isLeveledCompaction();
     }
 
     public static class ViewFragment

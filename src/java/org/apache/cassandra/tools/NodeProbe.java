@@ -994,6 +994,18 @@ public class NodeProbe implements AutoCloseable
         return cfsProxy.getSSTablesForKey(key, hexFormat);
     }
 
+    public Map<Integer, Set<String>> getSSTablesWithLevel(String keyspace, String cf, String key, boolean hexFormat)
+    {
+        ColumnFamilyStoreMBean cfsProxy = getCfsProxy(keyspace, cf);
+        return cfsProxy.getSSTablesForKeyWithLevel(key, hexFormat);
+    }
+
+    public boolean isLeveledCompaction(String keyspace, String cf)
+    {
+        ColumnFamilyStoreMBean cfsProxy = getCfsProxy(keyspace, cf);
+        return cfsProxy.isLeveledCompaction();
+    }
+
     public Set<StreamState> getStreamStatus()
     {
         return Sets.newHashSet(Iterables.transform(streamProxy.getCurrentStreams(), new Function<CompositeData, StreamState>()
