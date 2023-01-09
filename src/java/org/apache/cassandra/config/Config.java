@@ -115,6 +115,12 @@ public class Config
 
     public volatile boolean use_deterministic_table_id = false;
 
+    /**
+     * Set the default value as True here to avoid breaking all the existing tests with
+     * the "CREATE INDEX" statement.
+     */
+    public volatile boolean enable_create_secondary_index = true;
+
     /* initial token in the ring */
     public String initial_token;
     public Integer num_tokens;

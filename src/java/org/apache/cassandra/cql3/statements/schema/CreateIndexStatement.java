@@ -82,6 +82,10 @@ public final class CreateIndexStatement extends AlterSchemaStatement
 
     public Keyspaces apply(Keyspaces schema)
     {
+        // Don't need to check for system tables since they don't have secondary index.
+        if (!DatabaseDescriptor.getEnableCreateSecondaryIndex())
+            throw new InvalidRequestException("CREATE INDEX is disabled for this cluster. Please contact #cde for more details.");
+
         attrs.validate();
 
         Guardrails.createSecondaryIndexesEnabled.ensureEnabled("Creating secondary indexes", state);

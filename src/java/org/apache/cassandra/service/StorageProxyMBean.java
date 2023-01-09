@@ -138,4 +138,7 @@ public interface StorageProxyMBean
 
     void enableSelectPartitionRange();
     void disableSelectPartitionRange();
+
+    void enableCreateSecondaryIndex();
+    void disableCreateSecondaryIndex();
 }

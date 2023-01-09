@@ -1728,6 +1728,22 @@ public class SecondaryIndexTest extends CQLTester
         assertRows(execute("SELECT * FROM %s WHERE v=3"), row(1, 2, 3));
     }
 
+    @Test
+    public void testDisableCrateSecondaryIndex() throws Throwable
+    {
+        try
+        {
+            DatabaseDescriptor.setEnableCreateSecondaryIndex(false);
+            createTable("CREATE TABLE %s (pk int PRIMARY KEY, v int)");
+            assertInvalidMessage("CREATE INDEX is disabled for this cluster. Please contact #cde for more details.",
+                                 "CREATE INDEX ON %s(v)");
+        }
+        finally
+        {
+            DatabaseDescriptor.setEnableCreateSecondaryIndex(true);
+        }
+    }
+
     private ResultMessage.Prepared prepareStatement(String cql)
     {
         return QueryProcessor.instance.prepare(format(cql, KEYSPACE, currentTable()),

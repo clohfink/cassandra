@@ -3096,4 +3096,18 @@ public class StorageProxy implements StorageProxyMBean
         logger.info("Setting enable_select_partition_range = false");
         DatabaseDescriptor.setEnableSelectPartitionRange(false);
     }
+
+    @Override
+    public void enableCreateSecondaryIndex()
+    {
+        logger.info("Setting enable_create_secondary_index = true");
+        DatabaseDescriptor.setEnableCreateSecondaryIndex(true);
+    }
+
+    @Override
+    public void disableCreateSecondaryIndex()
+    {
+        logger.info("Setting enable_create_secondary_index = false");
+        DatabaseDescriptor.setEnableCreateSecondaryIndex(false);
+    }
 }

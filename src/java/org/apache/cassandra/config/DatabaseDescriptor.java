@@ -4386,4 +4386,8 @@ public class DatabaseDescriptor
     {
         conf.min_tracked_partition_tombstone_count = value;
     }
+
+    public static boolean getEnableCreateSecondaryIndex() { return conf.enable_create_secondary_index; }
+
+    public static void setEnableCreateSecondaryIndex(boolean enabled) { conf.enable_create_secondary_index = enabled; }
 }
