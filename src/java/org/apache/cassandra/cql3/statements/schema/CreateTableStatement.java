@@ -19,6 +19,7 @@ package org.apache.cassandra.cql3.statements.schema;
 
 import java.util.*;
 
+import com.google.common.base.MoreObjects;
 import com.google.common.collect.ImmutableSet;
 
 import org.apache.commons.lang3.StringUtils;
@@ -178,6 +179,27 @@ public final class CreateTableStatement extends AlterSchemaStatement
         return String.format("%s (%s, %s)", getClass().getSimpleName(), keyspaceName, tableName);
     }
 
+    public TableId getDeterministicTableId()
+    {
+        TableId id;
+        String tableMetadata = MoreObjects.toStringHelper(this)
+                                          .add("keyspaceName", keyspaceName)
+                                          .add("tableName", tableName)
+                                          .add("rawColumns", rawColumns.keySet())
+                                          .add("staticColumns", staticColumns)
+                                          .add("partitionKeyColumns", partitionKeyColumns)
+                                          .add("clusteringColumns", clusteringColumns)
+                                          .add("clusteringOrder", clusteringOrder)
+                                          .add("attrs", attrs.asNewTableParams())
+                                          .add("useCompactStorage", useCompactStorage)
+                                          .toString();
+
+
+        id = TableId.safeDeterministic(tableMetadata);
+
+        return id;
+    }
+
     public TableMetadata.Builder builder(Types types)
     {
         attrs.validate();
@@ -296,11 +318,13 @@ public final class CreateTableStatement extends AlterSchemaStatement
         /*
          * Create the builder
          */
-
         TableMetadata.Builder builder = TableMetadata.builder(keyspaceName, tableName);
 
         if (attrs.hasProperty(TableAttributes.ID))
             builder.id(attrs.getId());
+
+        if (DatabaseDescriptor.useDeterministicTableID())
+            builder.id(getDeterministicTableId());
 
         builder.isCounter(hasCounters)
                .params(params);

@@ -141,4 +141,7 @@ public interface StorageProxyMBean
 
     void enableCreateSecondaryIndex();
     void disableCreateSecondaryIndex();
+
+    void enableDeterministicTableId();
+    void disableDeterministicTableId();
 }

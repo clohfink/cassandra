@@ -1438,6 +1438,8 @@ transparent_data_encryption_options:
           store_type: JCEKS
           key_password: cassandra
 
+# Enable to generate deterministic table id during create table statement. See CASSANDRA-17824 for more details.
+use_deterministic_table_id: true
 
 #####################
 # SAFETY THRESHOLDS #

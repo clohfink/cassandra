@@ -3110,4 +3110,18 @@ public class StorageProxy implements StorageProxyMBean
         logger.info("Setting enable_create_secondary_index = false");
         DatabaseDescriptor.setEnableCreateSecondaryIndex(false);
     }
+
+    @Override
+    public void enableDeterministicTableId()
+    {
+        logger.info("Setting enable_deterministic_table_id = true");
+        DatabaseDescriptor.useDeterministicTableID(true);
+    }
+
+    @Override
+    public void disableDeterministicTableId()
+    {
+        logger.info("Setting enable_deterministic_table_id = false");
+        DatabaseDescriptor.useDeterministicTableID(false);
+    }
 }

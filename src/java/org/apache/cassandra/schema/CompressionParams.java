@@ -26,6 +26,7 @@ import java.util.Map;
 import java.util.concurrent.ThreadLocalRandom;
 
 import com.google.common.annotations.VisibleForTesting;
+import com.google.common.base.MoreObjects;
 import com.google.common.base.Objects;
 import com.google.common.collect.ImmutableMap;
 
@@ -599,6 +600,17 @@ public final class CompressionParams
             .append(otherOptions)
             .append(minCompressRatio)
             .toHashCode();
+    }
+
+    @Override
+    public String toString()
+    {
+        return MoreObjects.toStringHelper(this)
+                          .add("sstable compressor", sstableCompressor == null ? "null" : klass().getName())
+                          .add("chunk length", chunkLength)
+                          .add("other options", otherOptions)
+                          .add("min compress ratio", minCompressRatio)
+                          .toString();
     }
 
     static class Serializer implements IVersionedSerializer<CompressionParams>

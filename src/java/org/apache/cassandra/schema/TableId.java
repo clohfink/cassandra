@@ -81,6 +81,14 @@ public class TableId
         return new TableId(UUID.nameUUIDFromBytes(ArrayUtils.addAll(keyspace.getBytes(UTF_8), table.getBytes(UTF_8))));
     }
 
+    /**
+     * Generate a deterministic table id based on the hash value of the TableMetadata
+     */
+    public static TableId safeDeterministic(String tableMetadata)
+    {
+        return new TableId(UUID.nameUUIDFromBytes(tableMetadata.getBytes(UTF_8)));
+    }
+
     public String toHexString()
     {
         return ByteBufferUtil.bytesToHex(ByteBufferUtil.bytes(id));
