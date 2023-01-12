@@ -3114,14 +3114,14 @@ public class StorageProxy implements StorageProxyMBean
     @Override
     public void enableDeterministicTableId()
     {
-        logger.info("Setting enable_deterministic_table_id = true");
+        logger.info("Setting use_deterministic_table_id = true");
         DatabaseDescriptor.useDeterministicTableID(true);
     }
 
     @Override
     public void disableDeterministicTableId()
     {
-        logger.info("Setting enable_deterministic_table_id = false");
+        logger.info("Setting use_deterministic_table_id = false");
         DatabaseDescriptor.useDeterministicTableID(false);
     }
 }

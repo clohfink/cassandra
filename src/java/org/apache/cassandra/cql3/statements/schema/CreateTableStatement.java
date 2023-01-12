@@ -320,11 +320,11 @@ public final class CreateTableStatement extends AlterSchemaStatement
          */
         TableMetadata.Builder builder = TableMetadata.builder(keyspaceName, tableName);
 
-        if (attrs.hasProperty(TableAttributes.ID))
-            builder.id(attrs.getId());
-
         if (DatabaseDescriptor.useDeterministicTableID())
             builder.id(getDeterministicTableId());
+
+        if (attrs.hasProperty(TableAttributes.ID))
+            builder.id(attrs.getId());
 
         builder.isCounter(hasCounters)
                .params(params);
