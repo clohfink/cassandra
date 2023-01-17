@@ -36,7 +36,7 @@ public abstract class Sampler<T>
 {
     public enum SamplerType
     {
-        READS, WRITES, LOCAL_READ_TIME, WRITE_SIZE, CAS_CONTENTIONS
+        READS, WRITES, LOCAL_READ_TIME, WRITE_SIZE, CAS_CONTENTIONS, READ_ROW_COUNT, READ_TOMBSTONE_COUNT, READ_SSTABLE_COUNT
     }
 
     @VisibleForTesting
