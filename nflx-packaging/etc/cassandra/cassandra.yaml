@@ -8,7 +8,7 @@ max_hints_delivery_threads: 2
 authenticator: org.apache.cassandra.auth.AllowAllAuthenticator
 authorizer: org.apache.cassandra.auth.AllowAllAuthorizer
 permissions_validity_in_ms: 2000
-partitioner: org.apache.cassandra.dht.RandomPartitioner
+partitioner: org.apache.cassandra.dht.Murmur3Partitioner
 data_file_directories:
 - /mnt/data/cassandra/data
 commitlog_directory: /mnt/data/cassandra/commitlog
