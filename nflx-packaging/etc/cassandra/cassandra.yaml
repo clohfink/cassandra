@@ -53,7 +53,7 @@ dynamic_snitch_update_interval_in_ms: 100
 dynamic_snitch_reset_interval_in_ms: 600000
 dynamic_snitch_badness_threshold: 0.1
 server_encryption_options:
-  internode_encryption: none
+  internode_encryption: all
   legacy_ssl_storage_port_enabled: true
   keystore: /apps/nfcassandra_server/conf/cassandra-app.jks.2025
   keystore_password: A4IBDwAwggEKAoIBAQFJAtN3Sl5Ql
