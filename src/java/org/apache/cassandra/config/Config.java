@@ -434,9 +434,9 @@ public class Config
 
     @Nullable
     @Replaces(oldName = "sstable_preemptive_open_interval_in_mb", converter = Converters.NEGATIVE_MEBIBYTES_DATA_STORAGE_INT, deprecated = true)
-    public volatile DataStorageSpec.IntMebibytesBound sstable_preemptive_open_interval = new DataStorageSpec.IntMebibytesBound("50MiB");
+    public volatile DataStorageSpec.IntMebibytesBound sstable_preemptive_open_interval = null;
 
-    public volatile boolean key_cache_migrate_during_compaction = true;
+    public volatile boolean key_cache_migrate_during_compaction = false;
     public volatile int key_cache_keys_to_save = Integer.MAX_VALUE;
     @Replaces(oldName = "key_cache_size_in_mb", converter = Converters.MEBIBYTES_DATA_STORAGE_LONG, deprecated = true)
     public DataStorageSpec.LongMebibytesBound key_cache_size = null;
@@ -786,9 +786,9 @@ public class Config
     public boolean autocompaction_on_startup_enabled = Boolean.parseBoolean(System.getProperty("cassandra.autocompaction_on_startup_enabled", "true"));
 
     // see CASSANDRA-3200 / CASSANDRA-16274
-    public volatile boolean auto_optimise_inc_repair_streams = false;
-    public volatile boolean auto_optimise_full_repair_streams = false;
-    public volatile boolean auto_optimise_preview_repair_streams = false;
+    public volatile boolean auto_optimise_inc_repair_streams = true;
+    public volatile boolean auto_optimise_full_repair_streams = true;
+    public volatile boolean auto_optimise_preview_repair_streams = true;
 
     // see CASSANDRA-17048 and the comment in cassandra.yaml
     public boolean uuid_sstable_identifiers_enabled = false;
