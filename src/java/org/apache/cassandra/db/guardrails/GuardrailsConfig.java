@@ -23,6 +23,7 @@ import java.util.Set;
 import javax.annotation.Nullable;
 
 import org.apache.cassandra.config.DataStorageSpec;
+import org.apache.cassandra.config.DurationSpec;
 import org.apache.cassandra.db.ConsistencyLevel;
 
 /**
@@ -284,4 +285,49 @@ public interface GuardrailsConfig
      */
     int getMinimumReplicationFactorFailThreshold();
 
+    /**
+     * @return A timestamp that if a user supplied timestamp is after will trigger a warning
+     */
+    @Nullable
+    DurationSpec.LongMicrosecondsBound getMaximumTimestampWarnThreshold();
+
+    /**
+     * @return A timestamp that if a user supplied timestamp is after will cause a failure
+     */
+    @Nullable
+    DurationSpec.LongMicrosecondsBound getMaximumTimestampFailThreshold();
+
+    /**
+     * Sets the warning upper bound for user supplied timestamps
+     *
+     * @param warn The highest acceptable difference between now and the written value timestamp before triggering a
+     *             warning. {@code null} means disabled.
+     * @param fail The highest acceptable difference between now and the written value timestamp before triggering a
+     *             failure. {@code null} means disabled.
+     */
+    void setMaximumTimestampThreshold(@Nullable DurationSpec.LongMicrosecondsBound warn,
+                                      @Nullable DurationSpec.LongMicrosecondsBound fail);
+
+    /**
+     * @return A timestamp that if a user supplied timestamp is before will trigger a warning
+     */
+    @Nullable
+    DurationSpec.LongMicrosecondsBound getMinimumTimestampWarnThreshold();
+
+    /**
+     * @return A timestamp that if a user supplied timestamp is after will trigger a warning
+     */
+    @Nullable
+    DurationSpec.LongMicrosecondsBound getMinimumTimestampFailThreshold();
+
+    /**
+     * Sets the warning lower bound for user supplied timestamps
+     *
+     * @param warn The lowest acceptable difference between now and the written value timestamp before triggering a
+     *             warning. {@code null} means disabled.
+     * @param fail The lowest acceptable difference between now and the written value timestamp before triggering a
+     *             failure. {@code null} means disabled.
+     */
+    void setMinimumTimestampThreshold(@Nullable DurationSpec.LongMicrosecondsBound warn,
+                                      @Nullable DurationSpec.LongMicrosecondsBound fail);
 }

@@ -553,4 +553,60 @@ public interface GuardrailsMBean
      */
     void setMinimumReplicationFactorThreshold (int warn, int fail);
 
+    /**
+     * @return The highest acceptable difference between now and the written value timestamp before triggering a warning.
+     *         Expressed as a string formatted as in, for example, {@code 10s} {@code 20m}, {@code 30h} or {@code 40d}.
+     *         A {@code null} value means disabled.
+     */
+    @Nullable
+    String getMaximumTimestampWarnThreshold();
+
+    /**
+     * @return The highest acceptable difference between now and the written value timestamp before triggering a failure.
+     *         Expressed as a string formatted as in, for example, {@code 10s} {@code 20m}, {@code 30h} or {@code 40d}.
+     *         A {@code null} value means disabled.
+     */
+    @Nullable
+    String getMaximumTimestampFailThreshold();
+
+    /**
+     * Sets the warning upper bound for user supplied timestamps.
+     *
+     * @param warnDuration The highest acceptable difference between now and the written value timestamp before
+     *                     triggering a warning. Expressed as a string formatted as in, for example, {@code 10s},
+     *                     {@code 20m}, {@code 30h} or {@code 40d}. A {@code null} value means disabled.
+     * @param failDuration The highest acceptable difference between now and the written value timestamp before
+     *                     triggering a failure. Expressed as a string formatted as in, for example, {@code 10s},
+     *                     {@code 20m}, {@code 30h} or {@code 40d}. A {@code null} value means disabled.
+     */
+    void setMaximumTimestampThreshold(@Nullable String warnDuration, @Nullable String failDuration);
+
+    /**
+     * @return The lowest acceptable difference between now and the written value timestamp before triggering a warning.
+     *         Expressed as a string formatted as in, for example, {@code 10s} {@code 20m}, {@code 30h} or {@code 40d}.
+     *         A {@code null} value means disabled.
+     */
+    @Nullable
+    String getMinimumTimestampWarnThreshold();
+
+    /**
+     * @return The lowest acceptable difference between now and the written value timestamp before triggering a failure.
+     *         Expressed as a string formatted as in, for example, {@code 10s} {@code 20m}, {@code 30h} or {@code 40d}.
+     *         A {@code null} value means disabled.
+     */
+    @Nullable
+    String getMinimumTimestampFailThreshold();
+
+    /**
+     * Sets the warning lower bound for user supplied timestamps.
+     *
+     * @param warnDuration The lowest acceptable difference between now and the written value timestamp before
+     *                     triggering a warning. Expressed as a string formatted as in, for example, {@code 10s},
+     *                     {@code 20m}, {@code 30h} or {@code 40d}. A {@code null} value means disabled.
+     * @param failDuration The lowest acceptable difference between now and the written value timestamp before
+     *                     triggering a failure. Expressed as a string formatted as in, for example, {@code 10s},
+     *                     {@code 20m}, {@code 30h} or {@code 40d}. A {@code null} value means disabled.
+     */
+    void setMinimumTimestampThreshold(@Nullable String warnDuration, @Nullable String failDuration);
+
 }
