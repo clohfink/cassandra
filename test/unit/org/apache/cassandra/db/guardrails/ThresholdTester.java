@@ -28,11 +28,9 @@ import java.util.function.ToLongFunction;
 import org.junit.Before;
 import org.junit.Test;
 
-import org.apache.cassandra.config.DataStorageSpec;
 import org.assertj.core.api.Assertions;
 
 import static java.lang.String.format;
-import static org.apache.cassandra.config.DataStorageSpec.DataStorageUnit.BYTES;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.fail;
