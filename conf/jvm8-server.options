@@ -68,6 +68,7 @@
 
 -XX:+PrintGCDetails
 -XX:+PrintGCDateStamps
+-XX:+PrintGCTimeStamps
 -XX:+PrintHeapAtGC
 -XX:+PrintTenuringDistribution
 -XX:+PrintGCApplicationStoppedTime
