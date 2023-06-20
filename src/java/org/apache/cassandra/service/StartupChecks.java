@@ -299,7 +299,7 @@ public class StartupChecks
                     Object singleton = accp.getField("INSTANCE").get(null);
                     accp.getClass().getMethod("assertHealthy").invoke(singleton);
                 } else {
-                    throw new StartupException(StartupException.ERR_WRONG_CONFIG, "ACCP is not the highest priority provider actually");
+                    throw new StartupException(StartupException.ERR_WRONG_CONFIG, "ACCP is not the highest priority provider");
                 }
             } catch (Exception e) {
                 throw new StartupException(StartupException.ERR_WRONG_CONFIG, "Corretto Crypto Provider Error", e);
