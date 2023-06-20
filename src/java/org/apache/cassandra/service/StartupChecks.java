@@ -74,6 +74,8 @@ import org.apache.cassandra.utils.JavaUtils;
 import org.apache.cassandra.utils.NativeLibrary;
 import org.apache.cassandra.utils.SigarLibrary;
 
+import javax.crypto.Cipher;
+
 import static org.apache.cassandra.config.CassandraRelevantProperties.COM_SUN_MANAGEMENT_JMXREMOTE_PORT;
 import static org.apache.cassandra.config.CassandraRelevantProperties.JAVA_VERSION;
 import static org.apache.cassandra.config.CassandraRelevantProperties.JAVA_VM_NAME;
@@ -144,6 +146,7 @@ public class StartupChecks
                                                                       checkSystemKeyspaceState,
                                                                       checkDatacenter,
                                                                       checkRack,
+                                                                      checkACCP,
                                                                       checkLegacyAuthTables,
                                                                       new DataResurrectionCheck());
 
@@ -278,6 +281,28 @@ public class StartupChecks
             {
                 logger.warn("Use of com.sun.management.jmxremote.port at startup is deprecated. " +
                             "Please use cassandra.jmx.remote.port instead.");
+            }
+        }
+    };
+
+    // check Amazon Corretto Crypto Provider (ACCP)
+    public static final StartupCheck checkACCP = new StartupCheck()
+    {
+        @Override
+        public void execute(StartupChecksOptions options) throws StartupException
+        {
+            try {
+                if (Cipher.getInstance("AES/GCM/NoPadding").getProvider().getName().equals("AmazonCorrettoCryptoProvider")) {
+                    // call AmazonCorrettoCryptoProvider.INSTANCE.assertHealthy(); but since the library
+                    // is added after compilation, we need to use reflection to call it
+                    Class accp = Class.forName("com.amazon.corretto.crypto.provider.AmazonCorrettoCryptoProvider");
+                    Object singleton = accp.getField("INSTANCE").get(null);
+                    accp.getClass().getMethod("assertHealthy").invoke(singleton);
+                } else {
+                    throw new StartupException(StartupException.ERR_WRONG_CONFIG, "ACCP is not the highest priority provider actually");
+                }
+            } catch (Exception e) {
+                throw new StartupException(StartupException.ERR_WRONG_CONFIG, "Corretto Crypto Provider Error", e);
             }
         }
     };
