@@ -299,7 +299,7 @@ public class StartupChecks
                     // call AmazonCorrettoCryptoProvider.INSTANCE.assertHealthy(); but since the library
                     // is added after compilation, we need to use reflection to call it
                     Object singleton = accp.getField("INSTANCE").get(null);
-                    accp.getClass().getMethod("assertHealthy").invoke(singleton);
+                    accp.getMethod("assertHealthy").invoke(singleton);
                 } else {
                     logger.error("ACCP is not the highest priority provider");
                 }
