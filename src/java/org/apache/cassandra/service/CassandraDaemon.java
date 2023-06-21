@@ -20,6 +20,7 @@ package org.apache.cassandra.service;
 import java.io.IOException;
 import java.lang.management.ManagementFactory;
 import java.lang.management.MemoryPoolMXBean;
+import java.lang.reflect.InvocationTargetException;
 import java.net.InetAddress;
 import java.net.URL;
 import java.net.UnknownHostException;
@@ -251,6 +252,17 @@ public class CassandraDaemon
         logSystemInfo();
 
         NativeLibrary.tryMlockall();
+
+        // Netflix Internal: Force ACCP to install if available
+        try {
+            // Amazon Corretto library not included in classpath in tree, its added in environment
+            // so to allow builds and tests to work we use reflection to try and load it
+            Class accp = Class.forName("com.amazon.corretto.crypto.provider.AmazonCorrettoCryptoProvider");
+            accp.getMethod("install").invoke(null);
+        } catch(Exception e) {
+            // Amazon Corretto Crypto Provider is not available
+            logger.error("Amazon Corretto Crypto Provider is not available", e);
+        }
 
         CommitLog.instance.start();
 

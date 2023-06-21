@@ -292,12 +292,10 @@ public class StartupChecks
         public void execute(StartupChecksOptions options) throws StartupException
         {
             try {
-                Class accp = Class.forName("com.amazon.corretto.crypto.provider.AmazonCorrettoCryptoProvider");
-                // run com.amazon.corretto.crypto.provider.AmazonCorrettoCryptoProvider.install()
-                accp.getMethod("install").invoke(null);
                 if (Cipher.getInstance("AES/GCM/NoPadding").getProvider().getName().equals("AmazonCorrettoCryptoProvider")) {
                     // call AmazonCorrettoCryptoProvider.INSTANCE.assertHealthy(); but since the library
                     // is added after compilation, we need to use reflection to call it
+                    Class accp = Class.forName("com.amazon.corretto.crypto.provider.AmazonCorrettoCryptoProvider");
                     Object singleton = accp.getField("INSTANCE").get(null);
                     accp.getMethod("assertHealthy").invoke(singleton);
                 } else {
