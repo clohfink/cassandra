@@ -439,7 +439,7 @@ public class Config
     public volatile boolean key_cache_migrate_during_compaction = false;
     public volatile int key_cache_keys_to_save = Integer.MAX_VALUE;
     @Replaces(oldName = "key_cache_size_in_mb", converter = Converters.MEBIBYTES_DATA_STORAGE_LONG, deprecated = true)
-    public DataStorageSpec.LongMebibytesBound key_cache_size = null;
+    public DataStorageSpec.LongMebibytesBound key_cache_size =  new DataStorageSpec.LongMebibytesBound("0MiB");;
     @Replaces(oldName = "key_cache_save_period", converter = Converters.SECONDS_CUSTOM_DURATION)
     public volatile DurationSpec.IntSecondsBound key_cache_save_period = new DurationSpec.IntSecondsBound("4h");
 
