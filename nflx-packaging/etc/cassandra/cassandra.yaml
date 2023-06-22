@@ -14,7 +14,7 @@ data_file_directories:
 commitlog_directory: /mnt/data/cassandra/commitlog
 disk_failure_policy: stop
 commit_failure_policy: stop
-key_cache_size_in_mb: null
+key_cache_size: 0MiB
 key_cache_save_period: 14400
 row_cache_size_in_mb: 0
 row_cache_save_period: 0
