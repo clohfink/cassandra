@@ -425,7 +425,7 @@ public class Config
     public volatile DataStorageSpec.LongBytesBound max_hints_size_per_host = new DataStorageSpec.LongBytesBound("0B"); // 0 means disabled
 
     public ParameterizedClass hints_compression;
-    public volatile boolean auto_hints_cleanup_enabled = false;
+    public volatile boolean auto_hints_cleanup_enabled = true;
 
     public volatile boolean incremental_backups = false;
     public boolean trickle_fsync = false;

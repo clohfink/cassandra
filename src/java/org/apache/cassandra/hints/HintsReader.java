@@ -231,14 +231,13 @@ class HintsReader implements AutoCloseable, Iterable<HintsReader.Page>
 
         private Hint readHint(int size) throws IOException
         {
-            if (rateLimiter != null)
-                rateLimiter.acquire(size);
             input.limit(size);
-
             Hint hint;
             try
             {
                 hint = Hint.serializer.deserializeIfLive(input, now, size, descriptor.messagingVersion());
+                if (rateLimiter != null && hint != null)
+                    rateLimiter.acquire(size);
                 input.checkLimit(0);
             }
             catch (UnknownTableException e)
@@ -337,11 +336,12 @@ class HintsReader implements AutoCloseable, Iterable<HintsReader.Page>
 
         private ByteBuffer readBuffer(int size) throws IOException
         {
-            if (rateLimiter != null)
-                rateLimiter.acquire(size);
             input.limit(size);
 
             ByteBuffer buffer = Hint.serializer.readBufferIfLive(input, now, size, descriptor.messagingVersion());
+            if (rateLimiter != null && buffer != null)
+                rateLimiter.acquire(size);
+
             if (input.checkCrc())
                 return buffer;
 
