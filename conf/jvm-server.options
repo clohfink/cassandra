@@ -82,6 +82,13 @@
 # Imposes an upper bound on hint lifetime below the normal min gc_grace_seconds
 #-Dcassandra.maxHintTTL=max_hint_ttl_in_seconds
 
+# Allow Cassandra to move multiple ranges simultaneously, while still enforcing
+# strict consistency (CASS-1414)
+-Dcassandra.consistent.simultaneousmoves.allow=true
+
+# Allow for TWCS to be configured to skip overlapping SSTable checks without a restart.
+-Dcassandra.allow_unsafe_aggressive_sstable_expiration=true
+
 ########################
 # GENERAL JVM SETTINGS #
 ########################
