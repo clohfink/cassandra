@@ -74,3 +74,8 @@ num_tokens: 1
 auto_bootstrap: true
 cas_contention_timeout_in_ms: 1000
 file_cache_size_in_mb: 512
+batch_size_fail_threshold: 8192KiB
+default_keyspace_rf: 3
+block_for_peers_timeout_in_secs: 120
+minimum_replication_factor_fail_threshold: 3
+repair_session_max_tree_depth: 16
