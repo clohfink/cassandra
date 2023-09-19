@@ -377,7 +377,8 @@ prepared_statements_cache_size:
 #
 # Default value is empty to make it "auto" (min(5% of Heap (in MiB), 100MiB)). Set to 0 to disable key cache.
 # Min unit: MiB
-key_cache_size:
+# does not work in 4.1
+# key_cache_size:
 
 # Duration in seconds after which Cassandra should
 # save the key cache. Caches are saved to saved_caches_directory as
