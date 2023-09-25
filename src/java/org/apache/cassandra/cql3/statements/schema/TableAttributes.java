@@ -51,7 +51,7 @@ public final class TableAttributes extends PropertyDefinitions
             validBuilder.add(option.toString());
         validBuilder.add(ID);
         validKeywords = validBuilder.build();
-        obsoleteKeywords = ImmutableSet.of();
+        obsoleteKeywords = ImmutableSet.of("dclocal_read_repair_chance", "read_repair_chance");
     }
 
     public void validate()
