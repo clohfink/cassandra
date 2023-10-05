@@ -307,7 +307,7 @@ public class Config
      * is set, snapshots created by truncation or
      * drop use this TTL.
      */
-    public String auto_snapshot_ttl;
+    public String auto_snapshot_ttl = "3d";
 
     public volatile long snapshot_links_per_second = 0;
 
