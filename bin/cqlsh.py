@@ -1887,10 +1887,10 @@ class Shell(cmd.Cmd):
         return cmd.Cmd.columnize(self, sorted([u.upper() for u in slist]), *a, **kw)
 
     def do_truncate(self, parsed):
-        self.printerr("*** TRUNCATE is not supported through Netflix CQLSH ***")
+        self.printerr("*** TRUNCATE is not supported through Netflix CQLSH. Use Data Explorer or the Antigravity schema change endpoint. See here for details: https://manuals.netflix.net/view/cde/mkdocs/main/cassandra/faq/#how-do-i-delete-all-the-data-in-my-column-familytable***")
 
     def do_drop(self, parsed):
-        self.printerr("*** DROP is not supported through Netflix CQLSH ***")
+        self.printerr("*** DROP is not supported through Netflix CQLSH. Use Data Explorer or the Antigravity schema change endpoint. See here for details: https://manuals.netflix.net/view/cde/mkdocs/main/cassandra/faq/#how-do-i-delete-all-the-data-in-my-column-familytable***")
 
     def do_help(self, parsed):
         """
