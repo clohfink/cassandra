@@ -35,6 +35,7 @@ import org.apache.cassandra.db.Keyspace;
 import org.apache.cassandra.dht.RandomPartitioner;
 import org.apache.cassandra.dht.Token;
 import org.apache.cassandra.exceptions.ConfigurationException;
+import org.apache.cassandra.locator.InetAddressAndPort;
 import org.apache.cassandra.schema.CompactionParams;
 import org.apache.cassandra.schema.KeyspaceParams;
 import org.apache.cassandra.service.StorageService;
@@ -66,9 +67,9 @@ public class ScheduledCompactionsRandomPartitionerTest
     public void testWrapWithRP() throws Exception
     {
         StorageService.instance.getTokenMetadata().updateNormalTokens(Lists.newArrayList(t(1)),
-                                                                      FBUtilities.getBroadcastAddress());
+                                                                      FBUtilities.getBroadcastAddressAndPort());
         StorageService.instance.getTokenMetadata().updateNormalTokens(Lists.newArrayList(t(200)),
-                                                                      InetAddress.getByName("127.0.0.2"));
+                                                                      InetAddressAndPort.getByAddress(InetAddress.getByName("127.0.0.2")));
         keyspace = Keyspace.open(KEYSPACE1);
         cfsScheduled = keyspace.getColumnFamilyStore(CF_STANDARDDLEVELED_SCHEDULED);
         LeveledCompactionStrategyTest.testGetScheduledCompaction(100, cfsScheduled);
