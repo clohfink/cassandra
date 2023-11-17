@@ -38,6 +38,7 @@ import javax.management.remote.JMXConnectorServer;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableList;
 
+import com.netflix.cassandra.db.virtual.NetflixViewsKeyspace;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -590,6 +591,7 @@ public class CassandraDaemon
     {
         VirtualKeyspaceRegistry.instance.register(VirtualSchemaKeyspace.instance);
         VirtualKeyspaceRegistry.instance.register(SystemViewsKeyspace.instance);
+        VirtualKeyspaceRegistry.instance.register(NetflixViewsKeyspace.instance);
     }
 
     public synchronized void initializeClientTransports()
