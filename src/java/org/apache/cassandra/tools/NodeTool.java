@@ -49,7 +49,6 @@ import com.google.common.base.Joiner;
 import com.google.common.base.Throwables;
 
 import org.apache.cassandra.locator.EndpointSnitchInfoMBean;
-import org.apache.cassandra.schema.Schema;
 import org.apache.cassandra.tools.nodetool.*;
 import org.apache.cassandra.utils.FBUtilities;
 
@@ -486,14 +485,7 @@ public class NodeTool
         {
             if (cmdArgs.size() <= 1) return EMPTY_STRING_ARRAY;
 
-            String keyspace = cmdArgs.get(0);
             List<String> tables = cmdArgs.subList(1, cmdArgs.size());
-            Schema.instance.loadFromDisk();
-
-            tables.forEach(table -> {
-                Schema.instance.validateTable(keyspace, table);
-            });
-
             return toArray(tables, String.class);
         }
 
