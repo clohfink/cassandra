@@ -50,6 +50,8 @@ import org.apache.cassandra.service.StorageService;
 import org.apache.cassandra.utils.NoSpamLogger;
 import org.apache.cassandra.utils.Pair;
 
+import static org.apache.cassandra.utils.Clock.Global.currentTimeMillis;
+
 public class LeveledCompactionStrategy extends AbstractCompactionStrategy
 {
     private static final Logger logger = LoggerFactory.getLogger(LeveledCompactionStrategy.class);
@@ -229,21 +231,21 @@ public class LeveledCompactionStrategy extends AbstractCompactionStrategy
                     cfs.keyspace.getName(),
                     cfs.getColumnFamilyName(),
                     repaired,
-                    System.currentTimeMillis(),
+                    currentTimeMillis(),
                     lastScheduledCompactionTime,
                     millisUntilNextScheduledCompaction,
-                    System.currentTimeMillis()  > lastScheduledCompactionTime + millisUntilNextScheduledCompaction);
+                    currentTimeMillis() > lastScheduledCompactionTime + millisUntilNextScheduledCompaction);
         if (lastScheduledCompactionTime == -1)
         {
             Pair<Token, Long> lastScheduledCompaction = SystemKeyspace.getLastSuccessfulScheduledCompaction(cfs.keyspace.getName(), cfs.getColumnFamilyName(), repaired);
             lastScheduleCompactionToken = lastScheduledCompaction == null ? null : lastScheduledCompaction.left;
-            lastScheduledCompactionTime = lastScheduledCompaction == null ? System.currentTimeMillis() : lastScheduledCompaction.right;
+            lastScheduledCompactionTime = lastScheduledCompaction == null ? currentTimeMillis() : lastScheduledCompaction.right;
             logger.info("Loaded last successful subrange compaction time = {} token = {} for {}.{}", lastScheduledCompactionTime, lastScheduleCompactionToken, cfs.keyspace.getName(), cfs.getColumnFamilyName());
         }
 
-        if (System.currentTimeMillis() > lastScheduledCompactionTime + millisUntilNextScheduledCompaction * 2)
+        if (currentTimeMillis() > lastScheduledCompactionTime + millisUntilNextScheduledCompaction * 2)
             noSpam1m.warn("Could not run a scheduled sub range compaction over the last {}ms", millisUntilNextScheduledCompaction);
-        return System.currentTimeMillis() > lastScheduledCompactionTime + millisUntilNextScheduledCompaction;
+        return currentTimeMillis() > lastScheduledCompactionTime + millisUntilNextScheduledCompaction;
     }
 
     @VisibleForTesting
