@@ -76,6 +76,7 @@ public class TableMetricTables
             new LatencyTableMetric(name, "coordinator_write_latency", t -> t.coordinatorWriteLatency),
             new HistogramTableMetric(name, "tombstones_per_read", t -> t.tombstoneScannedHistogram.cf),
             new HistogramTableMetric(name, "rows_per_read", t -> t.liveScannedHistogram.cf),
+            new ValueTableMetric(name, "partition_count", t -> t.estimatedPartitionCount),
             new StorageTableMetric(name, "disk_usage", (TableMetrics t) -> t.totalDiskSpaceUsed),
             new StorageTableMetric(name, "max_partition_size", (TableMetrics t) -> t.maxPartitionSize));
     }
@@ -104,6 +105,24 @@ public class TableMetricTables
         public void add(SimpleDataSet result, String column, long value)
         {
             result.column(column, (long) Math.ceil(value * BYTES_TO_MIB));
+        }
+    }
+
+    /**
+     * A table that describes a value of a Gauge
+     */
+    private static class ValueTableMetric extends TableMetricTable
+    {
+        interface GaugeFunction extends Function<TableMetrics, Gauge<Long>> {}
+
+        ValueTableMetric(String keyspace, String table, GaugeFunction func)
+        {
+            super(keyspace, table, func, "value", LongType.instance, "");
+        }
+
+        public void add(SimpleDataSet result, String column, long value)
+        {
+            result.column(column, Math.min(0L, value));
         }
     }
 
