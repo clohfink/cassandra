@@ -398,6 +398,14 @@ public enum CassandraRelevantProperties
     }
 
     /**
+     * Clears the value set in the system property.
+     */
+    public void clearValue()
+    {
+        System.clearProperty(key);
+    }
+
+    /**
      * Sets the value into system properties.
      * @param value to set
      */
