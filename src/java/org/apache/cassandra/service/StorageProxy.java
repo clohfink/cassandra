@@ -3063,6 +3063,18 @@ public class StorageProxy implements StorageProxyMBean
         DatabaseDescriptor.setUseStatementsEnabled(enabled);
     }
 
+    @Override
+    public int getDefaultMemtableFlushTimeMs()
+    {
+        return DatabaseDescriptor.getDefaultMemtableFlushPeriodMs();
+    }
+
+    @Override
+    public void setDefaultMemtableFlushTimeMs(int timeInMs)
+    {
+        DatabaseDescriptor.setDefaultMemtableFlushPeriodMs(timeInMs);
+    }
+
     public void setPaxosContentionStrategy(String spec)
     {
         ContentionStrategy.setStrategy(spec);

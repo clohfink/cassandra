@@ -186,6 +186,8 @@ public abstract class AbstractAllocatorMemtable extends AbstractMemtableWithComm
     void scheduleFlush()
     {
         int period = metadata().params.memtableFlushPeriodInMs;
+        if (period <= 0)
+            period = DatabaseDescriptor.getDefaultMemtableFlushPeriodMs();
         if (period > 0)
             scheduleFlush(owner, period);
     }
@@ -208,6 +210,8 @@ public abstract class AbstractAllocatorMemtable extends AbstractMemtableWithComm
     private void flushIfPeriodExpired()
     {
         int period = metadata().params.memtableFlushPeriodInMs;
+        if (period <= 0)
+            period = DatabaseDescriptor.getDefaultMemtableFlushPeriodMs();
         if (period > 0 && (Clock.Global.nanoTime() - creationNano >= TimeUnit.MILLISECONDS.toNanos(period)))
         {
             if (isClean())

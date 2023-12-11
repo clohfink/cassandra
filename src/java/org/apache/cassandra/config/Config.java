@@ -183,6 +183,7 @@ public class Config
     @Replaces(oldName = "memtable_offheap_space_in_mb", converter = Converters.MEBIBYTES_DATA_STORAGE_INT, deprecated = true)
     public DataStorageSpec.IntMebibytesBound memtable_offheap_space;
     public Float memtable_cleanup_threshold = null;
+    public volatile DurationSpec.IntMinutesBound defaultMemtableFlushPeriod = new DurationSpec.IntMinutesBound("15m");
 
     public static class MemtableOptions
     {

@@ -3431,6 +3431,16 @@ public class DatabaseDescriptor
         conf.paxos_repair_parallelism = v;
     }
 
+    public static int getDefaultMemtableFlushPeriodMs()
+    {
+        return conf.defaultMemtableFlushPeriod.toMilliseconds();
+    }
+
+    public static void setDefaultMemtableFlushPeriodMs(int ms)
+    {
+        conf.defaultMemtableFlushPeriod = new DurationSpec.IntMinutesBound(ms, TimeUnit.MILLISECONDS);
+    }
+
     public static Float getMemtableCleanupThreshold()
     {
         return conf.memtable_cleanup_threshold;

@@ -130,6 +130,9 @@ public interface StorageProxyMBean
     boolean getUseStatementsEnabled();
     void setUseStatementsEnabled(boolean enabled);
 
+    int getDefaultMemtableFlushTimeMs();
+    void setDefaultMemtableFlushTimeMs(int ms);
+
     void setPaxosContentionStrategy(String variant);
     String getPaxosContentionStrategy();
 
