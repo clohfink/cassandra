@@ -1092,7 +1092,7 @@ public class OutboundConnection
             void onFailure(Throwable cause)
             {
                 if (cause instanceof ConnectException)
-                    noSpamLogger.info("{} failed to connect", id(), cause);
+                    noSpamLogger.info("{} failed to connect: {}", id(), cause.getMessage());
                 else
                     noSpamLogger.error("{} failed to connect", id(), cause);
 
