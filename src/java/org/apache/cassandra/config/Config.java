@@ -318,7 +318,7 @@ public class Config
     @Replaces(oldName = "column_index_cache_size_in_kb", converter = Converters.KIBIBYTES_DATASTORAGE, deprecated = true)
     public volatile DataStorageSpec.IntKibibytesBound column_index_cache_size = new DataStorageSpec.IntKibibytesBound("2KiB");
     @Replaces(oldName = "batch_size_warn_threshold_in_kb", converter = Converters.KIBIBYTES_DATASTORAGE, deprecated = true)
-    public volatile DataStorageSpec.IntKibibytesBound batch_size_warn_threshold = new DataStorageSpec.IntKibibytesBound("5KiB");
+    public volatile DataStorageSpec.IntKibibytesBound batch_size_warn_threshold = new DataStorageSpec.IntKibibytesBound("32KiB");
     @Replaces(oldName = "batch_size_fail_threshold_in_kb", converter = Converters.KIBIBYTES_DATASTORAGE, deprecated = true)
     public volatile DataStorageSpec.IntKibibytesBound batch_size_fail_threshold = new DataStorageSpec.IntKibibytesBound("50KiB");
 
