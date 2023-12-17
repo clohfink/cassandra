@@ -1824,6 +1824,11 @@ public class DatabaseDescriptor
         conf.write_request_timeout = new DurationSpec.LongMillisecondsBound(timeOutInMillis);
     }
 
+    public static boolean getUpgradeFrom30Possible()
+    {
+        return conf.upgrade_from_30_possible;
+    }
+
     public static long getCounterWriteRpcTimeout(TimeUnit unit)
     {
         return conf.counter_write_request_timeout.to(unit);

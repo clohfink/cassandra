@@ -2346,10 +2346,12 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
      */
     public boolean hasMajorVersion3Nodes()
     {
-        return isUpgradingFromVersionLowerThan(CassandraVersion.CASSANDRA_4_0) || // this is quite obvious
-               // however if we discovered only nodes at current version so far (in particular only this node),
-               // but still there are nodes with unknown version, we also want to report that the cluster may have nodes at 3.x
-               upgradeInProgressPossible && !isUpgradingFromVersionLowerThan(SystemKeyspace.CURRENT_VERSION.familyLowerBound.get());
+        // this is quite obvious however if we discovered only nodes at current version so far (in particular only this node),
+        // but still there are nodes with unknown version, we also want to report that the cluster may have nodes at 3.x
+        return DatabaseDescriptor.getUpgradeFrom30Possible() &&
+                (isUpgradingFromVersionLowerThan(CassandraVersion.CASSANDRA_4_0) ||
+                        (upgradeInProgressPossible && !isUpgradingFromVersionLowerThan(SystemKeyspace.CURRENT_VERSION.familyLowerBound.get())));
+    }
     }
 
     /**
