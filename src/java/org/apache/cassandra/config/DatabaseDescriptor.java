@@ -1824,7 +1824,7 @@ public class DatabaseDescriptor
         conf.write_request_timeout = new DurationSpec.LongMillisecondsBound(timeOutInMillis);
     }
 
-    public static boolean getUpgradeFrom30Possible()
+    public static boolean isUpgradeFrom30Possible()
     {
         return conf.upgrade_from_30_possible;
     }

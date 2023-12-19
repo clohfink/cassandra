@@ -185,7 +185,7 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
      *
      * This property and anything that checks it should be removed in 5.0
      */
-    private volatile boolean upgradeInProgressPossible = true;
+    private volatile boolean upgradeInProgressPossible = DatabaseDescriptor.isUpgradeFrom30Possible();
 
     public void clearUnsafe()
     {
@@ -2348,10 +2348,11 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
     {
         // this is quite obvious however if we discovered only nodes at current version so far (in particular only this node),
         // but still there are nodes with unknown version, we also want to report that the cluster may have nodes at 3.x
-        return DatabaseDescriptor.getUpgradeFrom30Possible() &&
+        return upgradeInProgressPossible &&
                 (isUpgradingFromVersionLowerThan(CassandraVersion.CASSANDRA_4_0) ||
-                        (upgradeInProgressPossible && !isUpgradingFromVersionLowerThan(SystemKeyspace.CURRENT_VERSION.familyLowerBound.get())));
-    }
+                 // this is counterintuitive but, it's checking for nodes with unknown version. this check
+                 // is improved in CASSANDRA-18999 (not merged yet)
+                 !isUpgradingFromVersionLowerThan(SystemKeyspace.CURRENT_VERSION.familyLowerBound.get()));
     }
 
     /**
