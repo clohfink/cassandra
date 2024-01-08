@@ -87,7 +87,9 @@ public class LeveledCompactionStrategy extends AbstractCompactionStrategy
         // CASS-3080: Set the default sstable_size_in_mb for LCS to be 256 mb
         int configuredMaxSSTableSize = 256;
         int configuredLevelFanoutSize = DEFAULT_LEVEL_FANOUT_SIZE;
-        boolean configuredSingleSSTableUplevel = false;
+
+        // CASS-18509: Enable single_sstable_uplevel by default for LCS
+        boolean configuredSingleSSTableUplevel = true;
         boolean configuredEnableScheduledCompactions = false;
         SizeTieredCompactionStrategyOptions localOptions = new SizeTieredCompactionStrategyOptions(options);
         if (options != null)
