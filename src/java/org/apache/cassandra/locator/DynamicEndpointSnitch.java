@@ -41,6 +41,8 @@ import org.apache.cassandra.service.StorageService;
 import org.apache.cassandra.utils.FBUtilities;
 import org.apache.cassandra.utils.MBeanWrapper;
 
+import static org.apache.cassandra.locator.GossipingPropertyFileSnitch.DEFAULT_DC;
+
 /**
  * A dynamic snitch that sorts endpoints by latency with an adapted phi failure detector
  */
@@ -380,6 +382,14 @@ public class DynamicEndpointSnitch extends AbstractEndpointSnitch implements Lat
     public double getSeverity()
     {
         return getSeverity(FBUtilities.getBroadcastAddressAndPort());
+    }
+
+
+    public long getUnknownDCHostsCount()
+    {
+        return Gossiper.instance.getLiveMembers().stream()
+                                .filter(ep -> DatabaseDescriptor.getEndpointSnitch().getDatacenter(ep).equals(DEFAULT_DC))
+                                .count();
     }
 
     public boolean isWorthMergingForRangeQuery(ReplicaCollection<?> merged, ReplicaCollection<?> l1, ReplicaCollection<?> l2)

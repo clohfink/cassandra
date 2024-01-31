@@ -58,4 +58,6 @@ public interface DynamicEndpointSnitchMBean
      * @return the current manually injected Severity.
      */
     public double getSeverity();
+
+    public long getUnknownDCHostsCount();
 }

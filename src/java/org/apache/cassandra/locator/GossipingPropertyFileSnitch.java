@@ -45,7 +45,7 @@ public class GossipingPropertyFileSnitch extends AbstractNetworkTopologySnitch//
     private final AtomicReference<ReconnectableSnitchHelper> snitchHelperReference;
 
     private Map<InetAddressAndPort, Map<String, String>> savedEndpoints;
-    private static final String DEFAULT_DC = "UNKNOWN_DC";
+    public static final String DEFAULT_DC = "UNKNOWN_DC";
     private static final String DEFAULT_RACK = "UNKNOWN_RACK";
 
     public GossipingPropertyFileSnitch() throws ConfigurationException
