@@ -67,19 +67,32 @@ public class CompactionController extends AbstractCompactionController
     public CompactionController(ColumnFamilyStore cfs, Set<SSTableReader> compacting, int gcBefore)
     {
         this(cfs, compacting, gcBefore, null,
-             cfs.getCompactionStrategyManager().getCompactionParams().tombstoneOption());
+             cfs.getCompactionStrategyManager().getCompactionParams().tombstoneOption(), false);
     }
 
     public CompactionController(ColumnFamilyStore cfs, Set<SSTableReader> compacting, int gcBefore, RateLimiter limiter, TombstoneOption tombstoneOption)
+    {
+        this(cfs, compacting, gcBefore, limiter, tombstoneOption, false);
+    }
+
+    public CompactionController(ColumnFamilyStore cfs, Set<SSTableReader> compacting, int gcBefore, RateLimiter limiter, TombstoneOption tombstoneOption, boolean ignoreOverlaps)
     {
         super(cfs, gcBefore, tombstoneOption);
         this.compacting = compacting;
         this.limiter = limiter;
         compactingRepaired = compacting != null && compacting.stream().allMatch(SSTableReader::isRepaired);
         this.minTimestamp = compacting != null && !compacting.isEmpty()       // check needed for test
-                          ? compacting.stream().mapToLong(SSTableReader::getMinTimestamp).min().getAsLong()
-                          : 0;
-        refreshOverlaps();
+                            ? compacting.stream().mapToLong(SSTableReader::getMinTimestamp).min().getAsLong()
+                            : 0;
+        if (ignoreOverlaps)
+        {
+            overlappingSSTables = Refs.tryRef(Collections.<SSTableReader>emptyList());
+            this.overlapIterator = new OverlapIterator<>(Collections.emptyList());
+        }
+        else
+        {
+            refreshOverlaps();
+        }
         if (NEVER_PURGE_TOMBSTONES)
             logger.warn("You are running with -Dcassandra.never_purge_tombstones=true, this is dangerous!");
     }
@@ -88,8 +101,7 @@ public class CompactionController extends AbstractCompactionController
     {
         if (NEVER_PURGE_TOMBSTONES)
         {
-            logger.debug("not refreshing overlaps - running with -D{}=true",
-                    NEVER_PURGE_TOMBSTONES_PROPERTY);
+            logger.debug("not refreshing overlaps - running with -D{}=true", NEVER_PURGE_TOMBSTONES_PROPERTY);
             return;
         }
 

@@ -20,11 +20,14 @@ package org.apache.cassandra.db.compaction;
 
 
 import java.util.Set;
+import java.util.function.LongPredicate;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import org.apache.cassandra.db.ColumnFamilyStore;
+import org.apache.cassandra.db.DecoratedKey;
+import org.apache.cassandra.db.memtable.Memtable;
 import org.apache.cassandra.io.sstable.format.SSTableReader;
 
 public class TimeWindowCompactionController extends CompactionController
@@ -35,15 +38,26 @@ public class TimeWindowCompactionController extends CompactionController
 
     public TimeWindowCompactionController(ColumnFamilyStore cfs, Set<SSTableReader> compacting, int gcBefore, boolean ignoreOverlaps)
     {
-        super(cfs, compacting, gcBefore);
+        super(cfs, compacting, gcBefore, null,
+              cfs.getCompactionStrategyManager().getCompactionParams().tombstoneOption(), ignoreOverlaps);
         this.ignoreOverlaps = ignoreOverlaps;
-        if (ignoreOverlaps)
-            logger.warn("You are running with sstables overlapping checks disabled, it can result in loss of data");
     }
 
     @Override
     protected boolean ignoreOverlaps()
     {
         return ignoreOverlaps;
+    }
+
+    @Override
+    public LongPredicate getPurgeEvaluator(DecoratedKey key)
+    {
+        if (NEVER_PURGE_TOMBSTONES || !compactingRepaired() || cfs.getNeverPurgeTombstones())
+            return time -> false;
+
+        if (ignoreOverlaps)
+            return time -> true;
+
+        return super.getPurgeEvaluator(key);
     }
 }
