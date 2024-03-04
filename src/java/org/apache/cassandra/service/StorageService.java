@@ -68,6 +68,7 @@ import org.apache.cassandra.dht.RangeStreamer.FetchReplica;
 import org.apache.cassandra.fql.FullQueryLogger;
 import org.apache.cassandra.fql.FullQueryLoggerOptions;
 import org.apache.cassandra.fql.FullQueryLoggerOptionsCompositeData;
+import org.apache.cassandra.index.SecondaryIndexManager;
 import org.apache.cassandra.io.sstable.format.SSTableReader;
 import org.apache.cassandra.io.util.File;
 import org.apache.cassandra.locator.ReplicaCollection.Builder.Conflict;
@@ -4013,8 +4014,11 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
             "Keyspace must be replicated with a replication factor of at least 2 and not be virtual."
         );
         ColumnFamilyStore cf = ks.getColumnFamilyStore(table);
-        List<SSTableReader> sstables = Lists.newArrayList(cf.getSSTables(SSTableSet.CANONICAL));
-        cf.getCompactionStrategyManager().mutateRepaired(sstables, timestamp,null, false);
+        if (!SecondaryIndexManager.isIndexColumnFamily(cf.name))
+        {
+            List<SSTableReader> sstables = Lists.newArrayList(cf.getSSTables(SSTableSet.CANONICAL));
+            cf.getCompactionStrategyManager().mutateRepaired(sstables, timestamp, null, false);
+        }
     }
 
     public void setAllRepairedAt(long timestamp) throws IOException
