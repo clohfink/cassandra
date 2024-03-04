@@ -974,7 +974,7 @@ public class TableMetrics
                     oldest = Math.min(oldest, sstable.getMinTimestamp());
                 }
             }
-            return FBUtilities.nowInSeconds() - TimeUnit.MICROSECONDS.toSeconds(oldest);
+            return Math.max(0, FBUtilities.nowInSeconds() - TimeUnit.MICROSECONDS.toSeconds(oldest));
         },
         () -> { // global
              long oldest = Long.MAX_VALUE;
@@ -1000,7 +1000,7 @@ public class TableMetrics
                      }
                  }
              }
-             return FBUtilities.nowInSeconds() - TimeUnit.MICROSECONDS.toSeconds(oldest);
+             return Math.max(0, FBUtilities.nowInSeconds() - TimeUnit.MICROSECONDS.toSeconds(oldest));
         });
 
         clientTombstoneWarnings = createTableMeter("ClientTombstoneWarnings", cfs.keyspace.metric.clientTombstoneWarnings);
