@@ -307,6 +307,9 @@ public interface StorageServiceMBean extends NotificationEmitter
      */
     public long getSnapshotLinksPerSecond();
 
+    public void setRepairedAt(String keyspaceName, String table, long timestamp) throws IOException;
+    public void setAllRepairedAt(long timestamp) throws IOException;
+
     /**
      * Forces refresh of values stored in system.size_estimates of all column families.
      */

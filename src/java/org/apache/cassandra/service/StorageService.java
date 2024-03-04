@@ -63,10 +63,12 @@ import org.apache.cassandra.config.CassandraRelevantProperties;
 import org.apache.cassandra.concurrent.*;
 import org.apache.cassandra.config.DataStorageSpec;
 import org.apache.cassandra.cql3.QueryHandler;
+import org.apache.cassandra.db.lifecycle.SSTableSet;
 import org.apache.cassandra.dht.RangeStreamer.FetchReplica;
 import org.apache.cassandra.fql.FullQueryLogger;
 import org.apache.cassandra.fql.FullQueryLoggerOptions;
 import org.apache.cassandra.fql.FullQueryLoggerOptionsCompositeData;
+import org.apache.cassandra.io.sstable.format.SSTableReader;
 import org.apache.cassandra.io.util.File;
 import org.apache.cassandra.locator.ReplicaCollection.Builder.Conflict;
 import org.apache.cassandra.schema.Keyspaces;
@@ -3999,6 +4001,35 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
             throws IOException
     {
         takeMultipleTableSnapshot(tag, false, null, keyspaceName + "." + tableName);
+    }
+
+    public void setRepairedAt(String keyspaceName, String table, long timestamp) throws IOException
+    {
+        Keyspace ks = Keyspace.open(keyspaceName);
+        Preconditions.checkArgument(
+            ks.getMetadata().params.replication.klass != LocalStrategy.class &&
+            ks.getReplicationStrategy().getReplicationFactor().allReplicas >= 2 &&
+            !ks.getMetadata().isVirtual(),
+            "Keyspace must be replicated with a replication factor of at least 2 and not be virtual."
+        );
+        ColumnFamilyStore cf = ks.getColumnFamilyStore(table);
+        List<SSTableReader> sstables = Lists.newArrayList(cf.getSSTables(SSTableSet.CANONICAL));
+        cf.getCompactionStrategyManager().mutateRepaired(sstables, timestamp,null, false);
+    }
+
+    public void setAllRepairedAt(long timestamp) throws IOException
+    {
+        for (KeyspaceMetadata keyspace : Schema.instance.getNonLocalStrategyKeyspaces())
+        {
+            Keyspace ks = Keyspace.open(keyspace.name);
+            if (ks.getReplicationStrategy().getReplicationFactor().allReplicas >= 2 && !keyspace.isVirtual())
+            {
+                for (ColumnFamilyStore cfs : ks.getColumnFamilyStores())
+                {
+                    setRepairedAt(keyspace.name, cfs.name, timestamp);
+                }
+            }
+        }
     }
 
     @Override
