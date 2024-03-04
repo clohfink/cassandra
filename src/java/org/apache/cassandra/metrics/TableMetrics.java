@@ -50,6 +50,7 @@ import org.apache.cassandra.metrics.Sampler.SamplerType;
 import org.apache.cassandra.schema.Schema;
 import org.apache.cassandra.schema.SchemaConstants;
 import org.apache.cassandra.utils.EstimatedHistogram;
+import org.apache.cassandra.utils.FBUtilities;
 import org.apache.cassandra.utils.Pair;
 
 import com.codahale.metrics.Counter;
@@ -335,6 +336,8 @@ public class TableMetrics
     public static final Gauge<Long> globalBytesPendingRepair = 
         Metrics.register(GLOBAL_FACTORY.createMetricName("BytesPendingRepair"),
                          () -> totalNonSystemTablesSize(SSTableReader::isPendingRepair).left);
+
+    public final Gauge<Long> unrepairedAge;
 
     public final Meter readRepairRequests;
     public final Meter shortReadProtectionRequests;
@@ -960,6 +963,44 @@ public class TableMetrics
                 cnt += ((Gauge<? extends Number>) cfGauge).getValue().intValue();
             }
             return cnt;
+        });
+        unrepairedAge = createTableGauge("UnrepairedAgeInSeconds", () ->
+        {
+            long oldest = Long.MAX_VALUE;
+            for (SSTableReader sstable : cfs.getSSTables(SSTableSet.CANONICAL))
+            {
+                if (!sstable.isRepaired())
+                {
+                    oldest = Math.min(oldest, sstable.getMinTimestamp());
+                }
+            }
+            return FBUtilities.nowInSeconds() - TimeUnit.MICROSECONDS.toSeconds(oldest);
+        },
+        () -> { // global
+             long oldest = Long.MAX_VALUE;
+             for (String keyspace : Schema.instance.getNonSystemKeyspaces().names())
+             {
+                 Keyspace k = Schema.instance.getKeyspaceInstance(keyspace);
+                 if (SchemaConstants.DISTRIBUTED_KEYSPACE_NAME.equals(k.getName()))
+                     continue;
+                 if (k.getReplicationStrategy().getReplicationFactor().allReplicas < 2)
+                     continue;
+
+                 for (ColumnFamilyStore cf : k.getColumnFamilyStores())
+                 {
+                     if (!SecondaryIndexManager.isIndexColumnFamily(cf.name))
+                     {
+                         for (SSTableReader sstable : cf.getSSTables(SSTableSet.CANONICAL))
+                         {
+                             if (sstable.isRepaired())
+                             {
+                                 oldest = Math.min(oldest, sstable.getMinTimestamp());
+                             }
+                         }
+                     }
+                 }
+             }
+             return FBUtilities.nowInSeconds() - TimeUnit.MICROSECONDS.toSeconds(oldest);
         });
 
         clientTombstoneWarnings = createTableMeter("ClientTombstoneWarnings", cfs.keyspace.metric.clientTombstoneWarnings);
