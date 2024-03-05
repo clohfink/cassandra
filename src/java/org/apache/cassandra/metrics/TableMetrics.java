@@ -992,7 +992,7 @@ public class TableMetrics
                      {
                          for (SSTableReader sstable : cf.getSSTables(SSTableSet.CANONICAL))
                          {
-                             if (sstable.isRepaired())
+                             if (!sstable.isRepaired())
                              {
                                  oldest = Math.min(oldest, sstable.getMinTimestamp());
                              }
