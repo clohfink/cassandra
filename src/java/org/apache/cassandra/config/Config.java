@@ -110,7 +110,7 @@ public class Config
     public ParameterizedClass seed_provider;
     public DiskAccessMode disk_access_mode = DiskAccessMode.auto;
 
-    public DiskFailurePolicy disk_failure_policy = DiskFailurePolicy.ignore;
+    public DiskFailurePolicy disk_failure_policy = DiskFailurePolicy.stop_paranoid;
     public CommitFailurePolicy commit_failure_policy = CommitFailurePolicy.stop;
 
     public volatile boolean use_deterministic_table_id = false;

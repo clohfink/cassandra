@@ -18,12 +18,15 @@
 
 package org.apache.cassandra.locator;
 
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.Map;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import org.apache.cassandra.config.Config;
+import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.db.SystemKeyspace;
 import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.gms.ApplicationState;
@@ -31,11 +34,14 @@ import org.apache.cassandra.gms.EndpointState;
 import org.apache.cassandra.gms.Gossiper;
 import org.apache.cassandra.service.StorageService;
 import org.apache.cassandra.utils.FBUtilities;
+import org.apache.cassandra.utils.JVMStabilityInspector;
+import org.apache.cassandra.utils.NoSpamLogger;
 
 
 public class GossipingPropertyFileSnitch extends AbstractNetworkTopologySnitch// implements IEndpointStateChangeSubscriber
 {
     private static final Logger logger = LoggerFactory.getLogger(GossipingPropertyFileSnitch.class);
+    private static final NoSpamLogger nospam1m = NoSpamLogger.getLogger(logger, 1, TimeUnit.MINUTES);
 
     private PropertyFileSnitch psnitch;
 
@@ -97,6 +103,21 @@ public class GossipingPropertyFileSnitch extends AbstractNetworkTopologySnitch//
                     savedEndpoints = SystemKeyspace.loadDcRackInfo();
                 if (savedEndpoints.containsKey(endpoint))
                     return savedEndpoints.get(endpoint).get("data_center");
+
+                // https://netflix.atlassian.net/browse/ODS-136
+                // Its unsafe to use incorrect DC/Rack information when gossip missing info
+                switch(DatabaseDescriptor.getDiskFailurePolicy())
+                {
+                    case die:
+                    case stop_paranoid:
+                    case stop:
+                        logger.error("Unknown DC for {}, not in gossip and failure policy is {}.  Shutting down server.", endpoint, DatabaseDescriptor.getDiskFailurePolicy());
+                        Throwable t = new RuntimeException("Unknown DC for " + endpoint + ", using disk_failure_policy");
+                        JVMStabilityInspector.killCurrentJVM(t, true);
+                        break;
+                    default:
+                        nospam1m.warn("Unknown DC for {}, defaulting to {}", endpoint, DEFAULT_DC);
+                }
                 return DEFAULT_DC;
             }
             else
