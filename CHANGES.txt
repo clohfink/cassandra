@@ -4,7 +4,8 @@
 4.1.0
  * Streaming progress virtual table lock contention can trigger TCP_USER_TIMEOUT and fail streaming (CASSANDRA-18110)
  * Fix TWCS ignoring ignoreOverlaps
- * Add unknown dc count metric
+ * Add unknown dc count metric and die_on_unknown_gossip_state
+ * BufferPool incorrectly counts memoryInUse when putUnusedPortion is used (CASSANDRA-18311)
  * Fix ContentionStrategy backoff and Clock.waitUntil (CASSANDRA-18086)
 Merged from 4.0:
 Merged from 3.11:
