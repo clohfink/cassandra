@@ -112,6 +112,7 @@ public class Config
 
     public DiskFailurePolicy disk_failure_policy = DiskFailurePolicy.stop_paranoid;
     public CommitFailurePolicy commit_failure_policy = CommitFailurePolicy.stop;
+    public boolean die_on_unknown_gossip_state = true;
 
     public volatile boolean use_deterministic_table_id = false;
 

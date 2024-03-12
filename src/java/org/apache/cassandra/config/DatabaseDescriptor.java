@@ -1727,6 +1727,16 @@ public class DatabaseDescriptor
         return conf.num_tokens;
     }
 
+    public static boolean getDieOnUnknownGossipState()
+    {
+        return conf.die_on_unknown_gossip_state;
+    }
+
+    public static void setDieOnUnknownGossipState(boolean value)
+    {
+        conf.die_on_unknown_gossip_state = value;
+    }
+
     public static InetAddressAndPort getReplaceAddress()
     {
         try

@@ -6575,6 +6575,18 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
     }
 
     @Override
+    public boolean getDieOnUnknownGossipState()
+    {
+        return DatabaseDescriptor.getDieOnUnknownGossipState();
+    }
+
+    @Override
+    public void setDieOnUnknownGossipState(boolean value)
+    {
+        DatabaseDescriptor.setDieOnUnknownGossipState(value);
+    }
+
+    @Override
     public String getCoordinatorLargeReadWarnThreshold()
     {
         return toString(DatabaseDescriptor.getCoordinatorReadSizeWarnThreshold());

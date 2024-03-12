@@ -989,6 +989,9 @@ public interface StorageServiceMBean extends NotificationEmitter
     public boolean getReadThresholdsEnabled();
     public void setReadThresholdsEnabled(boolean value);
 
+    public boolean getDieOnUnknownGossipState();
+    public void setDieOnUnknownGossipState(boolean value);
+
     public String getCoordinatorLargeReadWarnThreshold();
     public void setCoordinatorLargeReadWarnThreshold(String threshold);
     public String getCoordinatorLargeReadAbortThreshold();
