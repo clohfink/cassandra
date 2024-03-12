@@ -334,7 +334,7 @@ public class Config
     public volatile Integer compaction_tombstone_warning_threshold = 100000;
 
     public volatile int concurrent_materialized_view_builders = 1;
-    public volatile int reject_repair_compaction_threshold = Integer.MAX_VALUE;
+    public volatile int reject_repair_compaction_threshold = 1000;
 
     /**
      * @deprecated retry support removed on CASSANDRA-10992
