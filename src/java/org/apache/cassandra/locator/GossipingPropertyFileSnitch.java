@@ -105,10 +105,9 @@ public class GossipingPropertyFileSnitch extends AbstractNetworkTopologySnitch//
 
                 // https://netflix.atlassian.net/browse/ODS-136
                 // Its unsafe to use incorrect DC/Rack information when gossip missing info
-                if (!DatabaseDescriptor.getDieOnUnknownGossipState())
+                if (DatabaseDescriptor.getDieOnUnknownGossipState())
                 {
-
-                    logger.error("Unknown DC for {}, not in gossip and failure policy is {}.  Shutting down server.", endpoint, DatabaseDescriptor.getDiskFailurePolicy());
+                    logger.error("Unknown DC for {}, not in gossip. disable this check with die_on_unknown_gossip_state in cassandra.yaml. Shutting down server.", endpoint);
                     Throwable t = new RuntimeException("Unknown DC for " + endpoint + ", using disk_failure_policy");
                     JVMStabilityInspector.killCurrentJVM(t, true);
                 }
