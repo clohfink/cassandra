@@ -61,6 +61,7 @@ final class HintsStore
     private final Deque<HintsDescriptor> dispatchDequeue;
     private final Queue<HintsDescriptor> corruptedFiles;
     private final Map<HintsDescriptor, Long> hintsExpirations;
+    private final Map<HintsDescriptor, Long> hintsSizes;
 
     // last timestamp used in a descriptor; make sure to not reuse the same timestamp for new descriptors.
     private volatile long lastUsedTimestamp;
@@ -76,15 +77,24 @@ final class HintsStore
         dispatchDequeue = new ConcurrentLinkedDeque<>(descriptors);
         corruptedFiles = new ConcurrentLinkedQueue<>();
         hintsExpirations = new ConcurrentHashMap<>();
+        hintsSizes = new ConcurrentHashMap<>();
 
         //noinspection resource
         lastUsedTimestamp = descriptors.stream().mapToLong(d -> d.timestamp).max().orElse(0L);
+
+        for (HintsDescriptor descriptor : dispatchDequeue)
+            hintsSizes.put(descriptor, descriptor.file(hintsDirectory).length());
     }
 
     static HintsStore create(UUID hostId, File hintsDirectory, ImmutableMap<String, Object> writerParams, List<HintsDescriptor> descriptors)
     {
         descriptors.sort((d1, d2) -> Long.compare(d1.timestamp, d2.timestamp));
         return new HintsStore(hostId, hintsDirectory, writerParams, descriptors);
+    }
+
+    Map<HintsDescriptor, Long> getHintsSizes()
+    {
+        return hintsSizes;
     }
 
     @VisibleForTesting
@@ -194,8 +204,8 @@ final class HintsStore
                 if (predicate.test(descriptor))
                 {
                     cleanUp(descriptor);
-                    delete(descriptor);
                     removeSet.add(descriptor);
+                    delete(descriptor);
                 }
             }
         }
@@ -203,21 +213,33 @@ final class HintsStore
         {
             dispatchDequeue.removeAll(removeSet);
             corruptedFiles.removeAll(removeSet);
+            // if delete(descriptor) throws, hence
+            for (HintsDescriptor descriptor : removeSet)
+                hintsSizes.remove(descriptor);
         }
     }
 
     void delete(HintsDescriptor descriptor)
     {
         File hintsFile = descriptor.file(hintsDirectory);
-        if (hintsFile.tryDelete())
-            logger.info("Deleted hint file {}", descriptor.fileName());
-        else if (hintsFile.exists())
-            logger.error("Failed to delete hint file {}", descriptor.fileName());
-        else
-            logger.info("Already deleted hint file {}", descriptor.fileName());
+        try
+        {
+            if (hintsFile.tryDelete())
+            {
+                logger.info("Deleted hint file {}", descriptor.fileName());
+            }
+            else if (hintsFile.exists())
+                logger.error("Failed to delete hint file {}", descriptor.fileName());
+            else
+                logger.info("Already deleted hint file {}", descriptor.fileName());
 
-        //noinspection ResultOfMethodCallIgnored
-        descriptor.checksumFile(hintsDirectory).tryDelete();
+            //noinspection ResultOfMethodCallIgnored
+            descriptor.checksumFile(hintsDirectory).tryDelete();
+        }
+        finally
+        {
+            hintsSizes.remove(descriptor);
+        }
     }
 
     boolean hasFiles()
@@ -235,17 +257,15 @@ final class HintsStore
         dispatchPositions.put(descriptor, inputPosition);
     }
 
-
     /**
      * @return the total size of all files belonging to the hints store, in bytes.
      */
     long getTotalFileSize()
     {
         long total = 0;
-        for (HintsDescriptor descriptor : Iterables.concat(dispatchDequeue, corruptedFiles))
-        {
-            total += descriptor.file(hintsDirectory).length();
-        }
+        for (long value : hintsSizes.values())
+            total += value;
+
         return total;
     }
 
@@ -283,6 +303,7 @@ final class HintsStore
     {
         if (hintsWriter == null)
             hintsWriter = openWriter();
+
         return hintsWriter;
     }
 

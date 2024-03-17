@@ -150,16 +150,14 @@ public class HintsCatalogTest
     {
         File directory = new File(testFolder.newFolder());
         UUID hostId = UUID.randomUUID();
-        long now = Clock.Global.currentTimeMillis();
         long totalSize = 0;
         HintsCatalog catalog = HintsCatalog.load(directory, ImmutableMap.of());
         HintsStore store = catalog.get(hostId);
         assertEquals(totalSize, store.getTotalFileSize());
         for (int i = 0; i < 3; i++)
         {
-            HintsDescriptor descriptor = new HintsDescriptor(hostId, now + i);
-            writeDescriptor(directory, descriptor);
-            store.offerLast(descriptor);
+            store.getOrOpenWriter();
+            store.closeWriter();
             assertTrue("Total file size should increase after writing more hints", store.getTotalFileSize() > totalSize);
             totalSize = store.getTotalFileSize();
         }

@@ -20,6 +20,7 @@ package org.apache.cassandra.hints;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.Iterator;
+import java.util.Map;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 
@@ -261,19 +262,30 @@ final class HintsWriteExecutor
         long maxHintsFileSize = DatabaseDescriptor.getMaxHintsFileSize();
 
         HintsWriter writer = store.getOrOpenWriter();
+        HintsDescriptor descriptor = writer.descriptor();
 
+        // If the creation of a new session throws, we have not written anything anyway,
+        // so we do not need to update hints sizes.
+        // If we throw during appending, we will track how many bytes were written in finally block
         try (HintsWriter.Session session = writer.newSession(writeBuffer))
         {
-            while (iterator.hasNext())
+            try
             {
-                session.append(iterator.next());
-                if (session.position() >= maxHintsFileSize)
-                    break;
+                while (iterator.hasNext())
+                {
+                    session.append(iterator.next());
+                    if (session.position() >= maxHintsFileSize)
+                        break;
+                }
+            }
+            finally
+            {
+                store.getHintsSizes().put(descriptor, session.position());
             }
         }
         catch (IOException e)
         {
-            throw new FSWriteError(e, writer.descriptor().fileName());
+            throw new FSWriteError(e, descriptor.fileName());
         }
     }
 }
