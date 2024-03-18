@@ -30,6 +30,7 @@ public final class NetflixViewsKeyspace extends VirtualKeyspace
     {
         super(NAME, new ImmutableList.Builder<VirtualTable>()
                 .add(new PriamConfigTable(NAME))
+                .add(new DistributedJsonTable(NAME))
                 .build());
     }
 }
