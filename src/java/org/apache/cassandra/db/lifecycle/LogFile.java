@@ -239,17 +239,9 @@ final class LogFile implements AutoCloseable
         // always match.
         record.status.onDiskRecord = record.withExistingFiles(existingFiles);
         // we can have transaction files with mismatching updateTime resolutions due to switching between jdk8 and jdk11, truncate both to be consistent:
-        if (truncateMillis(record.updateTime) != truncateMillis(record.status.onDiskRecord.updateTime) && record.status.onDiskRecord.updateTime > 0)
-        {
-            record.setError(String.format("Unexpected files detected for sstable [%s]: " +
-                                          "last update time [%tc] (%d) should have been [%tc] (%d)",
-                                          record.fileName(),
-                                          record.status.onDiskRecord.updateTime,
-                                          record.status.onDiskRecord.updateTime,
-                                          record.updateTime,
-                                          record.updateTime));
 
-        }
+        // Per https://netflix.atlassian.net/browse/CASS-3216  Fix failures to read compaction transaction log. the check
+        // for comparing updateTime in commitlog and files on disk is removed.
     }
 
     /**
