@@ -42,6 +42,8 @@ import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Sets;
+import com.google.common.hash.Hasher;
+import com.google.common.hash.Hashing;
 import com.google.common.util.concurrent.Uninterruptibles;
 
 import org.apache.cassandra.concurrent.*;
@@ -2258,6 +2260,34 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
         }
 
         return results;
+    }
+
+    @Override
+    public int getTokenOwnershipHash()
+    {
+        List<InetAddressAndPort> liveOwners = new ArrayList<>(getLiveTokenOwners());
+        Collections.sort(liveOwners);
+        Hasher hasher = Hashing.murmur3_32().newHasher();
+        for (InetAddressAndPort endpoint : liveOwners)
+        {
+            hasher.putUnencodedChars(endpoint.toString());
+            List<Token> tokens = new ArrayList<>(StorageService.instance.getTokenMetadata().getTokens(endpoint));
+            Collections.sort(tokens);
+            for (Token token : tokens)
+            {
+                hasher.putUnencodedChars(token.toString());
+            }
+            EndpointState epState = Gossiper.instance.getEndpointStateForEndpoint(endpoint);
+            if (epState != null && epState.getApplicationState(ApplicationState.DC) != null)
+            {
+                hasher.putUnencodedChars(epState.getApplicationState(ApplicationState.DC).value);
+            }
+            if (epState != null && epState.getApplicationState(ApplicationState.RACK) != null)
+            {
+                hasher.putUnencodedChars(epState.getApplicationState(ApplicationState.RACK).value);
+            }
+        }
+        return hasher.hash().asInt();
     }
 
     @Nullable
