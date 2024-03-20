@@ -19,9 +19,7 @@
 package com.netflix.cassandra.db.virtual;
 
 import java.nio.ByteBuffer;
-import java.util.ArrayList;
 import java.util.Iterator;
-import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
@@ -67,6 +65,7 @@ import org.apache.cassandra.schema.Schema;
 import org.apache.cassandra.schema.TableMetadata;
 import org.apache.cassandra.service.StorageService;
 import org.apache.cassandra.transport.ProtocolVersion;
+import org.apache.cassandra.utils.Clock;
 import org.apache.cassandra.utils.FBUtilities;
 import org.apache.cassandra.utils.concurrent.Future;
 public class DistributedJsonTable implements VirtualTable
@@ -134,20 +133,20 @@ public class DistributedJsonTable implements VirtualTable
             Message<ReadCommand> m = Message.out(read.verb(), read);
             results.put(endpoint, MessagingService.instance().<ReadResponse>sendWithResult(m, endpoint));
         }
-        long startTime = System.currentTimeMillis();
+        long startTime = Clock.Global.currentTimeMillis();
 
         // Wait for all futures to complete or timeout to occur
         boolean allDone;
         do {
             allDone = true;
             for (Future<?> future : results.values()) {
-                if (!future.isDone() && System.currentTimeMillis() - startTime < TIMEOUT_MS) {
+                if (!future.isDone() && Clock.Global.currentTimeMillis() - startTime < TIMEOUT_MS) {
                     allDone = false;
                     Uninterruptibles.sleepUninterruptibly(100, TimeUnit.MILLISECONDS);
                     break;
                 }
             }
-        } while (!allDone && System.currentTimeMillis() - startTime < TIMEOUT_MS);
+        } while (!allDone && Clock.Global.currentTimeMillis() - startTime < TIMEOUT_MS);
 
         Iterator<Map.Entry<InetAddressAndPort, Future<Message<ReadResponse>>>> iterator = results.entrySet().iterator();
         UnfilteredRowIterator rows = new AbstractUnfilteredRowIterator(metadata,
