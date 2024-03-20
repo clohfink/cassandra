@@ -21,6 +21,7 @@ package org.apache.cassandra.service.reads.range;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 
 import com.google.common.annotations.VisibleForTesting;
@@ -45,6 +46,7 @@ import org.apache.cassandra.locator.ReplicaPlan;
 import org.apache.cassandra.metrics.ClientRequestMetrics;
 import org.apache.cassandra.net.Message;
 import org.apache.cassandra.net.MessagingService;
+import org.apache.cassandra.schema.Schema;
 import org.apache.cassandra.service.StorageProxy;
 import org.apache.cassandra.service.reads.DataResolver;
 import org.apache.cassandra.service.reads.ReadCallback;
@@ -128,6 +130,7 @@ public class RangeCommandIterator extends AbstractIterator<RowIterator> implemen
         {
             rangeMetrics.unavailables.mark();
             StorageProxy.logRequestException(e, Collections.singleton(command));
+            Objects.requireNonNull(Schema.instance.getKeyspaceInstance(command.metadata().keyspace)).metric.unavailables.mark();
             throw e;
         }
         catch (ReadTimeoutException e)

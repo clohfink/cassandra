@@ -420,6 +420,9 @@ public class StorageProxy implements StorageProxyMBean
         {
             casWriteMetrics.unavailables.mark();
             writeMetricsForLevel(consistencyForPaxos).unavailables.mark();
+            Keyspace keyspace = Schema.instance.getKeyspaceInstance(keyspaceName);
+            if (keyspace != null)
+                keyspace.metric.unavailables.mark();
             throw e;
         }
         finally
@@ -925,6 +928,16 @@ public class StorageProxy implements StorageProxyMBean
         {
             writeMetrics.unavailables.mark();
             writeMetricsForLevel(consistencyLevel).unavailables.mark();
+            try
+            {
+                Keyspace keyspace = Schema.instance.getKeyspaceInstance(mutations.iterator().next().getKeyspaceName());
+                if (keyspace != null)
+                    keyspace.metric.unavailables.mark();
+                }
+            catch (RuntimeException runtime)
+            {
+                //ignored
+            }
             Tracing.trace("Unavailable");
             throw e;
         }
@@ -1217,6 +1230,16 @@ public class StorageProxy implements StorageProxyMBean
         {
             writeMetrics.unavailables.mark();
             writeMetricsForLevel(consistency_level).unavailables.mark();
+            try
+            {
+                Keyspace keyspace = Schema.instance.getKeyspaceInstance(mutations.iterator().next().getKeyspaceName());
+                if (keyspace != null)
+                    keyspace.metric.unavailables.mark();
+            }
+            catch (RuntimeException runtime)
+            {
+                //ignored
+            }
             Tracing.trace("Unavailable");
             throw e;
         }
@@ -1916,6 +1939,9 @@ public class StorageProxy implements StorageProxyMBean
             casReadMetrics.unavailables.mark();
             readMetricsForLevel(consistencyLevel).unavailables.mark();
             logRequestException(e, group.queries);
+            Keyspace keyspace = Schema.instance.getKeyspaceInstance(metadata.keyspace);
+            if (keyspace != null)
+                keyspace.metric.unavailables.mark();
             throw e;
         }
         catch (ReadTimeoutException e)
@@ -1974,6 +2000,9 @@ public class StorageProxy implements StorageProxyMBean
             readMetrics.unavailables.mark();
             readMetricsForLevel(consistencyLevel).unavailables.mark();
             logRequestException(e, group.queries);
+            Keyspace keyspace = Schema.instance.getKeyspaceInstance(group.queries.get(0).metadata().keyspace);
+            if (keyspace != null)
+                keyspace.metric.unavailables.mark();
             throw e;
         }
         catch (ReadTimeoutException e)

@@ -169,6 +169,7 @@ public class KeyspaceMetrics
     public final Histogram rowIndexSize;
 
     public final MetricNameFactory factory;
+    public final Meter unavailables;
     private Keyspace keyspace;
 
     /** set containing names of all the metrics stored here, for releasing later */
@@ -216,6 +217,7 @@ public class KeyspaceMetrics
         readLatency = createLatencyMetrics("Read");
         writeLatency = createLatencyMetrics("Write");
         rangeLatency = createLatencyMetrics("Range");
+        unavailables = createKeyspaceMeter("Unavailables");
 
         // create histograms for TableMetrics to replicate updates to
         sstablesPerReadHistogram = createKeyspaceHistogram("SSTablesPerReadHistogram", true);
