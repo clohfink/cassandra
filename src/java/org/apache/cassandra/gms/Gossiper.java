@@ -2290,6 +2290,21 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
         return hasher.hash().asInt();
     }
 
+    @Override
+    public int getSchemaVersionCount()
+    {
+        Set<String> schemaVersionSet = new HashSet<>();
+        List<InetAddressAndPort> liveOwners = new ArrayList<>(getLiveTokenOwners());
+        for (InetAddressAndPort endpoint : liveOwners)
+        {
+            UUID schemaVersion = getSchemaVersion(endpoint);
+            if (schemaVersion != null)
+                schemaVersionSet.add(schemaVersion.toString());
+        }
+
+        return schemaVersionSet.size();
+    }
+
     @Nullable
     public UUID getSchemaVersion(InetAddressAndPort ep)
     {

@@ -40,4 +40,6 @@ public interface GossiperMBean
 
     public int getTokenOwnershipHash();
 
+    public int getSchemaVersionCount();
+
 }
