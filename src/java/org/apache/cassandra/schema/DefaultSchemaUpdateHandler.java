@@ -137,10 +137,7 @@ public class DefaultSchemaUpdateHandler implements SchemaUpdateHandler, IEndpoin
                     CassandraRelevantProperties.IGNORED_SCHEMA_CHECK_ENDPOINTS.getKey(),
                     CassandraRelevantProperties.IGNORED_SCHEMA_CHECK_VERSIONS.getKey());
 
-        // https://netflix.atlassian.net/browse/CASS-3191
-        // If bootstrapping and waited for schema it may become blocked by downed nodes making
-        // cluster unrecoverable
-        if (requireSchemas && !StorageService.instance.isReplacing())
+        if (requireSchemas)
         {
             logger.error("Didn't receive schemas for all known versions within the {}. Use -D{}=true to skip this check.",
                          timeout, CassandraRelevantProperties.BOOTSTRAP_SKIP_SCHEMA_CHECK.getKey());
