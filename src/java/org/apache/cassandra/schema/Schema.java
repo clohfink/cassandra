@@ -531,6 +531,7 @@ public class Schema implements SchemaProvider
      */
     private synchronized void updateVersion(UUID version)
     {
+        logger.info("Updating local schema from version {} to {}", this.version, version);
         this.version = version;
         SchemaDiagnostics.versionUpdated(this);
     }
