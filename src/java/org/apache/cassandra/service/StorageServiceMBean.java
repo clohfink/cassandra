@@ -25,6 +25,7 @@ import java.nio.ByteBuffer;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeoutException;
 import javax.annotation.Nullable;
@@ -350,6 +351,8 @@ public interface StorageServiceMBean extends NotificationEmitter
      * in order to purge the tombstones and free up space quicker.
      */
     public void forceCompactionKeysIgnoringGcGrace(String keyspaceName, String tableName, String... partitionKeysIgnoreGcGrace) throws IOException, ExecutionException, InterruptedException;
+
+    public UUID calculateSchemaDigest();
 
     /**
      * Trigger a cleanup of keys on a single keyspace

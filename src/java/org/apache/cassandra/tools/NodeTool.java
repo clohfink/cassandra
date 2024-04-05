@@ -226,7 +226,8 @@ public class NodeTool
                 Verify.class,
                 Version.class,
                 ViewBuildStatus.class,
-                ForceCompact.class
+                ForceCompact.class,
+                CalculateSchemaDigest.class
         );
 
         Cli.CliBuilder<NodeToolCmdRunnable> builder = Cli.builder("nodetool");

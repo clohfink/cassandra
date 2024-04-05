@@ -72,11 +72,10 @@ import org.apache.cassandra.index.SecondaryIndexManager;
 import org.apache.cassandra.io.sstable.format.SSTableReader;
 import org.apache.cassandra.io.util.File;
 import org.apache.cassandra.locator.ReplicaCollection.Builder.Conflict;
-import org.apache.cassandra.schema.Keyspaces;
+import org.apache.cassandra.schema.*;
 import org.apache.cassandra.service.disk.usage.DiskUsageBroadcaster;
 import org.apache.cassandra.service.snapshot.SnapshotLoader;
 import org.apache.cassandra.utils.concurrent.Future;
-import org.apache.cassandra.schema.TableId;
 import org.apache.cassandra.utils.concurrent.FutureCombiner;
 import org.apache.cassandra.utils.concurrent.ImmediateFuture;
 import org.apache.commons.lang3.StringUtils;
@@ -120,15 +119,6 @@ import org.apache.cassandra.net.*;
 import org.apache.cassandra.repair.*;
 import org.apache.cassandra.repair.messages.RepairOption;
 import org.apache.cassandra.schema.CompactionParams.TombstoneOption;
-import org.apache.cassandra.schema.KeyspaceMetadata;
-import org.apache.cassandra.schema.ReplicationParams;
-import org.apache.cassandra.schema.Schema;
-import org.apache.cassandra.schema.SchemaConstants;
-import org.apache.cassandra.schema.SchemaTransformations;
-import org.apache.cassandra.schema.SystemDistributedKeyspace;
-import org.apache.cassandra.schema.TableMetadata;
-import org.apache.cassandra.schema.TableMetadataRef;
-import org.apache.cassandra.schema.ViewMetadata;
 import org.apache.cassandra.service.snapshot.SnapshotManager;
 import org.apache.cassandra.service.snapshot.TableSnapshot;
 import org.apache.cassandra.net.AsyncOneResponse;
@@ -4087,6 +4077,14 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
     {
         ColumnFamilyStore cfStore = getValidKeyspace(keyspaceName).getColumnFamilyStore(tableName);
         cfStore.forceCompactionKeysIgnoringGcGrace(partitionKeysIgnoreGcGrace);
+    }
+
+    /**
+     * Calculate the schema digest for the node.
+     */
+    public UUID calculateSchemaDigest()
+    {
+        return SchemaKeyspace.calculateSchemaDigest();
     }
 
     /**
