@@ -62,7 +62,7 @@ public class DefaultSslContextFactoryTest
                                                            .withKeyStorePassword("cassandra")
                                                            .withRequireClientAuth(false)
                                                            .withCipherSuites("TLS_RSA_WITH_AES_128_CBC_SHA");
-        SslContext sslContext = SSLFactory.getOrCreateSslContext(options, true, ISslContextFactory.SocketType.CLIENT);
+        SslContext sslContext = SSLFactory.getOrCreateSslContext(options, true, ISslContextFactory.SocketType.CLIENT, "test");
         Assert.assertNotNull(sslContext);
         if (OpenSsl.isAvailable())
             Assert.assertTrue(sslContext instanceof OpenSslContext);
@@ -112,6 +112,7 @@ public class DefaultSslContextFactoryTest
         Map<String,Object> config = new HashMap<>();
         config.putAll(commonConfig);
         config.put("keystore", "/this/is/probably/not/a/file/on/your/test/machine");
+        config.put("keystore_password","ThisWontMatter");
 
         DefaultSslContextFactory defaultSslContextFactoryImpl = new DefaultSslContextFactory(config);
         defaultSslContextFactoryImpl.checkedExpiry = false;

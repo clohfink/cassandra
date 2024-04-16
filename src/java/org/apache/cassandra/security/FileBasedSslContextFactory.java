@@ -20,7 +20,6 @@ package org.apache.cassandra.security;
 
 import java.io.InputStream;
 import java.nio.file.Files;
-import java.nio.file.Paths;
 import java.security.KeyStore;
 import java.security.KeyStoreException;
 import java.security.cert.X509Certificate;
@@ -34,6 +33,7 @@ import javax.net.ssl.SSLException;
 import javax.net.ssl.TrustManagerFactory;
 
 import com.google.common.annotations.VisibleForTesting;
+import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -120,6 +120,20 @@ abstract public class FileBasedSslContextFactory extends AbstractSslContextFacto
     }
 
     /**
+     * Validates the given keystore password.
+     *
+     * @param password           value
+     * @throws IllegalArgumentException if the {@code password} is null
+     */
+    protected void validatePassword(String password)
+    {
+        if (password == null)
+        {
+            throw new IllegalArgumentException("'keystore_password' must be specified");
+        }
+    }
+
+    /**
      * Builds required KeyManagerFactory from the file based keystore. It also checks for the PrivateKey's certificate's
      * expiry and logs {@code warning} for each expired PrivateKey's certitificate.
      *
@@ -129,19 +143,25 @@ abstract public class FileBasedSslContextFactory extends AbstractSslContextFacto
     @Override
     protected KeyManagerFactory buildKeyManagerFactory() throws SSLException
     {
+        /*
+         * Validation of the password is delayed until this point to allow nullable keystore passwords
+         * for other use-cases (CASSANDRA-18124).
+         */
+        validatePassword(keystore_password);
 
-        try (InputStream ksf = Files.newInputStream(Paths.get(keystore)))
+        try (InputStream ksf = Files.newInputStream(File.getPath(keystore)))
         {
             final String algorithm = this.algorithm == null ? KeyManagerFactory.getDefaultAlgorithm() : this.algorithm;
             KeyManagerFactory kmf = KeyManagerFactory.getInstance(algorithm);
             KeyStore ks = KeyStore.getInstance(store_type);
-            ks.load(ksf, keystore_password.toCharArray());
+            final char[] password = keystore_password.toCharArray();
+            ks.load(ksf, password);
             if (!checkedExpiry)
             {
                 checkExpiredCerts(ks);
                 checkedExpiry = true;
             }
-            kmf.init(ks, keystore_password.toCharArray());
+            kmf.init(ks, password);
             return kmf;
         }
         catch (Exception e)
@@ -159,12 +179,14 @@ abstract public class FileBasedSslContextFactory extends AbstractSslContextFacto
     @Override
     protected TrustManagerFactory buildTrustManagerFactory() throws SSLException
     {
-        try (InputStream tsf = Files.newInputStream(Paths.get(truststore)))
+        try (InputStream tsf = Files.newInputStream(File.getPath(truststore)))
         {
             final String algorithm = this.algorithm == null ? TrustManagerFactory.getDefaultAlgorithm() : this.algorithm;
             TrustManagerFactory tmf = TrustManagerFactory.getInstance(algorithm);
             KeyStore ts = KeyStore.getInstance(store_type);
-            ts.load(tsf, truststore_password.toCharArray());
+
+            final char[] truststorePassword = StringUtils.isEmpty(truststore_password) ? null : truststore_password.toCharArray();
+            ts.load(tsf, truststorePassword);
             tmf.init(ts);
             return tmf;
         }

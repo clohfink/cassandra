@@ -26,11 +26,12 @@ import java.util.regex.Pattern;
 
 import org.junit.Test;
 
+import org.assertj.core.api.Assertions;
+
 import static org.junit.Assert.assertEquals;
 
 public class TableStatsPrinterTest extends TableStatsTestBase
 {
-
     public static final String expectedDefaultTable1Output =
         "\tTable: %s\n" +
         "\tSSTable count: 60000\n" +
@@ -43,6 +44,7 @@ public class TableStatsPrinterTest extends TableStatsTestBase
         "\tMemtable cell count: 111\n" +
         "\tMemtable data size: 0\n" +
         "\tMemtable switch count: 1\n" +
+        "\tSpeculative retries: 0\n" +
         "\tLocal read count: 0\n" +
         "\tLocal read latency: 2.000 ms\n" +
         "\tLocal write count: 5\n" +
@@ -80,6 +82,7 @@ public class TableStatsPrinterTest extends TableStatsTestBase
         "\tMemtable data size: 900\n" +
         "\tMemtable off heap memory used: 314159265\n" +
         "\tMemtable switch count: 22222\n" +
+        "\tSpeculative retries: 0\n" +
         "\tLocal read count: 1\n" +
         "\tLocal read latency: 3.000 ms\n" +
         "\tLocal write count: 4\n" +
@@ -99,7 +102,7 @@ public class TableStatsPrinterTest extends TableStatsTestBase
         "\tCompacted partition maximum bytes: 30\n" +
         "\tCompacted partition mean bytes: 4\n" +
         "\tAverage live cells per slice (last five minutes): 4.01\n" +
-        "\tMaximum live cells per slice (last five minutes): 5\n" + 
+        "\tMaximum live cells per slice (last five minutes): 5\n" +
         "\tAverage tombstones per slice (last five minutes): 4.001\n" +
         "\tMaximum tombstones per slice (last five minutes): 2\n" +
         "\tDropped Mutations: 222\n" +
@@ -118,6 +121,7 @@ public class TableStatsPrinterTest extends TableStatsTestBase
         "\tMemtable cell count: 333333\n" +
         "\tMemtable data size: 1999\n" +
         "\tMemtable switch count: 3333\n" +
+        "\tSpeculative retries: 0\n" +
         "\tLocal read count: 2\n" +
         "\tLocal read latency: 4.000 ms\n" +
         "\tLocal write count: 3\n" +
@@ -155,6 +159,7 @@ public class TableStatsPrinterTest extends TableStatsTestBase
         "\tMemtable data size: 3000\n" +
         "\tMemtable off heap memory used: 141421356\n" +
         "\tMemtable switch count: 444444\n" +
+        "\tSpeculative retries: 0\n" +
         "\tLocal read count: 3\n" +
         "\tLocal read latency: NaN ms\n" +
         "\tLocal write count: 2\n" +
@@ -193,6 +198,7 @@ public class TableStatsPrinterTest extends TableStatsTestBase
         "\tMemtable cell count: 55555\n" +
         "\tMemtable data size: 20000\n" +
         "\tMemtable switch count: 5\n" +
+        "\tSpeculative retries: 0\n" +
         "\tLocal read count: 4\n" +
         "\tLocal read latency: 0.000 ms\n" +
         "\tLocal write count: 1\n" +
@@ -230,6 +236,7 @@ public class TableStatsPrinterTest extends TableStatsTestBase
         "\tMemtable data size: 1000000\n" +
         "\tMemtable off heap memory used: 161803398\n" +
         "\tMemtable switch count: 6\n" +
+        "\tSpeculative retries: 0\n" +
         "\tLocal read count: 5\n" +
         "\tLocal read latency: 1.000 ms\n" +
         "\tLocal write count: 0\n" +
@@ -378,6 +385,138 @@ public class TableStatsPrinterTest extends TableStatsTestBase
             printer.print(holder, new PrintStream(byteStream));
             assertEquals("StatsTablePrinter.SortedDefaultPrinter does not print top K sorted tables as expected for large values of K",
                          String.format(expectedSortedDefaultPrinterLargeTopOutput, sortKey), byteStream.toString());
+        }
+    }
+
+    @Test
+    public void testJsonPrinter() throws Exception
+    {
+        TestTableStatsHolder holder = new TestTableStatsHolder(testKeyspaces.subList(2, 3), "", 0); // kesypace3
+        StatsPrinter<StatsHolder> printer = TableStatsPrinter.from("json", false);
+        try (ByteArrayOutputStream byteStream = new ByteArrayOutputStream())
+        {
+            printer.print(holder, new PrintStream(byteStream));
+            Assertions.assertThat(byteStream.toString())
+                      .isEqualTo("{\n" +
+                                 "  \"keyspace3\" : {\n" +
+                                 "    \"write_latency_ms\" : \"NaN\",\n" +
+                                 "    \"tables\" : {\n" +
+                                 "      \"table6\" : {\n" +
+                                 "        \"average_tombstones_per_slice_last_five_minutes\" : 6.0,\n" +
+                                 "        \"top_tombstone_partitions\" : null,\n" +
+                                 "        \"bloom_filter_off_heap_memory_used\" : \"667408\",\n" +
+                                 "        \"bytes_pending_repair\" : 0,\n" +
+                                 "        \"memtable_switch_count\" : 6,\n" +
+                                 "        \"speculative_retries\" : 0,\n" +
+                                 "        \"maximum_tombstones_per_slice_last_five_minutes\" : 6,\n" +
+                                 "        \"memtable_cell_count\" : 6666,\n" +
+                                 "        \"memtable_data_size\" : \"1000000\",\n" +
+                                 "        \"average_live_cells_per_slice_last_five_minutes\" : 5.0,\n" +
+                                 "        \"local_read_latency_ms\" : \"1.000\",\n" +
+                                 "        \"sstable_count\" : 1000,\n" +
+                                 "        \"local_write_latency_ms\" : \"0.500\",\n" +
+                                 "        \"pending_flushes\" : 66,\n" +
+                                 "        \"compacted_partition_minimum_bytes\" : 6,\n" +
+                                 "        \"local_read_count\" : 5,\n" +
+                                 "        \"sstable_compression_ratio\" : 0.68,\n" +
+                                 "        \"dropped_mutations\" : \"666666\",\n" +
+                                 "        \"top_size_partitions\" : null,\n" +
+                                 "        \"bloom_filter_false_positives\" : 400,\n" +
+                                 "        \"off_heap_memory_used_total\" : \"162470810\",\n" +
+                                 "        \"memtable_off_heap_memory_used\" : \"161803398\",\n" +
+                                 "        \"index_summary_off_heap_memory_used\" : \"3\",\n" +
+                                 "        \"bloom_filter_space_used\" : \"101112\",\n" +
+                                 "        \"sstables_in_each_level\" : [ ],\n" +
+                                 "        \"compacted_partition_maximum_bytes\" : 20,\n" +
+                                 "        \"sstable_bytes_in_each_level\" : [ ],\n" +
+                                 "        \"space_used_total\" : \"0\",\n" +
+                                 "        \"local_write_count\" : 0,\n" +
+                                 "        \"droppable_tombstone_ratio\" : \"0.66667\",\n" +
+                                 "        \"compression_metadata_off_heap_memory_used\" : \"1\",\n" +
+                                 "        \"number_of_partitions_estimate\" : 6,\n" +
+                                 "        \"bytes_repaired\" : 0,\n" +
+                                 "        \"maximum_live_cells_per_slice_last_five_minutes\" : 2,\n" +
+                                 "        \"space_used_live\" : \"666666\",\n" +
+                                 "        \"compacted_partition_mean_bytes\" : 3,\n" +
+                                 "        \"bloom_filter_false_ratio\" : \"0.03000\",\n" +
+                                 "        \"old_sstable_count\" : 0,\n" +
+                                 "        \"bytes_unrepaired\" : 0,\n" +
+                                 "        \"percent_repaired\" : 0.0,\n" +
+                                 "        \"space_used_by_snapshots_total\" : \"0\"\n" +
+                                 "      }\n" +
+                                 "    },\n" +
+                                 "    \"read_latency_ms\" : 0.0,\n" +
+                                 "    \"pending_flushes\" : 66,\n" +
+                                 "    \"write_count\" : 0,\n" +
+                                 "    \"read_latency\" : 0.0,\n" +
+                                 "    \"read_count\" : 5\n" +
+                                 "  },\n" +
+                                 "  \"total_number_of_tables\" : 0\n" +
+                                 "}\n");
+        }
+    }
+
+    @Test
+    public void testYamlPrinter() throws Exception
+    {
+        TestTableStatsHolder holder = new TestTableStatsHolder(testKeyspaces.subList(2, 3), "", 0); // kesypace3
+        StatsPrinter<StatsHolder> printer = TableStatsPrinter.from("yaml", false);
+        try (ByteArrayOutputStream byteStream = new ByteArrayOutputStream())
+        {
+            printer.print(holder, new PrintStream(byteStream));
+            Assertions.assertThat(byteStream.toString())
+                      .isEqualTo("keyspace3:\n" +
+                                 "  write_latency_ms: .NaN\n" +
+                                 "  tables:\n" +
+                                 "    table6:\n" +
+                                 "      average_tombstones_per_slice_last_five_minutes: 6.0\n" +
+                                 "      top_tombstone_partitions: null\n" +
+                                 "      bloom_filter_off_heap_memory_used: '667408'\n" +
+                                 "      bytes_pending_repair: 0\n" +
+                                 "      memtable_switch_count: 6\n" +
+                                 "      speculative_retries: 0\n" +
+                                 "      maximum_tombstones_per_slice_last_five_minutes: 6\n" +
+                                 "      memtable_cell_count: 6666\n" +
+                                 "      memtable_data_size: '1000000'\n" +
+                                 "      average_live_cells_per_slice_last_five_minutes: 5.0\n" +
+                                 "      local_read_latency_ms: '1.000'\n" +
+                                 "      sstable_count: 1000\n" +
+                                 "      local_write_latency_ms: '0.500'\n" +
+                                 "      pending_flushes: 66\n" +
+                                 "      compacted_partition_minimum_bytes: 6\n" +
+                                 "      local_read_count: 5\n" +
+                                 "      sstable_compression_ratio: 0.68\n" +
+                                 "      dropped_mutations: '666666'\n" +
+                                 "      top_size_partitions: null\n" +
+                                 "      bloom_filter_false_positives: 400\n" +
+                                 "      off_heap_memory_used_total: '162470810'\n" +
+                                 "      memtable_off_heap_memory_used: '161803398'\n" +
+                                 "      index_summary_off_heap_memory_used: '3'\n" +
+                                 "      bloom_filter_space_used: '101112'\n" +
+                                 "      sstables_in_each_level: []\n" +
+                                 "      compacted_partition_maximum_bytes: 20\n" +
+                                 "      sstable_bytes_in_each_level: []\n" +
+                                 "      space_used_total: '0'\n" +
+                                 "      local_write_count: 0\n" +
+                                 "      droppable_tombstone_ratio: '0.66667'\n" +
+                                 "      compression_metadata_off_heap_memory_used: '1'\n" +
+                                 "      number_of_partitions_estimate: 6\n" +
+                                 "      bytes_repaired: 0\n" +
+                                 "      maximum_live_cells_per_slice_last_five_minutes: 2\n" +
+                                 "      space_used_live: '666666'\n" +
+                                 "      compacted_partition_mean_bytes: 3\n" +
+                                 "      bloom_filter_false_ratio: '0.03000'\n" +
+                                 "      old_sstable_count: 0\n" +
+                                 "      bytes_unrepaired: 0\n" +
+                                 "      percent_repaired: 0.0\n" +
+                                 "      space_used_by_snapshots_total: '0'\n" +
+                                 "  read_latency_ms: 0.0\n" +
+                                 "  pending_flushes: 66\n" +
+                                 "  write_count: 0\n" +
+                                 "  read_latency: 0.0\n" +
+                                 "  read_count: 5\n" +
+                                 "total_number_of_tables: 0\n" +
+                                 "\n");
         }
     }
 

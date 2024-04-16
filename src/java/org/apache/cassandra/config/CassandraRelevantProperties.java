@@ -88,6 +88,19 @@ public enum CassandraRelevantProperties
      */
     COM_SUN_MANAGEMENT_JMXREMOTE_AUTHENTICATE ("com.sun.management.jmxremote.authenticate"),
 
+
+    /**
+     * Controls the JMX server threadpool keap-alive time.
+     * Should only be set by in-jvm dtests.
+     */
+    SUN_RMI_TRANSPORT_TCP_THREADKEEPALIVETIME("sun.rmi.transport.tcp.threadKeepAliveTime"),
+
+    /**
+     * Controls the distributed garbage collector lease time for JMX objects.
+     * Should only be set by in-jvm dtests.
+     */
+    JAVA_RMI_DGC_LEASE_VALUE_IN_JVM_DTEST("java.rmi.dgc.leaseValue"),
+
     /**
      * The port number to which the RMI connector will be bound - com.sun.management.jmxremote.rmi.port.
      * An Integer object that represents the value of the second argument is returned
@@ -226,6 +239,9 @@ public enum CassandraRelevantProperties
     /** what class to use for mbean registeration */
     MBEAN_REGISTRATION_CLASS("org.apache.cassandra.mbean_registration_class"),
 
+    /** This property indicates if the code is running under the in-jvm dtest framework */
+    DTEST_IS_IN_JVM_DTEST("org.apache.cassandra.dtest.is_in_jvm_dtest"),
+
     BATCH_COMMIT_LOG_SYNC_INTERVAL("cassandra.batch_commitlog_sync_interval_millis", "1000"),
 
     SYSTEM_AUTH_DEFAULT_RF("cassandra.system_auth.default_rf", "1"),
@@ -297,9 +313,38 @@ public enum CassandraRelevantProperties
 
     /** Used when running in Client mode and the system and schema keyspaces need to be initialized outside of their normal initialization path **/
     FORCE_LOAD_LOCAL_KEYSPACES("cassandra.schema.force_load_local_keyspaces"),
+
+    /** When enabled, recursive directory deletion will be executed using a unix command `rm -rf` instead of traversing
+     * and removing individual files. This is now used only tests, but eventually we will make it true by default.*/
+    USE_NIX_RECURSIVE_DELETE("cassandra.use_nix_recursive_delete"),
+
+    /** If set, {@link org.apache.cassandra.net.MessagingService} is shutdown abrtuptly without waiting for anything.
+     * This is an optimization used in unit tests becuase we never restart a node there. The only node is stopoped
+     * when the JVM terminates. Therefore, we can use such optimization and not wait unnecessarily. */
+    NON_GRACEFUL_SHUTDOWN("cassandra.test.messagingService.nonGracefulShutdown"),
+
+    /** Flush changes of {@link org.apache.cassandra.schema.SchemaKeyspace} after each schema modification. In production,
+     * we always do that. However, tests which do not restart nodes may disable this functionality in order to run
+     * faster. Note that this is disabled for unit tests but if an individual test requires schema to be flushed, it
+     * can be also done manually for that particular case: {@code flush(SchemaConstants.SCHEMA_KEYSPACE_NAME);}. */
+    FLUSH_LOCAL_SCHEMA_CHANGES("cassandra.test.flush_local_schema_changes", "true"),
+
+    /**
+     * Delay before checking if gossip is settled.
+     */
+    GOSSIP_SETTLE_MIN_WAIT_MS("cassandra.gossip_settle_min_wait_ms", "5000"),
+
+    /**
+     * Interval delay between checking gossip is settled.
+     */
+    GOSSIP_SETTLE_POLL_INTERVAL_MS("cassandra.gossip_settle_interval_ms", "1000"),
+
+    /**
+     * Number of polls without gossip state change to consider gossip as settled.
+     */
+    GOSSIP_SETTLE_POLL_SUCCESSES_REQUIRED("cassandra.gossip_settle_poll_success_required", "3"),
+
     ;
-
-
 
     CassandraRelevantProperties(String key, String defaultVal)
     {
@@ -340,6 +385,17 @@ public enum CassandraRelevantProperties
     public String getDefaultValue()
     {
         return defaultVal;
+    }
+
+    /**
+     * Sets the property to its default value if a default value was specified. Remove the property otherwise.
+     */
+    public void reset()
+    {
+        if (defaultVal != null)
+            System.setProperty(key, defaultVal);
+        else
+            System.getProperties().remove(key);
     }
 
     /**
@@ -395,6 +451,14 @@ public enum CassandraRelevantProperties
             return overrideDefaultValue;
 
         return BOOLEAN_CONVERTER.convert(value);
+    }
+
+    /**
+     * Clears the value set in the system property.
+     */
+    public void clearValue()
+    {
+        System.clearProperty(key);
     }
 
     /**
@@ -502,4 +566,3 @@ public enum CassandraRelevantProperties
         return System.getProperties().containsKey(key);
     }
 }
-

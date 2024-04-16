@@ -20,6 +20,7 @@
 
 import re
 import six
+
 try:
     from sre_constants import BRANCH, SUBPATTERN, GROUPREF, GROUPREF_IGNORE, GROUPREF_EXISTS
 except ImportError:

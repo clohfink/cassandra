@@ -1328,6 +1328,11 @@ server_encryption_options:
     # Set to a valid keystore if internode_encryption is dc, rack or all
     keystore: conf/.keystore
     keystore_password: cassandra
+    # Configure the way Cassandra creates SSL contexts.
+    # To use PEM-based key material, see org.apache.cassandra.security.PEMBasedSslContextFactory
+    # ssl_context_factory:
+    #     # Must be an instance of org.apache.cassandra.security.ISslContextFactory
+    #     class_name: org.apache.cassandra.security.DefaultSslContextFactory
     # Verify peer server certificates
     require_client_auth: false
     # Set to a valid trustore if require_client_auth is true
@@ -1369,6 +1374,11 @@ client_encryption_options:
     optional: true
     keystore: conf/.keystore
     keystore_password: cassandra
+    # Configure the way Cassandra creates SSL contexts.
+    # To use PEM-based key material, see org.apache.cassandra.security.PEMBasedSslContextFactory
+    # ssl_context_factory:
+    #     # Must be an instance of org.apache.cassandra.security.ISslContextFactory
+    #     class_name: org.apache.cassandra.security.DefaultSslContextFactory
     # Verify client certificates
     require_client_auth: false
     # Set trustore and truststore_password if require_client_auth is true
@@ -1580,6 +1590,8 @@ audit_logging_options:
   # max_log_size: 17179869184 # 16 GiB
   ## archive command is "/path/to/script.sh %path" where %path is replaced with the file being rolled:
   # archive_command:
+  ## note that enabling this allows anyone with JMX/nodetool access to run local shell commands as the user running cassandra
+  # allow_nodetool_archive_command: false
   # max_archive_retries: 10
 
 # validate tombstones on reads and compaction

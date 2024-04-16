@@ -25,6 +25,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
+import javax.annotation.Nullable;
+
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableList;
 
@@ -73,8 +75,10 @@ public class EncryptionOptions
      */
     public final ParameterizedClass ssl_context_factory;
     public final String keystore;
+    @Nullable
     public final String keystore_password;
     public final String truststore;
+    @Nullable
     public final String truststore_password;
     public final List<String> cipher_suites;
     protected String protocol;
@@ -147,9 +151,9 @@ public class EncryptionOptions
         ssl_context_factory = new ParameterizedClass("org.apache.cassandra.security.DefaultSslContextFactory",
                                                      new HashMap<>());
         keystore = "conf/.keystore";
-        keystore_password = "cassandra";
+        keystore_password = null;
         truststore = "conf/.truststore";
-        truststore_password = "cassandra";
+        truststore_password = null;
         cipher_suites = null;
         protocol = null;
         accepted_protocols = null;
@@ -403,6 +407,11 @@ public class EncryptionOptions
     {
         List<String> ap = getAcceptedProtocols();
         return ap == null ?  new String[0] : ap.toArray(new String[0]);
+    }
+
+    public String[] cipherSuitesArray()
+    {
+        return cipher_suites == null ? null : cipher_suites.toArray(new String[0]);
     }
 
     public TlsEncryptionPolicy tlsEncryptionPolicy()

@@ -392,7 +392,7 @@ public class PartitionDenylist
 
     /**
      * Attempts to reload the DenylistEntry data from CQL for the given TableId and key count.
-     * @return null if we do not find the data; allows cache reloader to preserve old value
+     * @return empty denylist if we do not or cannot find the data, preserving the old value, otherwise the new value
      */
     private DenylistEntry getDenylistForTableFromCQL(final TableId tid, int limit)
     {
