@@ -405,16 +405,7 @@ public class DatabaseDescriptor
         validateUpperBoundStreamingConfig();
 
         if (conf.auto_snapshot_ttl != null)
-        {
-            try
-            {
-                autoSnapshoTtl = new DurationSpec.IntSecondsBound(conf.auto_snapshot_ttl);
-            }
-            catch (IllegalArgumentException e)
-            {
-                throw new ConfigurationException("Invalid value of auto_snapshot_ttl: " + conf.auto_snapshot_ttl, false);
-            }
-        }
+            setAutoSnapshotTtl(conf.auto_snapshot_ttl);
 
         if (conf.commitlog_sync == null)
         {
@@ -2920,6 +2911,18 @@ public class DatabaseDescriptor
     public static void setAutoSnapshotTtl(DurationSpec.IntSecondsBound newTtl)
     {
         autoSnapshoTtl = newTtl;
+    }
+
+    public static void setAutoSnapshotTtl(String newTtl)
+    {
+        try
+        {
+            autoSnapshoTtl = new DurationSpec.IntSecondsBound(newTtl);
+        }
+        catch (IllegalArgumentException e)
+        {
+            throw new ConfigurationException("Invalid value of auto_snapshot_ttl: " + newTtl, false);
+        }
     }
 
     @VisibleForTesting

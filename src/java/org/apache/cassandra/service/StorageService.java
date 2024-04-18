@@ -6896,4 +6896,16 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
     {
         DatabaseDescriptor.setMinTrackedPartitionTombstoneCount(value);
     }
+
+    @Override
+    public String getAutoSnapshotTTL()
+    {
+        return DatabaseDescriptor.getAutoSnapshotTtl().toString();
+    }
+
+    @Override
+    public void setAutoSnapshotTTL(String newTtl)
+    {
+        DatabaseDescriptor.setAutoSnapshotTtl(newTtl);
+    }
 }
