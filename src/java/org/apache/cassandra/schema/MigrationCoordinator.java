@@ -402,7 +402,7 @@ public class MigrationCoordinator
         if (SchemaConstants.emptyVersion.equals(localSchemaVersion) || getUptimeFn.getAsLong() < MIGRATION_DELAY_IN_MS)
         {
             // If we think we may be bootstrapping or have recently started, submit MigrationTask immediately
-            logger.debug("Immediately submitting migration task for {}, " +
+            logger.trace("Immediately submitting migration task for {}, " +
                          "schema versions: local={}, remote={}",
                          endpoint,
                          DistributedSchema.schemaVersionToString(localSchemaVersion),
@@ -548,7 +548,7 @@ public class MigrationCoordinator
 
         if (shouldPullImmediately(endpoint, info.version))
         {
-            logger.debug("Pulling {} immediately from {}", info, endpoint);
+            logger.trace("Pulling {} immediately from {}", info, endpoint);
             submitToMigrationIfNotShutdown(task);
         }
         else
