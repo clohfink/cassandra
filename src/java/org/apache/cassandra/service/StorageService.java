@@ -88,11 +88,10 @@ import org.apache.cassandra.index.SecondaryIndexManager;
 import org.apache.cassandra.io.sstable.format.SSTableReader;
 import org.apache.cassandra.io.util.File;
 import org.apache.cassandra.locator.ReplicaCollection.Builder.Conflict;
-import org.apache.cassandra.schema.Keyspaces;
+import org.apache.cassandra.schema.*;
 import org.apache.cassandra.service.disk.usage.DiskUsageBroadcaster;
 import org.apache.cassandra.service.snapshot.SnapshotLoader;
 import org.apache.cassandra.utils.concurrent.Future;
-import org.apache.cassandra.schema.TableId;
 import org.apache.cassandra.utils.concurrent.FutureCombiner;
 import org.apache.cassandra.utils.concurrent.ImmediateFuture;
 import org.apache.commons.lang3.StringUtils;
@@ -4203,6 +4202,14 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
     {
         ColumnFamilyStore cfStore = getValidKeyspace(keyspaceName).getColumnFamilyStore(tableName);
         cfStore.forceCompactionKeysIgnoringGcGrace(partitionKeysIgnoreGcGrace);
+    }
+
+    /**
+     * Calculate the schema digest for the node.
+     */
+    public UUID calculateSchemaDigest()
+    {
+        return SchemaKeyspace.calculateSchemaDigest();
     }
 
     /**
