@@ -298,7 +298,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
         }
         else
         {
-            return 30 * 1000;
+            return 600 * 1000;
         }
     }
 

@@ -31,6 +31,7 @@ import java.util.concurrent.ForkJoinTask;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
+import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
@@ -88,6 +89,21 @@ public class SchemaTest
             Gossiper.instance.stop();
         }
     }
+
+    @Test
+    public void testSchemaVersionUpdates() {
+        KeyspaceMetadata ksm = KeyspaceMetadata.create("test", KeyspaceParams.simple(1));
+        SchemaTransformation.SchemaTransformationResult r = Schema.instance.transform(current -> current.withAddedOrUpdated(ksm));
+
+        Collection<Mutation> mutations = SchemaKeyspace.convertSchemaDiffToMutations(r.diff, FBUtilities.timestampMicros());
+        ((DefaultSchemaUpdateHandler)Schema.instance.updateHandler).applyMutations(mutations);
+        // now as if a 2nd schema update is received with same data (ie same alter to 2 differnet nodes)
+        mutations = SchemaKeyspace.convertSchemaDiffToMutations(r.diff, FBUtilities.timestampMicros());
+        ((DefaultSchemaUpdateHandler)Schema.instance.updateHandler).applyMutations(mutations);
+        // schema should match the current digest
+        Assert.assertEquals(SchemaKeyspace.calculateSchemaDigest(), Schema.instance.getVersion());
+    }
+
 
     @Test
     public void testKeyspaceCreationWhenNotInitialized() {
