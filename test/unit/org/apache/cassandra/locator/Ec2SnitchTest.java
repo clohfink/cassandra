@@ -40,8 +40,7 @@ import org.mockito.stubbing.Answer;
 
 import static org.apache.cassandra.ServerTestUtils.cleanup;
 import static org.apache.cassandra.ServerTestUtils.mkdirs;
-import static org.apache.cassandra.locator.Ec2MultiRegionSnitch.PRIVATE_IP_QUERY;
-import static org.apache.cassandra.locator.Ec2MultiRegionSnitch.PUBLIC_IP_QUERY;
+import static org.apache.cassandra.locator.Ec2MultiRegionSnitch.PUBLIC_IP_QUERY_URL;
 import static org.apache.cassandra.locator.Ec2Snitch.EC2_NAMING_LEGACY;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -95,7 +94,7 @@ public class Ec2SnitchTest
         Ec2MetadataServiceConnector multiRegionConnectorMock = mock(Ec2MetadataServiceConnector.class);
         when(multiRegionConnectorMock.apiCall(anyString())).then((Answer<String>) invocation -> {
             String query = invocation.getArgument(0);
-            return (PUBLIC_IP_QUERY.equals(query) || PRIVATE_IP_QUERY.equals(query)) ? "127.0.0.1" : "us-east-1d";
+            return (PUBLIC_IP_QUERY_URL.equals(query) || PUBLIC_IP_QUERY_URL.equals(query)) ? "127.0.0.1" : "us-east-1d";
         });
 
         Ec2Snitch snitch = new Ec2MultiRegionSnitch(legacySnitchProps, multiRegionConnectorMock);
@@ -116,7 +115,7 @@ public class Ec2SnitchTest
         Ec2MetadataServiceConnector multiRegionConnectorMock = mock(Ec2MetadataServiceConnector.class);
         when(multiRegionConnectorMock.apiCall(anyString())).then((Answer<String>) invocation -> {
             String query = invocation.getArgument(0);
-            return (PUBLIC_IP_QUERY.equals(query) || PRIVATE_IP_QUERY.equals(query)) ? "127.0.0.1" : "us-east-2d";
+            return (PUBLIC_IP_QUERY_URL.equals(query) || PUBLIC_IP_QUERY_URL.equals(query)) ? "127.0.0.1" : "us-east-2d";
         });
 
         testLegacyNewRegionsInternal(new Ec2MultiRegionSnitch(legacySnitchProps, multiRegionConnectorMock));
@@ -138,7 +137,7 @@ public class Ec2SnitchTest
         Ec2MetadataServiceConnector multiRegionConnectorMock = mock(Ec2MetadataServiceConnector.class);
         when(multiRegionConnectorMock.apiCall(anyString())).then((Answer<String>) invocation -> {
             String query = invocation.getArgument(0);
-            return (PUBLIC_IP_QUERY.equals(query) || PRIVATE_IP_QUERY.equals(query)) ? "127.0.0.1" : "us-east-2d";
+            return (PUBLIC_IP_QUERY_URL.equals(query) || PUBLIC_IP_QUERY_URL.equals(query)) ? "127.0.0.1" : "us-east-2d";
         });
 
         assertEquals("us-east-2", snitch.getDatacenter(local));

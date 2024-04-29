@@ -27,6 +27,7 @@ import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.gms.ApplicationState;
 import org.apache.cassandra.gms.Gossiper;
 import org.apache.cassandra.service.StorageService;
+import com.google.common.annotations.VisibleForTesting;
 
 /**
  * 1) Snitch will automatically set the public IP by querying the AWS API
@@ -41,29 +42,12 @@ import org.apache.cassandra.service.StorageService;
  */
 public class Ec2MultiRegionSnitch extends Ec2Snitch
 {
-//<<<<<<< HEAD
-      private static final String PUBLIC_IP_QUERY_URL = "/latest/meta-data/public-ipv4";
+      @VisibleForTesting
+      static final String PUBLIC_IP_QUERY_URL = "/latest/meta-data/public-ipv4";
       private final String localPrivateAddress;
-//=======
-//    @VisibleForTesting
-//    static final String PUBLIC_IP_QUERY = "/latest/meta-data/public-ipv4";
-//    @VisibleForTesting
-//    static final String PRIVATE_IP_QUERY = "/latest/meta-data/local-ipv4";
-//>>>>>>> e7c2a5c1cb2d2807e5bbdb688ed0c61df9b10440
-
 
     public Ec2MultiRegionSnitch() throws IOException, ConfigurationException
     {
-//<<<<<<< HEAD
-//        super();
-//        String publicIp = EC2MetadataUtils.getData(PUBLIC_IP_QUERY_URL);
-//        if (publicIp == null) {
-//            throw new IOException("Failed to obtain public ip");
-//        }
-//        InetAddress localPublicAddress = InetAddress.getByName(publicIp);
-//        logger.info("EC2Snitch using publicIP as identifier: {}", localPublicAddress);
-//        localPrivateAddress = EC2MetadataUtils.getPrivateIpAddress();
-//=======
         this(new SnitchProperties());
     }
 
@@ -82,7 +66,6 @@ public class Ec2MultiRegionSnitch extends Ec2Snitch
         InetAddress localPublicAddress = InetAddress.getByName(publicIp);
         logger.info("EC2Snitch using publicIP as identifier: {}", localPublicAddress);
         localPrivateAddress = EC2MetadataUtils.getPrivateIpAddress();
-//>>>>>>> e7c2a5c1cb2d2807e5bbdb688ed0c61df9b10440
         // use the Public IP to broadcast Address to other nodes.
         DatabaseDescriptor.setBroadcastAddress(localPublicAddress);
         if (DatabaseDescriptor.getBroadcastRpcAddress() == null)
