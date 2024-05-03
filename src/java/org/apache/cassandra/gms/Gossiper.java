@@ -2270,7 +2270,7 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
         Hasher hasher = Hashing.murmur3_32().newHasher();
         for (InetAddressAndPort endpoint : liveOwners)
         {
-            hasher.putUnencodedChars(endpoint.toString());
+            hasher.putUnencodedChars(endpoint.getHostAddress(false));
             List<Token> tokens = new ArrayList<>(StorageService.instance.getTokenMetadata().getTokens(endpoint));
             Collections.sort(tokens);
             for (Token token : tokens)
