@@ -25,12 +25,10 @@ import java.net.URL;
 import java.net.UnknownHostException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
-
 import javax.management.ObjectName;
 import javax.management.StandardMBean;
 import javax.management.remote.JMXConnectorServer;
@@ -50,7 +48,6 @@ import com.codahale.metrics.jvm.BufferPoolMetricSet;
 import com.codahale.metrics.jvm.FileDescriptorRatioGauge;
 import com.codahale.metrics.jvm.GarbageCollectorMetricSet;
 import com.codahale.metrics.jvm.MemoryUsageGaugeSet;
-
 import org.apache.cassandra.audit.AuditLogManager;
 import org.apache.cassandra.auth.AuthCacheService;
 import org.apache.cassandra.concurrent.ScheduledExecutors;
@@ -79,8 +76,8 @@ import org.apache.cassandra.schema.Schema;
 import org.apache.cassandra.schema.SchemaConstants;
 import org.apache.cassandra.schema.TableMetadata;
 import org.apache.cassandra.security.ThreadAwareSecurityManager;
-import org.apache.cassandra.streaming.StreamManager;
 import org.apache.cassandra.service.paxos.PaxosState;
+import org.apache.cassandra.streaming.StreamManager;
 import org.apache.cassandra.utils.FBUtilities;
 import org.apache.cassandra.utils.JMXServerUtils;
 import org.apache.cassandra.utils.JVMStabilityInspector;
@@ -541,7 +538,7 @@ public class CassandraDaemon
         //     the system keyspace location configured by the user (upgrade to 4.0)
         //  3) The system data are stored in the first data location and need to be moved to
         //     the system keyspace location configured by the user (system_data_file_directory has been configured)
-        Path target = Paths.get(DatabaseDescriptor.getLocalSystemKeyspacesDataFileLocations()[0]);
+        Path target = File.getPath(DatabaseDescriptor.getLocalSystemKeyspacesDataFileLocations()[0]);
 
         String[] nonLocalSystemKeyspacesFileLocations = DatabaseDescriptor.getNonLocalSystemKeyspacesDataFileLocations();
         String[] sources = DatabaseDescriptor.useSpecificLocationForLocalSystemData() ? nonLocalSystemKeyspacesFileLocations
@@ -551,7 +548,7 @@ public class CassandraDaemon
 
         for (String source : sources)
         {
-            Path dataFileLocation = Paths.get(source);
+            Path dataFileLocation = File.getPath(source);
 
             if (!Files.exists(dataFileLocation))
                 continue;
@@ -566,9 +563,7 @@ public class CassandraDaemon
                     try (Stream<Path> keyspaceChildren = Files.list(keyspaceDirectory))
                     {
                         Path[] tableDirectories = keyspaceChildren.filter(Files::isDirectory)
-                                                                  .filter(p -> !SystemKeyspace.TABLES_SPLIT_ACROSS_MULTIPLE_DISKS
-                                                                                              .contains(p.getFileName()
-                                                                                                         .toString()))
+                                                                  .filter(p -> SystemKeyspace.TABLES_SPLIT_ACROSS_MULTIPLE_DISKS.stream().noneMatch(t -> p.getFileName().toString().startsWith(t + '-')))
                                                                   .toArray(Path[]::new);
 
                         for (Path tableDirectory : tableDirectories)
@@ -679,7 +674,8 @@ public class CassandraDaemon
     {
         StartupClusterConnectivityChecker connectivityChecker = StartupClusterConnectivityChecker.create(DatabaseDescriptor.getBlockForPeersTimeoutInSeconds(),
                                                                                                          DatabaseDescriptor.getBlockForPeersInRemoteDatacenters());
-        connectivityChecker.execute(Gossiper.instance.getEndpoints(), DatabaseDescriptor.getEndpointSnitch()::getDatacenter);
+        connectivityChecker.execute(Gossiper.instance.getEndpoints(), DatabaseDescriptor.getEndpointSnitch()::getDatacenter,
+                                    Gossiper.instance::isUpgradingFromVersionLowerThan);
 
         // check to see if transports may start else return without starting.  This is needed when in survey mode or
         // when bootstrap has not completed.
@@ -701,10 +697,7 @@ public class CassandraDaemon
     {
         String nativeFlag = System.getProperty("cassandra.start_native_transport");
         if ((nativeFlag != null && Boolean.parseBoolean(nativeFlag)) || (nativeFlag == null && DatabaseDescriptor.startNativeTransport()))
-        {
             startNativeTransport();
-            StorageService.instance.setRpcReady(true);
-        }
         else
             logger.info("Not starting native transport as requested. Use JMX (StorageService->startNativeTransport()) or nodetool (enablebinary) to start it");
     }
@@ -851,13 +844,23 @@ public class CassandraDaemon
         if (nativeTransportService == null)
             throw new IllegalStateException("setup() must be called first for CassandraDaemon");
 
+        // this iterates over a collection of servers and returns true if one of them is started
+        boolean alreadyRunning = nativeTransportService.isRunning();
+
+        // this might in practice start all servers which are not started yet
         nativeTransportService.start();
+
+        // interact with gossip only in case if no server was started before to signal they are started now
+        if (!alreadyRunning)
+            StorageService.instance.setRpcReady(true);
     }
 
     public void stopNativeTransport()
     {
         if (nativeTransportService != null)
+        {
             nativeTransportService.stop();
+        }
     }
 
     public boolean isNativeTransportRunning()

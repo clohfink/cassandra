@@ -105,12 +105,6 @@ public class CompactionController extends AbstractCompactionController
             return;
         }
 
-        if (ignoreOverlaps())
-        {
-            logger.debug("not refreshing overlaps - running with ignoreOverlaps activated");
-            return;
-        }
-
         if (cfs.getNeverPurgeTombstones())
         {
             logger.debug("not refreshing overlaps for {}.{} - neverPurgeTombstones is enabled", cfs.keyspace.getName(), cfs.getTableName());
@@ -127,7 +121,7 @@ public class CompactionController extends AbstractCompactionController
         }
     }
 
-    private void refreshOverlaps()
+    void refreshOverlaps()
     {
         if (NEVER_PURGE_TOMBSTONES || cfs.getNeverPurgeTombstones())
             return;
@@ -135,7 +129,7 @@ public class CompactionController extends AbstractCompactionController
         if (this.overlappingSSTables != null)
             close();
 
-        if (compacting == null || ignoreOverlaps())
+        if (compacting == null)
             overlappingSSTables = Refs.tryRef(Collections.<SSTableReader>emptyList());
         else
             overlappingSSTables = cfs.getAndReferenceOverlappingLiveSSTables(compacting);
@@ -213,7 +207,10 @@ public class CompactionController extends AbstractCompactionController
         }
 
         for (Memtable memtable : cfStore.getTracker().getView().getAllMemtables())
-            minTimestamp = Math.min(minTimestamp, memtable.getMinTimestamp());
+        {
+            if (memtable.getMinTimestamp() != Memtable.NO_MIN_TIMESTAMP)
+                minTimestamp = Math.min(minTimestamp, memtable.getMinTimestamp());
+        }
 
         // At this point, minTimestamp denotes the lowest timestamp of any relevant
         // SSTable or Memtable that contains a constructive value. candidates contains all the
@@ -275,10 +272,13 @@ public class CompactionController extends AbstractCompactionController
 
         for (Memtable memtable : memtables)
         {
-            if (memtable.rowIterator(key) != null)
+            if (memtable.getMinTimestamp() != Memtable.NO_MIN_TIMESTAMP)
             {
-                minTimestampSeen = Math.min(minTimestampSeen, memtable.getMinTimestamp());
-                hasTimestamp = true;
+                if (memtable.rowIterator(key) != null)
+                {
+                    minTimestampSeen = Math.min(minTimestampSeen, memtable.getMinTimestamp());
+                    hasTimestamp = true;
+                }
             }
         }
 
@@ -344,6 +344,8 @@ public class CompactionController extends AbstractCompactionController
      * of this time range is fully expired before considering to drop the sstable.
      * This strategy can retain for a long time a lot of sstables on disk (see CASSANDRA-13418) so this option
      * control whether or not this check should be ignored.
+     *
+     * Do NOT call this method in the CompactionController constructor
      *
      * @return false by default
      */

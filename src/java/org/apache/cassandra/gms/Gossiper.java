@@ -48,6 +48,7 @@ import com.google.common.util.concurrent.Uninterruptibles;
 
 import org.apache.cassandra.concurrent.*;
 import org.apache.cassandra.concurrent.FutureTask;
+import org.apache.cassandra.config.CassandraRelevantProperties;
 import org.apache.cassandra.locator.InetAddressAndPort;
 import org.apache.cassandra.net.NoPayload;
 import org.apache.cassandra.net.Verb;
@@ -187,7 +188,9 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
      *
      * This property and anything that checks it should be removed in 5.0
      */
+
     private volatile boolean upgradeInProgressPossible = DatabaseDescriptor.isUpgradeFrom30Possible();
+    private volatile boolean hasNodeWithUnknownVersion = false;
 
     public void clearUnsafe()
     {
@@ -224,14 +227,17 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
         }
 
         // Check the release version of all the peers it heard of. Not necessary the peer that it has/had contacted with.
-        boolean allHostsHaveKnownVersion = true;
-        for (InetAddressAndPort host : endpointStateMap.keySet())
+        hasNodeWithUnknownVersion = false;
+        for (Entry<InetAddressAndPort, EndpointState> entry : endpointStateMap.entrySet())
         {
-            CassandraVersion version = getReleaseVersion(host);
+            CassandraVersion version = getReleaseVersion(entry.getKey());
 
+            // if it is dead state, we skip the version check
+            if (isDeadState(entry.getValue()))
+                continue;
             //Raced with changes to gossip state, wait until next iteration
             if (version == null)
-                allHostsHaveKnownVersion = false;
+                hasNodeWithUnknownVersion = true;
             else if (version.compareTo(minVersion) < 0)
                 minVersion = version;
         }
@@ -239,7 +245,7 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
         if (minVersion.compareTo(SystemKeyspace.CURRENT_VERSION) < 0)
             return new ExpiringMemoizingSupplier.Memoized<>(minVersion);
 
-        if (!allHostsHaveKnownVersion)
+        if (hasNodeWithUnknownVersion)
             return new ExpiringMemoizingSupplier.NotMemoized<>(minVersion);
 
         upgradeInProgressPossible = false;
@@ -307,7 +313,7 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
                     logger.trace("My heartbeat is now {}", endpointStateMap.get(FBUtilities.getBroadcastAddressAndPort()).getHeartBeatState().getHeartBeatVersion());
                 final List<GossipDigest> gDigests = new ArrayList<>();
 
-                Gossiper.instance.makeRandomGossipDigest(gDigests);
+                Gossiper.instance.makeGossipDigest(gDigests);
 
                 if (gDigests.size() > 0)
                 {
@@ -591,7 +597,7 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
     {
         checkProperThreadForStateMutation();
         EndpointState epState = endpointStateMap.get(endpoint);
-        if (epState == null)
+        if (epState == null || epState.isStateEmpty())
             return;
         VersionedValue shutdown = StorageService.instance.valueFactory.shutdown(true);
         epState.addApplicationState(ApplicationState.STATUS_WITH_PORT, shutdown);
@@ -731,29 +737,29 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
     }
 
     /**
-     * The gossip digest is built based on randomization
-     * rather than just looping through the collection of live endpoints.
-     *
-     * @param gDigests list of Gossip Digests.
+     * @param gDigests list of Gossip Digests to be filled
      */
-    private void makeRandomGossipDigest(List<GossipDigest> gDigests)
+    private void makeGossipDigest(List<GossipDigest> gDigests)
     {
         EndpointState epState;
-        int generation = 0;
-        int maxVersion = 0;
+        int generation;
+        int maxVersion;
 
         // local epstate will be part of endpointStateMap
-        List<InetAddressAndPort> endpoints = new ArrayList<>(endpointStateMap.keySet());
-        Collections.shuffle(endpoints, random);
-        for (InetAddressAndPort endpoint : endpoints)
+        for (Entry<InetAddressAndPort, EndpointState> entry : endpointStateMap.entrySet())
         {
-            epState = endpointStateMap.get(endpoint);
+            epState = entry.getValue();
             if (epState != null)
             {
                 generation = epState.getHeartBeatState().getGeneration();
                 maxVersion = getMaxEndpointStateVersion(epState);
             }
-            gDigests.add(new GossipDigest(endpoint, generation, maxVersion));
+            else
+            {
+                generation = 0;
+                maxVersion = 0;
+            }
+            gDigests.add(new GossipDigest(entry.getKey(), generation, maxVersion));
         }
 
         if (logger.isTraceEnabled())
@@ -1095,7 +1101,7 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
                             // to make sure that the previous read data was correct
                             logger.info("Race condition marking {} as a FatClient; ignoring", endpoint);
                             return;
-                        }                        
+                        }
                         removeEndpoint(endpoint); // will put it in justRemovedEndpoints to respect quarantine delay
                         evictFromMembership(endpoint); // can get rid of the state immediately
                     });
@@ -1139,6 +1145,14 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
     public EndpointState getEndpointStateForEndpoint(InetAddressAndPort ep)
     {
         return endpointStateMap.get(ep);
+    }
+
+    public EndpointState copyEndpointStateForEndpoint(InetAddressAndPort ep)
+    {
+        EndpointState epState = endpointStateMap.get(ep);
+        if (epState == null)
+            return null;
+        return new EndpointState(epState);
     }
 
     public ImmutableSet<InetAddressAndPort> getEndpoints()
@@ -1332,7 +1346,6 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
         logger.trace("Sending ECHO_REQ to {}", addr);
         RequestCallback echoHandler = msg ->
         {
-            // force processing of the echo response onto the gossip stage, as it comes in on the REQUEST_RESPONSE stage
             runInGossipStageBlocking(() -> realMarkAlive(addr, localState));
         };
 
@@ -1520,7 +1533,7 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
 
             EndpointState localEpStatePtr = endpointStateMap.get(ep);
             EndpointState remoteState = entry.getValue();
-            if (!hasMajorVersion3Nodes())
+            if (!hasMajorVersion3OrUnknownNodes())
                 remoteState.removeMajorVersion3LegacyApplicationStates();
 
             /*
@@ -1608,7 +1621,7 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
         localState.addApplicationStates(updatedStates);
 
         // get rid of legacy fields once the cluster is not in mixed mode
-        if (!hasMajorVersion3Nodes())
+        if (!hasMajorVersion3OrUnknownNodes())
             localState.removeMajorVersion3LegacyApplicationStates();
 
         // need to run STATUS or STATUS_WITH_PORT first to handle BOOT_REPLACE correctly (else won't be a member, so TOKENS won't be processed)
@@ -2319,9 +2332,9 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
         {
             return;
         }
-        final int GOSSIP_SETTLE_MIN_WAIT_MS = 5000;
-        final int GOSSIP_SETTLE_POLL_INTERVAL_MS = 1000;
-        final int GOSSIP_SETTLE_POLL_SUCCESSES_REQUIRED = 3;
+        final int GOSSIP_SETTLE_MIN_WAIT_MS = CassandraRelevantProperties.GOSSIP_SETTLE_MIN_WAIT_MS.getInt();
+        final int GOSSIP_SETTLE_POLL_INTERVAL_MS = CassandraRelevantProperties.GOSSIP_SETTLE_POLL_INTERVAL_MS.getInt();
+        final int GOSSIP_SETTLE_POLL_SUCCESSES_REQUIRED = CassandraRelevantProperties.GOSSIP_SETTLE_POLL_SUCCESSES_REQUIRED.getInt();
 
         logger.info("Waiting for gossip to settle...");
         Uninterruptibles.sleepUninterruptibly(GOSSIP_SETTLE_MIN_WAIT_MS, TimeUnit.MILLISECONDS);
@@ -2389,15 +2402,12 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
      * Returns {@code false} only if the information about the version of each node in the cluster is available and
      * ALL the nodes are on 4.0+ (regardless of the patch version).
      */
-    public boolean hasMajorVersion3Nodes()
+    public boolean hasMajorVersion3OrUnknownNodes()
     {
-        // this is quite obvious however if we discovered only nodes at current version so far (in particular only this node),
-        // but still there are nodes with unknown version, we also want to report that the cluster may have nodes at 3.x
-        return upgradeInProgressPossible &&
-                (isUpgradingFromVersionLowerThan(CassandraVersion.CASSANDRA_4_0) ||
-                 // this is counterintuitive but, it's checking for nodes with unknown version. this check
-                 // is improved in CASSANDRA-18999 (not merged yet)
-                 !isUpgradingFromVersionLowerThan(SystemKeyspace.CURRENT_VERSION.familyLowerBound.get()));
+        return upgradeInProgressPossible && (isUpgradingFromVersionLowerThan(CassandraVersion.CASSANDRA_4_0) || // this is quite obvious
+               // however if we discovered only nodes at current version so far (in particular only this node),
+               //hasNodeWithUnknownVersion but still there are nodes with unknown version, we also want to report that the cluster may have nodes at 3.x
+               hasNodeWithUnknownVersion);
     }
 
     /**
@@ -2552,7 +2562,7 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
         }
 
         final List<GossipDigest> gDigests = new ArrayList<GossipDigest>();
-        Gossiper.instance.makeRandomGossipDigest(gDigests);
+        Gossiper.instance.makeGossipDigest(gDigests);
 
         GossipDigestSyn digestSynMessage = new GossipDigestSyn(getClusterName(),
                 getPartitionerName(),

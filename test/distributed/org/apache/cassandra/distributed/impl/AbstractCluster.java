@@ -60,6 +60,7 @@ import org.junit.Assume;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import org.apache.cassandra.config.CassandraRelevantProperties;
 import org.apache.cassandra.db.ColumnFamilyStore;
 import org.apache.cassandra.db.Keyspace;
 import org.apache.cassandra.dht.IPartitioner;
@@ -154,6 +155,7 @@ public abstract class AbstractCluster<I extends IInstance> implements ICluster<I
     private final Map<Integer, NetworkTopology.DcAndRack> nodeIdTopology;
     private final Consumer<IInstanceConfig> configUpdater;
     private final int broadcastPort;
+    private final Map<String, Integer> portMap;
 
     // mutated by starting/stopping a node
     private final List<I> instances;
@@ -183,6 +185,15 @@ public abstract class AbstractCluster<I extends IInstance> implements ICluster<I
     {
         private INodeProvisionStrategy.Strategy nodeProvisionStrategy = INodeProvisionStrategy.Strategy.MultipleNetworkInterfaces;
         private ShutdownExecutor shutdownExecutor = DEFAULT_SHUTDOWN_EXECUTOR;
+        private boolean dynamicPortAllocation = false;
+
+        {
+            // Indicate that we are running in the in-jvm dtest environment
+            CassandraRelevantProperties.DTEST_IS_IN_JVM_DTEST.setBoolean(true);
+            // those properties may be set for unit-test optimizations; those should not be used when running dtests
+            CassandraRelevantProperties.FLUSH_LOCAL_SCHEMA_CHANGES.reset();
+            CassandraRelevantProperties.NON_GRACEFUL_SHUTDOWN.reset();
+        }
 
         public AbstractBuilder(Factory<I, C, B> factory)
         {
@@ -190,16 +201,38 @@ public abstract class AbstractCluster<I extends IInstance> implements ICluster<I
             withSharedClasses(SHARED_PREDICATE);
         }
 
+        @SuppressWarnings("unchecked")
+        private B self()
+        {
+            return (B) this;
+        }
+
         public B withNodeProvisionStrategy(INodeProvisionStrategy.Strategy nodeProvisionStrategy)
         {
             this.nodeProvisionStrategy = nodeProvisionStrategy;
-            return (B) this;
+            return self();
         }
 
         public B withShutdownExecutor(ShutdownExecutor shutdownExecutor)
         {
             this.shutdownExecutor = shutdownExecutor;
-            return (B) this;
+            return self();
+        }
+
+        /**
+         * When {@code dynamicPortAllocation} is {@code true}, it will ask {@link INodeProvisionStrategy} to provision
+         * available storage, native and JMX ports in the given interface. When {@code dynamicPortAllocation} is
+         * {@code false} (the default behavior), it will use statically allocated ports based on the number of
+         * interfaces available and the node number.
+         *
+         * @param dynamicPortAllocation {@code true} for dynamic port allocation, {@code false} for static port
+         *                              allocation
+         * @return a reference to this Builder
+         */
+        public B withDynamicPortAllocation(boolean dynamicPortAllocation)
+        {
+            this.dynamicPortAllocation = dynamicPortAllocation;
+            return self();
         }
 
         @Override
@@ -529,6 +562,7 @@ public abstract class AbstractCluster<I extends IInstance> implements ICluster<I
         this.filters = new MessageFilters();
         this.instanceInitializer = builder.getInstanceInitializer2();
         this.datadirCount = builder.getDatadirCount();
+        this.portMap = builder.dynamicPortAllocation ? new ConcurrentHashMap<>() : null;
 
         for (int i = 0; i < builder.getNodeCount(); ++i)
         {
@@ -552,7 +586,7 @@ public abstract class AbstractCluster<I extends IInstance> implements ICluster<I
     @VisibleForTesting
     InstanceConfig createInstanceConfig(int nodeNum)
     {
-        INodeProvisionStrategy provisionStrategy = nodeProvisionStrategy.create(subnet);
+        INodeProvisionStrategy provisionStrategy = nodeProvisionStrategy.create(subnet, portMap);
         Collection<String> tokens = tokenSupplier.tokens(nodeNum);
         NetworkTopology topology = buildNetworkTopology(provisionStrategy, nodeIdTopology);
         InstanceConfig config = InstanceConfig.generate(nodeNum, provisionStrategy, topology, root, tokens, datadirCount);
@@ -654,6 +688,16 @@ public abstract class AbstractCluster<I extends IInstance> implements ICluster<I
     public I get(InetSocketAddress addr)
     {
         return instanceMap.get(addr);
+    }
+
+    public List<I> get(int... nodes)
+    {
+        if (nodes == null || nodes.length == 0)
+            throw new IllegalArgumentException("No nodes provided");
+        List<I> list = new ArrayList<>(nodes.length);
+        for (int i : nodes)
+            list.add(get(i));
+        return list;
     }
 
     public I getFirstRunningInstance()
@@ -805,8 +849,13 @@ public abstract class AbstractCluster<I extends IInstance> implements ICluster<I
 
     public void schemaChange(String query, boolean ignoreStoppedInstances, I instance)
     {
+        schemaChange(query, ignoreStoppedInstances, instance, SchemaChangeMonitor.DEFAULT_WAIT_SECONDS, TimeUnit.SECONDS);
+    }
+
+    public void schemaChange(String query, boolean ignoreStoppedInstances, I instance, int waitSchemaAgreementAmount, TimeUnit unit)
+    {
         instance.sync(() -> {
-            try (SchemaChangeMonitor monitor = new SchemaChangeMonitor())
+            try (SchemaChangeMonitor monitor = new SchemaChangeMonitor(waitSchemaAgreementAmount, unit))
             {
                 if (ignoreStoppedInstances)
                     monitor.ignoreStoppedInstances();
@@ -918,9 +967,17 @@ public abstract class AbstractCluster<I extends IInstance> implements ICluster<I
      */
     public class SchemaChangeMonitor extends ChangeMonitor
     {
+        // See CASSANDRA-18707
+        static final public int DEFAULT_WAIT_SECONDS = 120;
+
         public SchemaChangeMonitor()
         {
-            super(70, TimeUnit.SECONDS);
+            super(DEFAULT_WAIT_SECONDS, TimeUnit.SECONDS);
+        }
+
+        public SchemaChangeMonitor(int waitAmount, TimeUnit unit)
+        {
+            super(waitAmount, unit);
         }
 
         protected IListen.Cancel startPolling(IInstance instance)
@@ -1319,4 +1376,3 @@ public abstract class AbstractCluster<I extends IInstance> implements ICluster<I
         INSTANCE;
     }
 }
-

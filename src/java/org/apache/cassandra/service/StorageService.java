@@ -25,10 +25,26 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.UnknownHostException;
 import java.nio.ByteBuffer;
-import java.nio.file.Paths;
 import java.time.Instant;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.EnumMap;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.Map.Entry;
+import java.util.Optional;
+import java.util.Scanner;
+import java.util.Set;
+import java.util.SortedMap;
+import java.util.TreeMap;
+import java.util.TreeSet;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutionException;
@@ -43,9 +59,8 @@ import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
-
 import javax.annotation.Nullable;
-import javax.management.*;
+import javax.management.NotificationBroadcasterSupport;
 import javax.management.openmbean.CompositeData;
 import javax.management.openmbean.OpenDataException;
 import javax.management.openmbean.TabularData;
@@ -56,6 +71,7 @@ import com.google.common.base.Joiner;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Predicate;
 import com.google.common.base.Predicates;
+
 import com.google.common.collect.*;
 import com.google.common.util.concurrent.*;
 
@@ -74,7 +90,6 @@ import org.apache.cassandra.io.util.File;
 import org.apache.cassandra.locator.ReplicaCollection.Builder.Conflict;
 import org.apache.cassandra.schema.*;
 import org.apache.cassandra.service.disk.usage.DiskUsageBroadcaster;
-import org.apache.cassandra.service.snapshot.SnapshotLoader;
 import org.apache.cassandra.utils.concurrent.Future;
 import org.apache.cassandra.utils.concurrent.FutureCombiner;
 import org.apache.cassandra.utils.concurrent.ImmediateFuture;
@@ -85,53 +100,119 @@ import org.slf4j.LoggerFactory;
 import org.apache.cassandra.audit.AuditLogManager;
 import org.apache.cassandra.audit.AuditLogOptions;
 import org.apache.cassandra.auth.AuthCacheService;
-import org.apache.cassandra.config.Config.PaxosStatePurging;
-import org.apache.cassandra.service.paxos.*;
-import org.apache.cassandra.service.paxos.cleanup.*;
-import org.apache.cassandra.utils.progress.ProgressListener;
 import org.apache.cassandra.auth.AuthKeyspace;
 import org.apache.cassandra.auth.AuthSchemaChangeListener;
 import org.apache.cassandra.batchlog.BatchlogManager;
+import org.apache.cassandra.concurrent.ExecutorLocals;
+import org.apache.cassandra.concurrent.FutureTask;
+import org.apache.cassandra.concurrent.FutureTaskWithResources;
+import org.apache.cassandra.concurrent.NamedThreadFactory;
+import org.apache.cassandra.concurrent.ScheduledExecutors;
+import org.apache.cassandra.concurrent.Stage;
 import org.apache.cassandra.config.Config;
+import org.apache.cassandra.config.Config.PaxosStatePurging;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.config.DurationSpec;
 import org.apache.cassandra.cql3.QueryProcessor;
-import org.apache.cassandra.db.*;
+import org.apache.cassandra.db.ColumnFamilyStore;
+import org.apache.cassandra.db.DecoratedKey;
+import org.apache.cassandra.db.Keyspace;
+import org.apache.cassandra.db.SizeEstimatesRecorder;
+import org.apache.cassandra.db.SnapshotDetailsTabularData;
+import org.apache.cassandra.db.SystemKeyspace;
 import org.apache.cassandra.db.commitlog.CommitLog;
 import org.apache.cassandra.db.compaction.CompactionManager;
 import org.apache.cassandra.db.compaction.Verifier;
 import org.apache.cassandra.db.lifecycle.LifecycleTransaction;
 import org.apache.cassandra.db.virtual.VirtualKeyspaceRegistry;
-import org.apache.cassandra.dht.*;
+import org.apache.cassandra.dht.BootStrapper;
+import org.apache.cassandra.dht.IPartitioner;
 import org.apache.cassandra.dht.Range;
+import org.apache.cassandra.dht.RangeStreamer;
+import org.apache.cassandra.dht.StreamStateStore;
+import org.apache.cassandra.dht.Token;
 import org.apache.cassandra.dht.Token.TokenFactory;
-import org.apache.cassandra.exceptions.*;
-import org.apache.cassandra.gms.*;
+import org.apache.cassandra.exceptions.ConfigurationException;
+import org.apache.cassandra.exceptions.InvalidRequestException;
+import org.apache.cassandra.exceptions.UnavailableException;
+import org.apache.cassandra.gms.ApplicationState;
+import org.apache.cassandra.gms.EndpointState;
+import org.apache.cassandra.gms.FailureDetector;
+import org.apache.cassandra.gms.Gossiper;
+import org.apache.cassandra.gms.IEndpointStateChangeSubscriber;
+import org.apache.cassandra.gms.IFailureDetector;
+import org.apache.cassandra.gms.TokenSerializer;
+import org.apache.cassandra.gms.VersionedValue;
 import org.apache.cassandra.hints.HintsService;
 import org.apache.cassandra.io.sstable.SSTableLoader;
 import org.apache.cassandra.io.sstable.format.SSTableFormat;
 import org.apache.cassandra.io.sstable.format.VersionAndType;
 import org.apache.cassandra.io.util.FileUtils;
 import org.apache.cassandra.io.util.PathUtils;
-import org.apache.cassandra.locator.*;
+import org.apache.cassandra.locator.AbstractReplicationStrategy;
+import org.apache.cassandra.locator.DynamicEndpointSnitch;
+import org.apache.cassandra.locator.EndpointsByRange;
+import org.apache.cassandra.locator.EndpointsByReplica;
+import org.apache.cassandra.locator.EndpointsForRange;
+import org.apache.cassandra.locator.EndpointsForToken;
+import org.apache.cassandra.locator.IEndpointSnitch;
+import org.apache.cassandra.locator.InetAddressAndPort;
+import org.apache.cassandra.locator.LocalStrategy;
+import org.apache.cassandra.locator.NetworkTopologyStrategy;
+import org.apache.cassandra.locator.RangesAtEndpoint;
+import org.apache.cassandra.locator.RangesByEndpoint;
+import org.apache.cassandra.locator.Replica;
+import org.apache.cassandra.locator.Replicas;
+import org.apache.cassandra.locator.SystemReplicas;
+import org.apache.cassandra.locator.TokenMetadata;
 import org.apache.cassandra.metrics.StorageMetrics;
-import org.apache.cassandra.net.*;
-import org.apache.cassandra.repair.*;
+import org.apache.cassandra.net.AsyncOneResponse;
+import org.apache.cassandra.net.Message;
+import org.apache.cassandra.net.MessagingService;
+import org.apache.cassandra.repair.RepairRunnable;
 import org.apache.cassandra.repair.messages.RepairOption;
 import org.apache.cassandra.schema.CompactionParams.TombstoneOption;
+import org.apache.cassandra.schema.KeyspaceMetadata;
+import org.apache.cassandra.schema.Keyspaces;
+import org.apache.cassandra.schema.ReplicationParams;
+import org.apache.cassandra.schema.Schema;
+import org.apache.cassandra.schema.SchemaConstants;
+import org.apache.cassandra.schema.SchemaTransformations;
+import org.apache.cassandra.schema.SystemDistributedKeyspace;
+import org.apache.cassandra.schema.TableId;
+import org.apache.cassandra.schema.TableMetadata;
+import org.apache.cassandra.schema.TableMetadataRef;
+import org.apache.cassandra.schema.ViewMetadata;
+import org.apache.cassandra.service.paxos.Paxos;
+import org.apache.cassandra.service.paxos.PaxosCommit;
+import org.apache.cassandra.service.paxos.PaxosRepair;
+import org.apache.cassandra.service.paxos.PaxosState;
+import org.apache.cassandra.service.paxos.cleanup.PaxosCleanupLocalCoordinator;
+import org.apache.cassandra.service.paxos.cleanup.PaxosTableRepairs;
 import org.apache.cassandra.service.snapshot.SnapshotManager;
 import org.apache.cassandra.service.snapshot.TableSnapshot;
-import org.apache.cassandra.net.AsyncOneResponse;
-import org.apache.cassandra.net.MessagingService;
-import org.apache.cassandra.streaming.*;
+import org.apache.cassandra.streaming.StreamManager;
+import org.apache.cassandra.streaming.StreamOperation;
+import org.apache.cassandra.streaming.StreamPlan;
+import org.apache.cassandra.streaming.StreamResultFuture;
+import org.apache.cassandra.streaming.StreamState;
 import org.apache.cassandra.tracing.TraceKeyspace;
 import org.apache.cassandra.transport.ClientResourceLimits;
 import org.apache.cassandra.transport.ProtocolVersion;
-import org.apache.cassandra.utils.*;
+import org.apache.cassandra.utils.ExecutorUtils;
+import org.apache.cassandra.utils.FBUtilities;
+import org.apache.cassandra.utils.JVMStabilityInspector;
+import org.apache.cassandra.utils.MBeanWrapper;
+import org.apache.cassandra.utils.MD5Digest;
+import org.apache.cassandra.utils.OutputHandler;
+import org.apache.cassandra.utils.Pair;
+import org.apache.cassandra.utils.Throwables;
+import org.apache.cassandra.utils.WrappedRunnable;
 import org.apache.cassandra.utils.concurrent.UncheckedInterruptedException;
 import org.apache.cassandra.utils.logging.LoggingSupportFactory;
 import org.apache.cassandra.utils.progress.ProgressEvent;
 import org.apache.cassandra.utils.progress.ProgressEventType;
+import org.apache.cassandra.utils.progress.ProgressListener;
 import org.apache.cassandra.utils.progress.jmx.JMXBroadcastExecutor;
 import org.apache.cassandra.utils.progress.jmx.JMXProgressSupport;
 
@@ -139,8 +220,8 @@ import static com.google.common.collect.Iterables.transform;
 import static com.google.common.collect.Iterables.tryFind;
 import static java.util.Arrays.asList;
 import static java.util.Arrays.stream;
-import static java.util.concurrent.TimeUnit.MINUTES;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
+import static java.util.concurrent.TimeUnit.MINUTES;
 import static java.util.concurrent.TimeUnit.NANOSECONDS;
 import static java.util.concurrent.TimeUnit.SECONDS;
 import static java.util.stream.Collectors.toList;
@@ -153,9 +234,11 @@ import static org.apache.cassandra.index.SecondaryIndexManager.getIndexName;
 import static org.apache.cassandra.index.SecondaryIndexManager.isIndexColumnFamily;
 import static org.apache.cassandra.net.NoPayload.noPayload;
 import static org.apache.cassandra.net.Verb.REPLICATION_DONE_REQ;
-import static org.apache.cassandra.service.ActiveRepairService.*;
+import static org.apache.cassandra.service.ActiveRepairService.ParentRepairStatus;
+import static org.apache.cassandra.service.ActiveRepairService.repairCommandExecutor;
 import static org.apache.cassandra.utils.Clock.Global.currentTimeMillis;
 import static org.apache.cassandra.utils.Clock.Global.nanoTime;
+import static org.apache.cassandra.utils.FBUtilities.getBroadcastAddressAndPort;
 import static org.apache.cassandra.utils.FBUtilities.now;
 
 /**
@@ -1032,8 +1115,14 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
             DiskUsageBroadcaster.instance.startBroadcasting();
             HintsService.instance.startDispatch();
             BatchlogManager.instance.start();
-            snapshotManager.start();
+            startSnapshotManager();
         }
+    }
+
+    @VisibleForTesting
+    public void startSnapshotManager()
+    {
+        snapshotManager.start();
     }
 
     public void waitForSchema(long schemaTimeoutMillis, long ringTimeoutMillis)
@@ -1202,7 +1291,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
     private void executePreJoinTasks(boolean bootstrap)
     {
         StreamSupport.stream(ColumnFamilyStore.all().spliterator(), false)
-                .filter(cfs -> Schema.instance.getUserKeyspaces().names().contains(cfs.keyspace.getName()))
+                .filter(cfs -> Schema.instance.getUserKeyspaces().contains(cfs.keyspace.getName()))
                 .forEach(cfs -> cfs.indexManager.executePreJoinTasksBlocking(bootstrap));
     }
 
@@ -1270,6 +1359,22 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
 
     public void rebuild(String sourceDc, String keyspace, String tokens, String specificSources)
     {
+        if (sourceDc != null)
+        {
+            TokenMetadata.Topology topology = getTokenMetadata().cloneOnlyTokenMap().getTopology();
+            Set<String> availableDCs = topology.getDatacenterEndpoints().keySet();
+            if (!availableDCs.contains(sourceDc))
+            {
+                throw new IllegalArgumentException(String.format("Provided datacenter '%s' is not a valid datacenter, available datacenters are: %s",
+                                                                 sourceDc, String.join(",", availableDCs)));
+            }
+        }
+
+        if (keyspace == null && tokens != null)
+        {
+            throw new IllegalArgumentException("Cannot specify tokens without keyspace.");
+        }
+
         // check ongoing rebuild
         if (!isRebuilding.compareAndSet(false, true))
         {
@@ -1278,12 +1383,6 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
 
         try
         {
-            // check the arguments
-            if (keyspace == null && tokens != null)
-            {
-                throw new IllegalArgumentException("Cannot specify tokens without keyspace.");
-            }
-
             logger.info("rebuild from dc: {}, {}, {}", sourceDc == null ? "(any dc)" : sourceDc,
                         keyspace == null ? "(All keyspaces)" : keyspace,
                         tokens == null ? "(All tokens)" : tokens);
@@ -1304,7 +1403,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
 
             if (keyspace == null)
             {
-                for (String keyspaceName : Schema.instance.getNonLocalStrategyKeyspaces().names())
+                for (String keyspaceName : Schema.instance.distributedKeyspaces().names())
                     streamer.addRanges(keyspaceName, getLocalReplicas(keyspaceName));
             }
             else if (tokens == null)
@@ -1971,7 +2070,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
      * All MVs have been created during bootstrap, so mark them as built
      */
     private void markViewsAsBuilt() {
-        for (String keyspace : Schema.instance.getUserKeyspaces().names())
+        for (String keyspace : Schema.instance.getUserKeyspaces())
         {
             for (ViewMetadata view: Schema.instance.getKeyspaceMetadata(keyspace).views)
                 SystemKeyspace.finishViewBuildStatus(view.keyspace(), view.name());
@@ -2201,7 +2300,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
         // some people just want to get a visual representation of things. Allow null and set it to the first
         // non-system keyspace.
         if (keyspace == null)
-            keyspace = Schema.instance.getNonLocalStrategyKeyspaces().iterator().next().name;
+            keyspace = Schema.instance.distributedKeyspaces().iterator().next().name;
 
         Map<List<String>, List<String>> map = new HashMap<>();
         for (Map.Entry<Range<Token>, EndpointsForRange> entry : tokenMetadata.getPendingRangesMM(keyspace).asMap().entrySet())
@@ -2255,7 +2354,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
         // some people just want to get a visual representation of things. Allow null and set it to the first
         // non-system keyspace.
         if (keyspace == null)
-            keyspace = Schema.instance.getNonLocalStrategyKeyspaces().iterator().next().name;
+            keyspace = Schema.instance.distributedKeyspaces().iterator().next().name;
 
         List<Range<Token>> ranges = getAllRanges(sortedTokens);
         return constructRangeToEndpointMap(keyspace, ranges);
@@ -2368,12 +2467,21 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
 
     public String getLocalHostId()
     {
-        return getTokenMetadata().getHostId(FBUtilities.getBroadcastAddressAndPort()).toString();
+        UUID id = getLocalHostUUID();
+        return id != null ? id.toString() : null;
     }
 
     public UUID getLocalHostUUID()
     {
-        return getTokenMetadata().getHostId(FBUtilities.getBroadcastAddressAndPort());
+        UUID id = getTokenMetadata().getHostId(FBUtilities.getBroadcastAddressAndPort());
+        if (id != null)
+            return id;
+        // this condition is to prevent accessing the tables when the node is not started yet, and in particular,
+        // when it is not going to be started at all (e.g. when running some unit tests or client tools).
+        else if ((DatabaseDescriptor.isDaemonInitialized() || DatabaseDescriptor.isToolInitialized()) && CommitLog.instance.isStarted())
+            return SystemKeyspace.getLocalHostId();
+
+        return null;
     }
 
     public Map<String, String> getHostIdMap()
@@ -3350,7 +3458,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
 
         InetAddressAndPort myAddress = FBUtilities.getBroadcastAddressAndPort();
 
-        for (String keyspaceName : Schema.instance.getNonLocalStrategyKeyspaces().names())
+        for (String keyspaceName : Schema.instance.distributedKeyspaces().names())
         {
             logger.debug("Restoring replica count for keyspace {}", keyspaceName);
             EndpointsByReplica changedReplicas = getChangedReplicasForLeaving(keyspaceName, endpoint, tokenMetadata, Keyspace.open(keyspaceName).getReplicationStrategy());
@@ -3792,6 +3900,9 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
         if (SchemaConstants.isLocalSystemKeyspace(keyspaceName))
             throw new RuntimeException("Cleanup of the system keyspace is neither necessary nor wise");
 
+        if (tokenMetadata.getPendingRanges(keyspaceName, getBroadcastAddressAndPort()).size() > 0)
+            throw new RuntimeException("Node is involved in cluster membership changes. Not safe to run cleanup.");
+
         CompactionManager.AllSSTableOpStatus status = CompactionManager.AllSSTableOpStatus.SUCCESSFUL;
         for (ColumnFamilyStore cfStore : getValidColumnFamilies(false, false, keyspaceName, tables))
         {
@@ -4013,7 +4124,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
 
     public void setAllRepairedAt(long timestamp) throws IOException
     {
-        for (KeyspaceMetadata keyspace : Schema.instance.getNonLocalStrategyKeyspaces())
+        for (KeyspaceMetadata keyspace : Schema.instance.distributedKeyspaces())
         {
             Keyspace ks = Keyspace.open(keyspace.name);
             if (ks.getReplicationStrategy().getReplicationFactor().allReplicas >= 2 && !keyspace.isVirtual())
@@ -4268,10 +4379,9 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
     {
         boolean skipExpiring = options != null && Boolean.parseBoolean(options.getOrDefault("no_ttl", "false"));
 
-        SnapshotLoader loader = new SnapshotLoader();
         Map<String, TabularData> snapshotMap = new HashMap<>();
 
-        for (TableSnapshot snapshot : loader.loadSnapshots())
+        for (TableSnapshot snapshot : snapshotManager.loadSnapshots())
         {
             if (skipExpiring && snapshot.isExpiring())
                 continue;
@@ -4545,7 +4655,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
 
         List<Future<?>> futures = new ArrayList<>();
 
-        Keyspaces keyspaces = Schema.instance.getNonLocalStrategyKeyspaces();
+        Keyspaces keyspaces = Schema.instance.distributedKeyspaces();
         for (String ksName : keyspaces.names())
         {
             if (SchemaConstants.REPLICATED_SYSTEM_KEYSPACE_NAMES.contains(ksName))
@@ -4896,7 +5006,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
             if (operationMode != Mode.LEAVING) // If we're already decommissioning there is no point checking RF/pending ranges
             {
                 int rf, numNodes;
-                for (String keyspaceName : Schema.instance.getNonLocalStrategyKeyspaces().names())
+                for (String keyspaceName : Schema.instance.distributedKeyspaces().names())
                 {
                     if (!force)
                     {
@@ -4984,7 +5094,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
     {
         Map<String, EndpointsByReplica> rangesToStream = new HashMap<>();
 
-        for (String keyspaceName : Schema.instance.getNonLocalStrategyKeyspaces().names())
+        for (String keyspaceName : Schema.instance.distributedKeyspaces().names())
         {
             EndpointsByReplica rangesMM = getChangedReplicasForLeaving(keyspaceName, FBUtilities.getBroadcastAddressAndPort(), tokenMetadata, Keyspace.open(keyspaceName).getReplicationStrategy());
 
@@ -5098,7 +5208,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
             throw new UnsupportedOperationException("This node has more than one token and cannot be moved thusly.");
         }
 
-        List<String> keyspacesToProcess = ImmutableList.copyOf(Schema.instance.getNonLocalStrategyKeyspaces().names());
+        List<String> keyspacesToProcess = ImmutableList.copyOf(Schema.instance.distributedKeyspaces().names());
 
         PendingRangeCalculatorService.instance.blockUntilFinished();
         // checking if data is moving to this node
@@ -5245,7 +5355,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
         Collection<Token> tokens = tokenMetadata.getTokens(endpoint);
 
         // Find the endpoints that are going to become responsible for data
-        for (String keyspaceName : Schema.instance.getNonLocalStrategyKeyspaces().names())
+        for (String keyspaceName : Schema.instance.distributedKeyspaces().names())
         {
             // if the replication factor is 1 the data is lost so we shouldn't wait for confirmation
             if (Keyspace.open(keyspaceName).getReplicationStrategy().getReplicationFactor().allReplicas == 1)
@@ -5429,12 +5539,12 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
 
             // count CFs first, since forceFlush could block for the flushWriter to get a queue slot empty
             totalCFs = 0;
-            for (Keyspace keyspace : Keyspace.nonSystem())
+            for (Keyspace keyspace : Keyspace.nonLocalStrategy())
                 totalCFs += keyspace.getColumnFamilyStores().size();
             remainingCFs = totalCFs;
             // flush
             List<Future<?>> flushes = new ArrayList<>();
-            for (Keyspace keyspace : Keyspace.nonSystem())
+            for (Keyspace keyspace : Keyspace.nonLocalStrategy())
             {
                 for (ColumnFamilyStore cfs : keyspace.getColumnFamilyStores())
                     flushes.add(cfs.forceFlush(ColumnFamilyStore.FlushReason.DRAIN));
@@ -5678,9 +5788,9 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
         }
         else
         {
-            Collection<String> userKeyspaces = Schema.instance.getUserKeyspaces().names();
+            Collection<String> userKeyspaces = Schema.instance.getUserKeyspaces();
 
-            if (userKeyspaces.size() > 0)
+            if (!userKeyspaces.isEmpty())
             {
                 keyspace = userKeyspaces.iterator().next();
                 AbstractReplicationStrategy replicationStrategy = Schema.instance.getKeyspaceInstance(keyspace).getReplicationStrategy();
@@ -5749,7 +5859,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
 
     public List<String> getKeyspaces()
     {
-        return Lists.newArrayList(Schema.instance.distributedAndLocalKeyspaces().names());
+        return Lists.newArrayList(Schema.instance.getKeyspaces());
     }
 
     public List<String> getNonSystemKeyspaces()
@@ -5759,7 +5869,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
 
     public List<String> getNonLocalStrategyKeyspaces()
     {
-        return Lists.newArrayList(Schema.instance.getNonLocalStrategyKeyspaces().names());
+        return Lists.newArrayList(Schema.instance.distributedKeyspaces().names());
     }
 
     public Map<String, String> getViewBuildStatuses(String keyspace, String view, boolean withPort)
@@ -6333,7 +6443,11 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
                                String includedUsers, String excludedUsers, Integer maxArchiveRetries, Boolean block, String rollCycle,
                                Long maxLogSize, Integer maxQueueWeight, String archiveCommand) throws IllegalStateException
     {
-        final AuditLogOptions options = new AuditLogOptions.Builder(DatabaseDescriptor.getAuditLoggingOptions())
+        AuditLogOptions auditOptions = DatabaseDescriptor.getAuditLoggingOptions();
+        if (archiveCommand != null && !auditOptions.allow_nodetool_archive_command)
+            throw new ConfigurationException("Can't enable audit log archiving via nodetool unless audit_logging_options.allow_nodetool_archive_command is set to true");
+
+        final AuditLogOptions options = new AuditLogOptions.Builder(auditOptions)
                                         .withEnabled(true)
                                         .withLogger(loggerName, parameters)
                                         .withIncludedKeyspaces(includedKeyspaces)
@@ -6436,11 +6550,13 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
         blocking = blocking != null ? blocking : fqlOptions.block;
         maxQueueWeight = maxQueueWeight != Integer.MIN_VALUE ? maxQueueWeight : fqlOptions.max_queue_weight;
         maxLogSize = maxLogSize != Long.MIN_VALUE ? maxLogSize : fqlOptions.max_log_size;
+        if (archiveCommand != null && !fqlOptions.allow_nodetool_archive_command)
+            throw new ConfigurationException("Can't enable full query log archiving via nodetool unless full_query_logging_options.allow_nodetool_archive_command is set to true");
         archiveCommand = archiveCommand != null ? archiveCommand : fqlOptions.archive_command;
         maxArchiveRetries = maxArchiveRetries != Integer.MIN_VALUE ? maxArchiveRetries : fqlOptions.max_archive_retries;
 
         Preconditions.checkNotNull(path, "cassandra.yaml did not set log_dir and not set as parameter");
-        FullQueryLogger.instance.enableWithoutClean(Paths.get(path), rollCycle, blocking, maxQueueWeight, maxLogSize, archiveCommand, maxArchiveRetries);
+        FullQueryLogger.instance.enableWithoutClean(File.getPath(path), rollCycle, blocking, maxQueueWeight, maxLogSize, archiveCommand, maxArchiveRetries);
     }
 
     @Override

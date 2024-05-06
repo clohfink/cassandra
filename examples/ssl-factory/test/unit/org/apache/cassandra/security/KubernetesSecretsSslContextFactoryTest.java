@@ -38,7 +38,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import org.apache.cassandra.config.EncryptionOptions;
-import org.apache.cassandra.io.util.PathUtils;
+import org.apache.cassandra.io.util.File;
 
 import static org.apache.cassandra.security.KubernetesSecretsSslContextFactory.ConfigKeys.KEYSTORE_PASSWORD_ENV_VAR;
 import static org.apache.cassandra.security.KubernetesSecretsSslContextFactory.ConfigKeys.KEYSTORE_UPDATED_TIMESTAMP_PATH;
@@ -64,7 +64,7 @@ public class KubernetesSecretsSslContextFactoryTest
     private static void deleteFileIfExists(String file)
     {
         Path filePath = Paths.get(file);
-        boolean deleted = PathUtils.tryDelete(filePath);
+        boolean deleted = new File(filePath).toJavaIOFile().delete();
         if (!deleted)
         {
             logger.warn("File {} could not be deleted.", filePath);
@@ -155,6 +155,8 @@ public class KubernetesSecretsSslContextFactoryTest
         Map<String, Object> config = new HashMap<>();
         config.putAll(commonConfig);
         config.put(KEYSTORE_PATH, "/this/is/probably/not/a/file/on/your/test/machine");
+        config.put(KEYSTORE_PASSWORD_ENV_VAR, "MY_KEYSTORE_PASSWORD");
+        config.put("MY_KEYSTORE_PASSWORD","ThisWontMatter");
 
         KubernetesSecretsSslContextFactory kubernetesSecretsSslContextFactory = new KubernetesSecretsSslContextFactoryForTestOnly(config);
         kubernetesSecretsSslContextFactory.checkedExpiry = false;
