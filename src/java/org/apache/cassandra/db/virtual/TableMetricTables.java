@@ -122,7 +122,7 @@ public class TableMetricTables
 
         public void add(SimpleDataSet result, String column, long value)
         {
-            result.column(column, Math.min(0L, value));
+            result.column(column, Math.max(0L, value));
         }
     }
 
