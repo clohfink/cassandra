@@ -76,11 +76,14 @@ public class ExcessSSTablesTable extends AbstractVirtualTable
     {
         ColumnFamilyStore table = Keyspace.openAndGetStore(tableMetadata);
         int[] leveledSStables = table.getSSTableCountPerLevel();
+        // This will be null for compaction strategies that have no concept of leveling.
         if (leveledSStables == null)
             return new ArrayList<>();
         return IntStream.range(0, leveledSStables.length)
                         .mapToObj(level -> {
-                            int maxCount = level == 0 ? 4 : (int) Math.pow(table.getLevelFanoutSize(), level);
+                            int maxCount = level == 0
+                                           ? table.getMinimumCompactionThreshold()
+                                           : (int) Math.pow(table.getLevelFanoutSize(), level);
                             return Math.max(0, leveledSStables[level] - maxCount);
                         })
                         .collect(toList());
