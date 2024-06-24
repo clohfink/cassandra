@@ -77,6 +77,7 @@ public class TableMetricTables
             new HistogramTableMetric(name, "tombstones_per_read", t -> t.tombstoneScannedHistogram.cf),
             new HistogramTableMetric(name, "rows_per_read", t -> t.liveScannedHistogram.cf),
             new ValueTableMetric(name, "partition_count", t -> t.estimatedPartitionCount),
+            new ValueTableMetric(name, "pending_compactions", t -> t.pendingCompactions),
             new StorageTableMetric(name, "disk_usage", (TableMetrics t) -> t.totalDiskSpaceUsed),
             new StorageTableMetric(name, "max_partition_size", (TableMetrics t) -> t.maxPartitionSize));
     }
@@ -113,7 +114,7 @@ public class TableMetricTables
      */
     private static class ValueTableMetric extends TableMetricTable
     {
-        interface GaugeFunction extends Function<TableMetrics, Gauge<Long>> {}
+        interface GaugeFunction extends Function<TableMetrics, Gauge<? extends Number>> {}
 
         ValueTableMetric(String keyspace, String table, GaugeFunction func)
         {
@@ -235,7 +236,7 @@ public class TableMetricTables
                 }
                 else if (metric instanceof Gauge)
                 {
-                    add(result, columnName, (long) ((Gauge) metric).getValue());
+                    add(result, columnName, ((Number) ((Gauge) metric).getValue()).longValue());
                 }
             }
             return result;
