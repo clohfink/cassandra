@@ -1703,6 +1703,16 @@ public class DatabaseDescriptor
         return tokensFromString(System.getProperty(Config.PROPERTY_PREFIX + "initial_token", conf.initial_token));
     }
 
+    public static int getPartitionCountCacheExpiryMinutes()
+    {
+        return conf.partition_count_cache_expiry_min.toMinutes();
+    }
+
+    public static void setPartitionCountCacheExpiryMinutes(int partitionCountCacheExpiryMinutes)
+    {
+        conf.partition_count_cache_expiry_min = new DurationSpec.IntMinutesBound(partitionCountCacheExpiryMinutes);
+    }
+
     public static String getAllocateTokensForKeyspace()
     {
         return System.getProperty(Config.PROPERTY_PREFIX + "allocate_tokens_for_keyspace", conf.allocate_tokens_for_keyspace);
