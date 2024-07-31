@@ -75,6 +75,8 @@ import com.google.common.base.Predicates;
 import com.google.common.collect.*;
 import com.google.common.util.concurrent.*;
 
+import com.netflix.cassandra.db.virtual.ClusterPartitionCount;
+import com.netflix.cassandra.db.virtual.NetflixViewsKeyspace;
 import org.apache.cassandra.config.CassandraRelevantProperties;
 import org.apache.cassandra.concurrent.*;
 import org.apache.cassandra.config.DataStorageSpec;
@@ -6360,6 +6362,18 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
     {
         DatabaseDescriptor.setBatchSizeWarnThresholdInKiB(threshold);
         logger.info("Updated batch_size_warn_threshold to {}", threshold);
+    }
+
+    public void setPartitionCountCacheExpiryMin(int value)
+    {
+        DatabaseDescriptor.setPartitionCountCacheExpiryMinutes(value);
+        ((ClusterPartitionCount) NetflixViewsKeyspace.instance.getTable(ClusterPartitionCount.NAME))
+                                                              .updateCacheExpiryTime(value);
+    }
+
+    public int getPartitionCountCacheExpiryMin()
+    {
+        return DatabaseDescriptor.getPartitionCountCacheExpiryMinutes();
     }
 
     public int getInitialRangeTombstoneListAllocationSize()

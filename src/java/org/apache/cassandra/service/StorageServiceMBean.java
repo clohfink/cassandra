@@ -737,6 +737,9 @@ public interface StorageServiceMBean extends NotificationEmitter
     public boolean isIncrementalBackupsEnabled();
     public void setIncrementalBackupsEnabled(boolean value);
 
+    public void setPartitionCountCacheExpiryMin(int value);
+    public int getPartitionCountCacheExpiryMin();
+
     /**
      * Initiate a process of streaming data for which we are responsible from other nodes. It is similar to bootstrap
      * except meant to be used on a node which is already in the cluster (typically containing no data) as an

@@ -22,11 +22,8 @@ import java.nio.ByteBuffer;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
-import com.google.common.collect.Maps;
-import com.google.common.util.concurrent.Uninterruptibles;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -37,20 +34,12 @@ import org.apache.cassandra.cql3.ResultSet;
 import org.apache.cassandra.cql3.selection.ResultSetBuilder;
 import org.apache.cassandra.cql3.statements.SelectStatement;
 import org.apache.cassandra.db.Clustering;
-import org.apache.cassandra.db.DataRange;
 import org.apache.cassandra.db.DecoratedKey;
 import org.apache.cassandra.db.DeletionTime;
 import org.apache.cassandra.db.PartitionRangeReadCommand;
-import org.apache.cassandra.db.ReadCommand;
 import org.apache.cassandra.db.ReadResponse;
-import org.apache.cassandra.db.filter.ClusteringIndexFilter;
-import org.apache.cassandra.db.filter.ColumnFilter;
-import org.apache.cassandra.db.marshal.CompositeType;
 import org.apache.cassandra.db.marshal.UTF8Type;
 import org.apache.cassandra.db.partitions.PartitionIterator;
-import org.apache.cassandra.db.partitions.PartitionUpdate;
-import org.apache.cassandra.db.partitions.SingletonUnfilteredPartitionIterator;
-import org.apache.cassandra.db.partitions.UnfilteredPartitionIterator;
 import org.apache.cassandra.db.partitions.UnfilteredPartitionIterators;
 import org.apache.cassandra.db.rows.AbstractUnfilteredRowIterator;
 import org.apache.cassandra.db.rows.BTreeRow;
@@ -68,56 +57,36 @@ import org.apache.cassandra.dht.LocalPartitioner;
 import org.apache.cassandra.exceptions.InvalidRequestException;
 import org.apache.cassandra.locator.InetAddressAndPort;
 import org.apache.cassandra.net.Message;
-import org.apache.cassandra.net.MessagingService;
 import org.apache.cassandra.schema.ColumnMetadata;
 import org.apache.cassandra.schema.Schema;
 import org.apache.cassandra.schema.TableMetadata;
 import org.apache.cassandra.service.ClientState;
-import org.apache.cassandra.service.StorageService;
-import org.apache.cassandra.utils.Clock;
 import org.apache.cassandra.utils.FBUtilities;
 import org.apache.cassandra.utils.concurrent.Future;
-public class DistributedJsonTable implements VirtualTable
+
+public class DistributedJsonTable extends ScopedTable
 {
     private static final Logger logger = LoggerFactory.getLogger(DistributedJsonTable.class);
     private static final ByteBuffer TIMEOUT_MESSAGE = UTF8Type.instance.decompose("[]");
 
-    protected final TableMetadata metadata;
     protected DistributedJsonTable(String keyspace)
     {
-        metadata = TableMetadata.builder(keyspace, "cluster_view")
-                           .comment("Queries all nodes for a given table and keyspace and returns the JSON representation of the data.")
+        super(TableMetadata.builder(keyspace, "cluster_view")
+                           .comment("Query a table from all nodes in the cluster and return the results as JSON")
                            .kind(TableMetadata.Kind.VIRTUAL)
                            .partitioner(new LocalPartitioner(UTF8Type.instance))
                            .addPartitionKeyColumn("keyspace_name", UTF8Type.instance)
                            .addPartitionKeyColumn("table_name", UTF8Type.instance)
                            .addClusteringColumn("host", UTF8Type.instance)
                            .addRegularColumn("value", UTF8Type.instance)
-                           .build();
+                           .build());
     }
 
     @Override
-    public TableMetadata metadata()
-    {
-        return metadata;
-    }
-
-    @Override
-    public void apply(PartitionUpdate update)
-    {
-        throw new InvalidRequestException("Updates are not supported by table " + metadata);
-    }
-
-    @Override
-    public UnfilteredPartitionIterator select(DecoratedKey partitionKey, ClusteringIndexFilter clusteringIndexFilter, ColumnFilter columnFilter)
+    public UnfilteredRowIterator select(DecoratedKey partitionKey, String keyspace, String table)
     {
         int now = FBUtilities.nowInSeconds();
-        ByteBuffer[] key = ((CompositeType) this.metadata.partitionKeyType).split(partitionKey.getKey());
-        String keyspace = UTF8Type.instance.getString(key[0]);
-        String table = UTF8Type.instance.getString(key[1]);
-        logger.info("DistributedJsonTable submitted: " + keyspace + '.' + table);
         SelectStatement selectStatement = (SelectStatement) QueryProcessor.parseStatement("SELECT JSON * FROM " + keyspace + '.' + table).prepare(ClientState.forInternalCalls());
-        // to include virtual tables need to pull from both Schema.instance and VirtualKeyspaceRegistry
         VirtualKeyspace vk = VirtualKeyspaceRegistry.instance.getKeyspaceNullable(keyspace);
         TableMetadata target;
         if (vk == null)
@@ -135,32 +104,11 @@ public class DistributedJsonTable implements VirtualTable
         }
 
         PartitionRangeReadCommand read = PartitionRangeReadCommand.allDataRead(target, now);
-        Set<InetAddressAndPort> allEndpoints = StorageService.instance.getLiveRingMembers(true);
-
-        Map<InetAddressAndPort, Future<Message<ReadResponse>>> results = Maps.newHashMap();
-        for (InetAddressAndPort endpoint : allEndpoints)
-        {
-            Message<ReadCommand> m = Message.out(read.verb(), read);
-            results.put(endpoint, MessagingService.instance().<ReadResponse>sendWithResult(m, endpoint));
-        }
-        long startTime = Clock.Global.currentTimeMillis();
-
-        long timeout = DatabaseDescriptor.getReadRpcTimeout(TimeUnit.MILLISECONDS) / 2;
-        // Wait for all futures to complete or timeout to occur
-        boolean allDone;
-        do {
-            allDone = true;
-            for (Future<?> future : results.values()) {
-                if (!future.isDone() && Clock.Global.currentTimeMillis() - startTime < timeout) {
-                    allDone = false;
-                    Uninterruptibles.sleepUninterruptibly(30, TimeUnit.MILLISECONDS);
-                    break;
-                }
-            }
-        } while (!allDone && Clock.Global.currentTimeMillis() - startTime < timeout);
+        Map<InetAddressAndPort, Future<Message<ReadResponse>>> results = sendReadCommandToAllEndpoints(read);
+        waitForFutures(results, now,DatabaseDescriptor.getReadRpcTimeout(TimeUnit.MILLISECONDS) / 2);
 
         Iterator<Map.Entry<InetAddressAndPort, Future<Message<ReadResponse>>>> iterator = results.entrySet().iterator();
-        UnfilteredRowIterator rows = new AbstractUnfilteredRowIterator(metadata,
+        return new AbstractUnfilteredRowIterator(metadata,
                                                  partitionKey,
                                                  DeletionTime.LIVE,
                                                  metadata.regularAndStaticColumns(),
@@ -234,19 +182,5 @@ public class DistributedJsonTable implements VirtualTable
                 return null;
             }
         };
-
-        return new SingletonUnfilteredPartitionIterator(rows);
-    }
-
-    @Override
-    public UnfilteredPartitionIterator select(DataRange dataRange, ColumnFilter columnFilter)
-    {
-        throw new InvalidRequestException("Range queries are not supported by table, keyspace_name and table_name must be included in query" + metadata);
-    }
-
-    @Override
-    public void truncate()
-    {
-        throw new InvalidRequestException("Truncation is not supported by table " + metadata);
     }
 }

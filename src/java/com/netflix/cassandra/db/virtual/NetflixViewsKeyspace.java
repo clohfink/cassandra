@@ -32,7 +32,19 @@ public final class NetflixViewsKeyspace extends VirtualKeyspace
         super(NAME, new ImmutableList.Builder<VirtualTable>()
                 .add(new DistributedJsonTable(NAME))
                 .add(new ExcessSSTablesTable(NAME))
+                .add(new TableHLL(NAME))
+                .add(new ClusterPartitionCount(NAME))
                 .add(new PriamConfigTable(NAME))
                 .build());
+    }
+
+    public VirtualTable getTable(String name)
+    {
+        for (VirtualTable table : tables()) {
+            if (table.metadata().name.equals(name)) {
+                return table;
+            }
+        }
+        return null;
     }
 }
