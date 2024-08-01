@@ -636,6 +636,9 @@ public class QueryProcessor implements QueryHandler
     private volatile boolean newPreparedStatementBehaviour = false;
     public boolean useNewPreparedStatementBehaviour()
     {
+        if (DatabaseDescriptor.isUpgradeFrom30Possible())
+            return false;
+
         if (newPreparedStatementBehaviour || DatabaseDescriptor.getForceNewPreparedStatementBehaviour())
             return true;
 
