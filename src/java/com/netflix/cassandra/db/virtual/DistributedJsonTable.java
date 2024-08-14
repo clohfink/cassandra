@@ -61,6 +61,7 @@ import org.apache.cassandra.schema.ColumnMetadata;
 import org.apache.cassandra.schema.Schema;
 import org.apache.cassandra.schema.TableMetadata;
 import org.apache.cassandra.service.ClientState;
+import org.apache.cassandra.utils.Clock;
 import org.apache.cassandra.utils.FBUtilities;
 import org.apache.cassandra.utils.concurrent.Future;
 
@@ -105,8 +106,8 @@ public class DistributedJsonTable extends ScopedTable
 
         PartitionRangeReadCommand read = PartitionRangeReadCommand.allDataRead(target, now);
         Map<InetAddressAndPort, Future<Message<ReadResponse>>> results = sendReadCommandToAllEndpoints(read);
-        waitForFutures(results, now,DatabaseDescriptor.getReadRpcTimeout(TimeUnit.MILLISECONDS) / 2);
-
+        waitForFutures(results, Clock.Global.currentTimeMillis(), DatabaseDescriptor.getReadRpcTimeout(TimeUnit.MILLISECONDS) / 2);
+g
         Iterator<Map.Entry<InetAddressAndPort, Future<Message<ReadResponse>>>> iterator = results.entrySet().iterator();
         return new AbstractUnfilteredRowIterator(metadata,
                                                  partitionKey,
