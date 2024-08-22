@@ -18,8 +18,10 @@
 
 package org.apache.cassandra.tools;
 
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.Executors;
@@ -47,7 +49,7 @@ public class TopPartitionsTest
 {
 
     public static String KEYSPACE = TopPartitionsTest.class.getSimpleName().toLowerCase();
-    public static String TABLE = "test";
+    public static String TABLE = "toppartitiontest";
 
     @BeforeClass
     public static void loadSchema() throws ConfigurationException
@@ -83,9 +85,11 @@ public class TopPartitionsTest
     @Test
     public void testServiceTopPartitionsSingleTable() throws Exception
     {
-        ColumnFamilyStore.getIfExists("system", "local").beginLocalSampling("READS", 5, 240000);
+        ColumnFamilyStore.getIfExists("system", "local").beginLocalSampling("READS", 5, 540000);
+        Thread.sleep(100);
         String req = "SELECT * FROM system.%s WHERE key='%s'";
         executeInternal(format(req, SystemKeyspace.LOCAL, SystemKeyspace.LOCAL));
+        Thread.sleep(100);
         List<CompositeData> result = ColumnFamilyStore.getIfExists("system", "local").finishLocalSampling("READS", 5);
         assertEquals("If this failed you probably have to raise the beginLocalSampling duration", 1, result.size());
     }
@@ -109,16 +113,16 @@ public class TopPartitionsTest
         executeInternal(format("DELETE FROM %s.%s WHERE k='a' AND c='a'", KEYSPACE, TABLE));
         cfs.forceBlockingFlush(ColumnFamilyStore.FlushReason.UNIT_TESTS);
 
+        Thread.sleep(100);
         // test multi-partition read
         cfs.beginLocalSampling("READ_ROW_COUNT", count, 240000);
         cfs.beginLocalSampling("READ_TOMBSTONE_COUNT", count, 240000);
         cfs.beginLocalSampling("READ_SSTABLE_COUNT", count, 240000);
-
+        Thread.sleep(100); // wait for sampler to start
         executeInternal(format("SELECT * FROM %s.%s", KEYSPACE, TABLE));
         List<CompositeData> rowCounts = cfs.finishLocalSampling("READ_ROW_COUNT", count);
         List<CompositeData> tsCounts = cfs.finishLocalSampling("READ_TOMBSTONE_COUNT", count);
         List<CompositeData> sstCounts = cfs.finishLocalSampling("READ_SSTABLE_COUNT", count);
-
         assertEquals(0, sstCounts.size()); // not tracked on range reads
         assertEquals(3, rowCounts.size()); // 3 partitions read (a, b, c)
         assertEquals(1, tsCounts.size()); // 1 partition w tombstones (a)
@@ -144,11 +148,11 @@ public class TopPartitionsTest
         cfs.beginLocalSampling("READ_ROW_COUNT", count, 240000);
         cfs.beginLocalSampling("READ_TOMBSTONE_COUNT", count, 240000);
         cfs.beginLocalSampling("READ_SSTABLE_COUNT", count, 240000);
-
+        Thread.sleep(100);
         executeInternal(format("SELECT * FROM %s.%s WHERE k='a'", KEYSPACE, TABLE));
         executeInternal(format("SELECT * FROM %s.%s WHERE k='b'", KEYSPACE, TABLE));
         executeInternal(format("SELECT * FROM %s.%s WHERE k='c'", KEYSPACE, TABLE));
-
+        Thread.sleep(100);
         rowCounts = cfs.finishLocalSampling("READ_ROW_COUNT", count);
         tsCounts = cfs.finishLocalSampling("READ_TOMBSTONE_COUNT", count);
         sstCounts = cfs.finishLocalSampling("READ_SSTABLE_COUNT", count);

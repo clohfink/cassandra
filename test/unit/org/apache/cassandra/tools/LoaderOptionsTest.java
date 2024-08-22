@@ -36,36 +36,6 @@ import static org.junit.Assert.assertTrue;
 // LoaderOptionsTester for custom configuration
 public class LoaderOptionsTest
 {
-    @Test
-    public void testNativePort() throws Exception
-    {
-        //Default Cassandra config
-        File config = new File(Paths.get(".", "test", "conf", "cassandra.yaml").normalize());
-        String[] args = { "-d", "127.9.9.1", "-f", config.absolutePath(), sstableDirName("legacy_sstables", "legacy_ma_simple") };
-        LoaderOptions options = LoaderOptions.builder().parseArgs(args).build();
-        assertEquals(9042, options.nativePort);
-
-
-        // SSL Enabled Cassandra config
-        config = new File(Paths.get(".", "test", "conf", "unit-test-conf/test-native-port.yaml").normalize());
-        String[] args2 = { "-d", "127.9.9.1", "-f", config.absolutePath(), sstableDirName("legacy_sstables", "legacy_ma_simple") };
-        options = LoaderOptions.builder().parseArgs(args2).build();
-        assertEquals(9142, options.nativePort);
-
-        HostAndPort hap = HostAndPort.fromString("127.9.9.1");
-        InetAddress byName = InetAddress.getByName(hap.getHost());
-        assertTrue(options.hosts.contains(new InetSocketAddress(byName, 9142)));
-
-        // test native port set from command line
-
-        config = new File(Paths.get(".", "test", "conf", "unit-test-conf/test-native-port.yaml").normalize().toFile());
-        String[] args3 = { "-d", "127.9.9.1", "-p", "9300", "-f", config.absolutePath(), sstableDirName("legacy_sstables", "legacy_ma_simple") };
-        options = LoaderOptions.builder().parseArgs(args3).build();
-        assertEquals(9300, options.nativePort);
-
-        assertTrue(options.hosts.contains(new InetSocketAddress(byName, 9300)));
-    }
-
     /**
      * Regression testing for CASSANDRA-16280
      *

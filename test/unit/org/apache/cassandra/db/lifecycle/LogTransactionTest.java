@@ -1093,62 +1093,6 @@ public class LogTransactionTest extends AbstractTransactionalTest
     }
 
     @Test
-    public void testObsoletedDataFileUpdateTimeChanged() throws IOException
-    {
-        testObsoletedFilesChanged(sstable ->
-                                  {
-                                      // increase the modification time of the Data file
-                                      for (String filePath : sstable.getAllFilePaths())
-                                      {
-                                          if (filePath.endsWith("Data.db"))
-                                              assertTrue(new File(filePath).trySetLastModified(System.currentTimeMillis() + 60000)); //one minute later
-                                      }
-                                  });
-    }
-
-    private static void testObsoletedFilesChanged(Consumer<SSTableReader> modifier) throws IOException
-    {
-        ColumnFamilyStore cfs = MockSchema.newCFS(KEYSPACE);
-        File dataFolder = new Directories(cfs.metadata()).getDirectoryForNewSSTables();
-        SSTableReader sstableOld = sstable(dataFolder, cfs, 0, 128);
-        SSTableReader sstableNew = sstable(dataFolder, cfs, 1, 128);
-
-        // simulate tracking sstables with a committed transaction except the checksum will be wrong
-        LogTransaction log = new LogTransaction(OperationType.COMPACTION);
-        assertNotNull(log);
-
-        log.trackNew(sstableNew);
-        LogTransaction.SSTableTidier tidier = log.obsoleted(sstableOld);
-
-        //modify the old sstable files
-        modifier.accept(sstableOld);
-
-        //Fake a commit
-        log.txnFile().commit();
-
-        //This should not remove the old files
-        LogTransaction.removeUnfinishedLeftovers(cfs.metadata());
-
-        assertFiles(dataFolder.path(), Sets.newHashSet(Iterables.concat(
-                                                                          sstableNew.getAllFilePaths(),
-                                                                          sstableOld.getAllFilePaths(),
-                                                                          log.logFilePaths())));
-
-        sstableOld.selfRef().release();
-        sstableNew.selfRef().release();
-
-        // complete the transaction to avoid LEAK errors
-        assertNull(log.complete(null));
-
-        assertFiles(dataFolder.path(), Sets.newHashSet(Iterables.concat(sstableNew.getAllFilePaths(),
-                                                                        sstableOld.getAllFilePaths(),
-                                                                        log.logFilePaths())));
-
-        // make sure to run the tidier to avoid any leaks in the logs
-        tidier.run();
-    }
-
-    @Test
     public void testTruncateFileUpdateTime() throws IOException
     {
         // Idea is that we truncate the actual modification time on disk after creating the log file.

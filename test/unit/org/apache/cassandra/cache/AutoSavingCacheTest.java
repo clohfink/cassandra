@@ -50,6 +50,8 @@ public class AutoSavingCacheTest
                                     TableMetadata.builder(KEYSPACE1, CF_STANDARD1)
                                                  .addPartitionKeyColumn("pKey", AsciiType.instance)
                                                  .addRegularColumn("col1", AsciiType.instance));
+        //Set key cache capacity to 32MB, not needed in OSS because it does not default to 0 there
+        CacheService.instance.setKeyCacheCapacityInMB(32);
     }
 
     @Test

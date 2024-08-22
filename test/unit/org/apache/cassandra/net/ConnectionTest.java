@@ -763,11 +763,11 @@ public class ConnectionTest
                 MessagingService.instance().removeInbound(endpoint);
                 inbound = new InboundSockets(settings.inbound.apply(new InboundConnectionSettings()));
                 inbound.open().sync();
-
+                Thread.sleep(100);
                 CountDownLatch latch2 = new CountDownLatch(1);
                 unsafeSetHandler(Verb._TEST_1, () -> msg -> latch2.countDown());
                 outbound.enqueue(Message.out(Verb._TEST_1, noPayload));
-
+                Thread.sleep(100);
                 latch2.await(10, SECONDS);
                 Assert.assertEquals(latch2.getCount(), 0);
             }

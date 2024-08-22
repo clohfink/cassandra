@@ -268,18 +268,11 @@ final class HintsWriteExecutor
         // If we throw during appending, we will track how many bytes were written in finally block
         try (HintsWriter.Session session = writer.newSession(writeBuffer))
         {
-            try
+            while (iterator.hasNext())
             {
-                while (iterator.hasNext())
-                {
-                    session.append(iterator.next());
-                    if (session.position() >= maxHintsFileSize)
-                        break;
-                }
-            }
-            finally
-            {
-                store.getHintsSizes().put(descriptor, session.position());
+                session.append(iterator.next());
+                if (session.position() >= maxHintsFileSize)
+                    break;
             }
         }
         catch (IOException e)

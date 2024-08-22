@@ -16,21 +16,28 @@
  * limitations under the License.
  */
 
-package org.apache.cassandra.tools.nodetool;
+package org.apache.cassandra.db.compaction;
 
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Random;
 
+import com.google.common.collect.Iterables;
+import com.google.common.util.concurrent.Uninterruptibles;
 import org.junit.Before;
 import org.junit.Test;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import static org.junit.Assert.*;
 
+import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.cql3.CQLTester;
 import org.apache.cassandra.db.ColumnFamilyStore;
 import org.apache.cassandra.db.Keyspace;
+import org.apache.cassandra.db.lifecycle.SSTableSet;
 import org.apache.cassandra.db.rows.Cell;
 import org.apache.cassandra.db.rows.Row;
 import org.apache.cassandra.db.rows.Unfiltered;
@@ -40,12 +47,14 @@ import org.apache.cassandra.io.sstable.format.SSTableReader;
 
 public class ForceCompactionTest extends CQLTester
 {
+    private final static Logger logger = LoggerFactory.getLogger(ForceCompactionTest.class);
     private final static int NUM_PARTITIONS = 10;
     private final static int NUM_ROWS = 100;
 
     @Before
     public void setup() throws Throwable
     {
+        DatabaseDescriptor.setSSTablePreemptiveOpenIntervalInMiB(100);
         createTable("CREATE TABLE %s (key text, c1 text, c2 text, c3 text, PRIMARY KEY (key, c1))");
 
         for (int partitionCount = 0; partitionCount < NUM_PARTITIONS; partitionCount++)
@@ -67,7 +76,6 @@ public class ForceCompactionTest extends CQLTester
     public void forceCompactPartitionTombstoneTest() throws Throwable
     {
         String keyToPurge = "k0";
-
         testHelper("DELETE FROM %s WHERE key = ?", keyToPurge);
     }
 
@@ -85,13 +93,12 @@ public class ForceCompactionTest extends CQLTester
             execute("DELETE FROM %s WHERE key = ?", key);
             keysToPurge.add(key);
         }
-
+        logger.info("Keys to purge: {}", keysToPurge);
         flush();
-
+        Thread.sleep(100);
         String[] keys = new String[keysToPurge.size()];
         keys = keysToPurge.toArray(keys);
         forceCompact(keys);
-
         verifyNotContainsTombstones();
     }
 
@@ -125,7 +132,6 @@ public class ForceCompactionTest extends CQLTester
         String[] keys = new String[keysToPurge.size()];
         keys = keysToPurge.toArray(keys);
         forceCompact(keys);
-
         verifyNotContainsTombstones();
     }
 
@@ -158,7 +164,6 @@ public class ForceCompactionTest extends CQLTester
         String[] keys = new String[keysToPurge.size()];
         keys = keysToPurge.toArray(keys);
         forceCompact(keys);
-
         verifyNotContainsTombstones();
     }
 
@@ -228,7 +233,6 @@ public class ForceCompactionTest extends CQLTester
 
         String[] keysToPurge = new String[]{keyToPurge};
         forceCompact(keysToPurge);
-
         verifyNotContainsTombstones();
     }
 
@@ -239,16 +243,18 @@ public class ForceCompactionTest extends CQLTester
         {
             cfs.forceCompactionKeysIgnoringGcGrace(partitionKeysIgnoreGcGrace);
         }
+        Uninterruptibles.sleepUninterruptibly(250, java.util.concurrent.TimeUnit.MILLISECONDS);
     }
 
     private void verifyNotContainsTombstones()
     {
         // Get sstables
         ColumnFamilyStore cfs = Keyspace.open(keyspace()).getColumnFamilyStore(currentTable());
-        Collection<SSTableReader> sstables = cfs.getLiveSSTables();
+        // Live sstables includes compacting ones so we use CANONICAL
+        Iterable<SSTableReader> sstables = cfs.getSSTables(SSTableSet.CANONICAL);
 
         // always run a major compaction before calling this
-        assertTrue(sstables.size() == 1);
+        assertEquals(1, Iterables.size(sstables));
 
         SSTableReader sstable = sstables.iterator().next();
         int actualPurgedTombstoneCount = 0;

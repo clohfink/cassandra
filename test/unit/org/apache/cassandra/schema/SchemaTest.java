@@ -102,6 +102,9 @@ public class SchemaTest
         ((DefaultSchemaUpdateHandler)Schema.instance.updateHandler).applyMutations(mutations);
         // schema should match the current digest
         Assert.assertEquals(SchemaKeyspace.calculateSchemaDigest(), Schema.instance.getVersion());
+
+        SchemaTestUtil.dropKeyspaceIfExist("test", true);
+
     }
 
 

@@ -40,7 +40,10 @@ public class SettingsTransport implements Serializable
 
     public EncryptionOptions getEncryptionOptions()
     {
-        EncryptionOptions encOptions = new EncryptionOptions().applyConfig();
+        EncryptionOptions encOptions = new EncryptionOptions()
+                                       .withOptional(false)
+                                       .withEnabled(false)
+                                       .applyConfig();
         if (options.trustStore.present())
         {
             encOptions = encOptions

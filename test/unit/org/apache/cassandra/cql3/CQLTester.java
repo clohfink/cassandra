@@ -190,7 +190,6 @@ public abstract class CQLTester
         checkProtocolVersion();
 
         nativeAddr = InetAddress.getLoopbackAddress();
-
         ServerTestUtils.daemonInitialization();
     }
 
@@ -1313,7 +1312,10 @@ public abstract class CQLTester
 
     protected SimpleClient newSimpleClient(ProtocolVersion version) throws IOException
     {
-        return new SimpleClient(nativeAddr.getHostAddress(), nativePort, version, version.isBeta(), new EncryptionOptions().applyConfig())
+        EncryptionOptions encryptionOptions = new EncryptionOptions();
+        encryptionOptions.setEnabled(false);
+        encryptionOptions.setOptional(false);
+        return new SimpleClient(nativeAddr.getHostAddress(), nativePort, version, version.isBeta(), encryptionOptions.applyConfig())
                .connect(false, false);
     }
 

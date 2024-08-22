@@ -67,12 +67,12 @@ public class JavaDriverClient
 
     public JavaDriverClient(StressSettings settings, String host, int port)
     {
-        this(settings, Collections.singletonList(host), port, new EncryptionOptions());
+        this(settings, Collections.singletonList(host), port, new EncryptionOptions().withOptional(false).withEnabled(false));
     }
 
     public JavaDriverClient(StressSettings settings, List<String> hosts, int port)
     {
-        this(settings, hosts, port, new EncryptionOptions());
+        this(settings, hosts, port, new EncryptionOptions().withOptional(false).withEnabled(false));
     }
 
     public JavaDriverClient(StressSettings settings, List<String> hosts, int port, EncryptionOptions encryptionOptions)

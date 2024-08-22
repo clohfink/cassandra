@@ -69,7 +69,8 @@ public class SSLFactoryTest
                             .withTrustStore("test/conf/cassandra_ssl_test.truststore")
                             .withTrustStorePassword("cassandra")
                             .withRequireClientAuth(false)
-                            .withCipherSuites("TLS_RSA_WITH_AES_128_CBC_SHA");
+                            .withCipherSuites("TLS_RSA_WITH_AES_128_CBC_SHA")
+                            .withUseMetatronSSL(false);
     }
 
     private ServerEncryptionOptions addKeystoreOptions(ServerEncryptionOptions options)
@@ -268,7 +269,7 @@ public class SSLFactoryTest
         parameters1.put("key1", "value1");
         parameters1.put("key2", "value2");
         EncryptionOptions encryptionOptions1 =
-        new EncryptionOptions()
+        new EncryptionOptions().withOptional(false).withEnabled(false)
         .withSslContextFactory(new ParameterizedClass(DummySslContextFactoryImpl.class.getName(), parameters1))
         .withProtocol("TLSv1.1")
         .withRequireClientAuth(true)
@@ -281,7 +282,7 @@ public class SSLFactoryTest
         parameters2.put("key1", "value1");
         parameters2.put("key2", "value2");
         EncryptionOptions encryptionOptions2 =
-        new EncryptionOptions()
+        new EncryptionOptions().withOptional(false).withEnabled(false)
         .withSslContextFactory(new ParameterizedClass(DummySslContextFactoryImpl.class.getName(), parameters2))
         .withProtocol("TLSv1.1")
         .withRequireClientAuth(true)
@@ -300,7 +301,7 @@ public class SSLFactoryTest
         parameters1.put("key1", "value11");
         parameters1.put("key2", "value12");
         EncryptionOptions encryptionOptions1 =
-        new EncryptionOptions()
+        new EncryptionOptions().withOptional(false).withEnabled(false)
         .withSslContextFactory(new ParameterizedClass(DummySslContextFactoryImpl.class.getName(), parameters1))
         .withProtocol("TLSv1.1");
 
@@ -311,7 +312,7 @@ public class SSLFactoryTest
         parameters2.put("key1", "value21");
         parameters2.put("key2", "value22");
         EncryptionOptions encryptionOptions2 =
-        new EncryptionOptions()
+        new EncryptionOptions().withOptional(false).withEnabled(false)
         .withSslContextFactory(new ParameterizedClass(DummySslContextFactoryImpl.class.getName(), parameters2))
         .withProtocol("TLSv1.1");
 

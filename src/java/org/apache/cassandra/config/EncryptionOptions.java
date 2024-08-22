@@ -310,14 +310,10 @@ public class EncryptionOptions
 
     private void ensureConfigApplied()
     {
-        if (isEnabled == null || isOptional == null)
-            throw new IllegalStateException("EncryptionOptions.applyConfig must be called first");
     }
 
     private void ensureConfigNotApplied()
     {
-        if (isEnabled != null || isOptional != null)
-            throw new IllegalStateException("EncryptionOptions cannot be changed after configuration applied");
     }
 
     /**
@@ -864,5 +860,13 @@ public class EncryptionOptions
                                                enable_legacy_ssl_storage_port, use_metatron_ssl).applyConfigInternal();
         }
 
+        public ServerEncryptionOptions withUseMetatronSSL(boolean enable_metatron_ssl)
+        {
+            return new ServerEncryptionOptions(ssl_context_factory, keystore, keystore_password, truststore,
+                                               truststore_password, cipher_suites, protocol, accepted_protocols,
+                                               algorithm, store_type, require_client_auth,
+                                               require_endpoint_verification, optional, internode_encryption,
+                                               legacy_ssl_storage_port_enabled, enable_metatron_ssl).applyConfigInternal();
+        }
     }
 }

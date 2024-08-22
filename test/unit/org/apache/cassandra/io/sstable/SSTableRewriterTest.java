@@ -30,6 +30,7 @@ import org.junit.Test;
 import org.apache.cassandra.Util;
 import org.apache.cassandra.UpdateBuilder;
 import org.apache.cassandra.concurrent.NamedThreadFactory;
+import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.db.ColumnFamilyStore;
 import org.apache.cassandra.db.DecoratedKey;
 import org.apache.cassandra.db.DeletionTime;
@@ -820,6 +821,7 @@ public class SSTableRewriterTest extends SSTableWriterTestBase
         Keyspace keyspace = Keyspace.open(KEYSPACE);
         final ColumnFamilyStore cfs = keyspace.getColumnFamilyStore(CF);
         truncate(cfs);
+        DatabaseDescriptor.setSSTablePreemptiveOpenIntervalInMiB(50);
 
         cfs.addSSTable(writeFile(cfs, 100));
         Collection<SSTableReader> allSSTables = cfs.getLiveSSTables();

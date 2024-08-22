@@ -63,6 +63,9 @@ public class Ec2Snitch extends AbstractNetworkTopologySnitch
     private static final String DEFAULT_DC = "UNKNOWN-DC";
     private static final String DEFAULT_RACK = "UNKNOWN-RACK";
 
+    @VisibleForTesting
+    public static final String ZONE_NAME_QUERY = "/latest/meta-data/placement/availability-zone";
+
     final String ec2region;
     private final String ec2zone;
     private final boolean usingLegacyNaming;
@@ -84,7 +87,7 @@ public class Ec2Snitch extends AbstractNetworkTopologySnitch
     Ec2Snitch(SnitchProperties props, Ec2MetadataServiceConnector connector) throws IOException
     {
         this.connector = connector;
-        String az = EC2MetadataUtils.getAvailabilityZone();
+        String az = connector.apiCall(ZONE_NAME_QUERY);
 
         // if using the full naming scheme, region name is created by removing letters from the
         // end of the availability zone and zone is the full zone name

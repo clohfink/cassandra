@@ -1,4 +1,79 @@
 #!/bin/bash
+
+# Number of chunks
+chunks=20
+
+# Java version (8 or 11)
+java_version=11
+
+# Log directory
+log_dir="./logs"
+mkdir -p $log_dir
+
+# Function to run a chunk of tests
+run_test_chunk() {
+  chunk_number=$1
+  total_chunks=$2
+  java_version=$3
+
+  log_file="$log_dir/chunk_${chunk_number}.log"
+  error_file="$log_dir/chunk_${chunk_number}_error.log"
+
+  .build/docker/run-ant-build.sh test $chunk_number/$total_chunks $java_version > "$log_file" 2>&1
+}
+
+# Do the build and verify build before chunking.
+.build/docker/run-ant-build.sh test 1/1024 11 > $log_dir/canary.log 2>&1
+
+# Run each chunk in the background
+for i in $(seq 1 $chunks); do
+  echo "Running test chunk $i/$chunks"
+  run_test_chunk $i $chunks $java_version &
+done
+
+# Wait for all background processes to complete
+wait
+
+echo "All test chunks have been executed."
+
+# Check for test failures
+failures=$(fgrep -R "Failures: " $log_dir/* | grep -v "Failures: 0")
+errors=$(fgrep -R "Failures: " $log_dir/* | grep -v "Errors: 0")
+
+# Function to update the URL to the build artifacts
+build_prefix() {
+  # Replace the first colon with a space
+  modified_input="${1/:/ }"
+  echo "${BUILD_URL}artifact/${modified_input}"
+}
+
+# Check if there were any failures or errors
+if [[ -n "$failures" || -n "$errors" ]]; then
+  echo "Test failures or errors found:"
+  [[ -n "$failures" ]] && build_prefix "$failures"
+  [[ -n "$errors" ]] && build_prefix "$errors"
+  exit 1
+fi
+
+echo "No test failures or errors found."
+
+echo "Test chunks by execution time:"
+# List files and calculate the difference between modification and creation times
+find "$log_dir" -type f -name "chunk_*.log" -print0 | while IFS= read -r -d '' file; do
+    # Check if the file contains "error"
+    if ! grep -q "error" "$file"; then
+        mod_time=$(stat -c %Y "$file")
+        create_time=$(stat -c %W "$file")
+        # Check if creation time is available (-1 if not available)
+        if [[ $create_time -ne -1 ]]; then
+            time_diff=$((mod_time - create_time))
+        else
+            time_diff="N/A"
+        fi
+        echo "$time_diff $file"
+    fi
+done | sort -n | head -n 5 | awk '{print $2}'
+
 set -ex
 
 # UNKNOWN because we want to subversion behind C* version number (Eg. 3.0.25.1)

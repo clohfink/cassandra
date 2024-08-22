@@ -167,7 +167,7 @@ public class LoaderOptions
 
         int storagePort;
         int sslStoragePort;
-        EncryptionOptions clientEncOptions = new EncryptionOptions();
+        EncryptionOptions clientEncOptions = new EncryptionOptions().withOptional(false).withEnabled(false);
         int connectionsPerHost = 1;
         EncryptionOptions.ServerEncryptionOptions serverEncOptions = new EncryptionOptions.ServerEncryptionOptions();
         Set<InetAddress> hostsArg = new HashSet<>();
@@ -527,7 +527,7 @@ public class LoaderOptions
                                 "which is able to handle encrypted communication too.");
 
                 // Copy the encryption options and apply the config so that argument parsing can accesss isEnabled.
-                clientEncOptions = config.client_encryption_options.applyConfig();
+                clientEncOptions = config.client_encryption_options.withOptional(false).withEnabled(false).applyConfig();
                 serverEncOptions = config.server_encryption_options;
                 serverEncOptions.applyConfig();
 
@@ -537,7 +537,7 @@ public class LoaderOptions
                 }
                 else
                 {
-                    if (config.native_transport_port_ssl != null && (config.client_encryption_options.getEnabled() || clientEncOptions.getEnabled()))
+                    if (config.native_transport_port_ssl != null && clientEncOptions.getEnabled())
                         nativePort = config.native_transport_port_ssl;
                     else
                         nativePort = config.native_transport_port;

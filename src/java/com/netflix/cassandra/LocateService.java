@@ -31,7 +31,7 @@ public class LocateService
     private final LoadingCache<InetAddressAndPort, String> datacenterCache;
     private final LoadingCache<InetAddressAndPort, String> rackCache;
 
-    LocateService()
+    public LocateService()
     {
         datacenterCache = Caffeine.newBuilder().maximumSize(MAX_CACHE_SIZE)
                 .build(endpoint ->
