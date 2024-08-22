@@ -34,10 +34,12 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
+import static org.hamcrest.number.OrderingComparison.greaterThan;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertThat;
 import static org.junit.Assert.assertTrue;
 
 import static org.apache.cassandra.Util.dk;
@@ -146,7 +148,7 @@ public class HintsCatalogTest
     }
 
     @Test
-    public void hintsTotalSizeTest() throws IOException
+    public void emptyHintsTotalSizeTest() throws IOException
     {
         File directory = new File(testFolder.newFolder());
         UUID hostId = UUID.randomUUID();
@@ -158,8 +160,8 @@ public class HintsCatalogTest
         {
             store.getOrOpenWriter();
             store.closeWriter();
-            assertTrue("Total file size should increase after writing more hints", store.getTotalFileSize() > totalSize);
-            totalSize = store.getTotalFileSize();
+            assertTrue("Even empty hint files should occupy some space as descriptor is written",
+                       store.getTotalFileSize() > 0);
         }
     }
 
@@ -241,5 +243,6 @@ public class HintsCatalogTest
                 session.append(hint);
             }
         }
+        assertThat(descriptor.hintsFileSize(directory), greaterThan(0L));
     }
 }

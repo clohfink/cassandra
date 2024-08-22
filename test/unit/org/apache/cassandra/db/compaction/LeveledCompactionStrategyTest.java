@@ -1338,30 +1338,32 @@ public class LeveledCompactionStrategyTest
     public void testOverlapWithMin()
     {
         ColumnFamilyStore cfs = MockSchema.newCFS();
-        Set<SSTableReader> sstables = new HashSet<>();
-        sstables.add(sstable(cfs, 1, 10L, 100L));
-        sstables.add(sstable(cfs, 2, 90L, 150L));
-        sstables.add(sstable(cfs, 3, 150L, 200L));
-        sstables.add(sstable(cfs, 4, 199L, 300L));
-        sstables.add(sstable(cfs, 5, 310L, 400L));
+        HashMap<Integer, SSTableReader> keyed = new HashMap<>();
+        keyed.put(1, sstable(cfs, 1, 10L, 100L));
+        keyed.put(2, sstable(cfs, 2, 90L, 150L));
+        keyed.put(3, sstable(cfs, 3, 150L, 200L));
+        keyed.put(4, sstable(cfs, 4, 199L, 300L));
+        keyed.put(5, sstable(cfs, 5, 310L, 400L));
+        Set<SSTableReader> sstables = new HashSet<>(keyed.values());
 
         // from 0 -> 10 includes a single sstable, generation 1:
-        assertEquals("1", Iterables.getOnlyElement(LeveledManifest.overlappingWithMin(cfs.getPartitioner(), t(0), t(10), sstables)).descriptor.id.toString());
+        assertEquals(keyed.get(1).descriptor.id.toString(), Iterables.getOnlyElement(LeveledManifest.overlappingWithMin(cfs.getPartitioner(), t(0), t(10), sstables)).descriptor.id.toString());
 
         // 90 -> 100 includes 2 sstables, gen 1 and 2
         Set<SSTableReader> overlapping = LeveledManifest.overlappingWithMin(cfs.getPartitioner(), t(90), t(100), sstables);
         assertEquals(2, overlapping.size());
-        assertEquals(Sets.newHashSet("1", "2"), overlapping.stream().map(s -> s.descriptor.id.toString()).collect(Collectors.toSet()));
+        assertEquals(Sets.newHashSet(keyed.get(1).descriptor.id.toString(), keyed.get(2).descriptor.id.toString()),
+                     overlapping.stream().map(s -> s.descriptor.id.toString()).collect(Collectors.toSet()));
 
         // 50 -> 90 includes 2 sstables, gen 1 and 2
         overlapping = LeveledManifest.overlappingWithMin(cfs.getPartitioner(), t(50), t(90), sstables);
         assertEquals(2, overlapping.size());
-        assertEquals(Sets.newHashSet("1", "2"), overlapping.stream().map(s -> s.descriptor.id.toString()).collect(Collectors.toSet()));
+        assertEquals(Sets.newHashSet(keyed.get(1).descriptor.id.toString(), keyed.get(2).descriptor.id.toString()), overlapping.stream().map(s -> s.descriptor.id.toString()).collect(Collectors.toSet()));
 
         // 290 -> partitioner min token -> 2 sstables, gen 4 and 5
         overlapping = LeveledManifest.overlappingWithMin(cfs.getPartitioner(), t(290), cfs.getPartitioner().getMinimumToken(), sstables);
         assertEquals(2, overlapping.size());
-        assertEquals(Sets.newHashSet("4", "5"), overlapping.stream().map(s -> s.descriptor.id.toString()).collect(Collectors.toSet()));
+        assertEquals(Sets.newHashSet(keyed.get(4).descriptor.id.toString(), keyed.get(5).descriptor.id.toString()), overlapping.stream().map(s -> s.descriptor.id.toString()).collect(Collectors.toSet()));
 
         // testing a wrapping range (1000, 100] -> normalized = [(-9223372036854775808,100], (1000,-9223372036854775808]]
         // this means that the first range should contain 2 sstables (gen 1 and 2), and the second should include none
@@ -1372,7 +1374,7 @@ public class LeveledCompactionStrategyTest
             overlapping.addAll(LeveledManifest.overlappingWithMin(cfs.getPartitioner(), r.left, r.right, sstables));
         }
         assertEquals(2, overlapping.size());
-        assertEquals(Sets.newHashSet("1", "2"), overlapping.stream().map(s -> s.descriptor.id.toString()).collect(Collectors.toSet()));
+        assertEquals(Sets.newHashSet(keyed.get(1).descriptor.id.toString(), keyed.get(2).descriptor.id.toString()), overlapping.stream().map(s -> s.descriptor.id.toString()).collect(Collectors.toSet()));
 
         // (350, 0] -> normalized = [(-9223372036854775808,0], (350,-9223372036854775808]]
         // => first range should give 0 sstables, second a single one, generation 5
@@ -1382,7 +1384,7 @@ public class LeveledCompactionStrategyTest
             overlapping.addAll(LeveledManifest.overlappingWithMin(cfs.getPartitioner(), r.left, r.right, sstables));
         assertEquals(1, overlapping.size());
 
-        assertEquals(Sets.newHashSet("5"), overlapping.stream().map(s -> s.descriptor.id.toString()).collect(Collectors.toSet()));
+        assertEquals(Sets.newHashSet(keyed.get(5).descriptor.id.toString()), overlapping.stream().map(s -> s.descriptor.id.toString()).collect(Collectors.toSet()));
     }
 
     @Test

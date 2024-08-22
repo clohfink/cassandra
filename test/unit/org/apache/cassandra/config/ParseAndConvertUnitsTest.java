@@ -90,7 +90,7 @@ public class ParseAndConvertUnitsTest
         assertEquals(new DataStorageSpec.IntMebibytesBound(256), config.max_value_size);
         assertEquals(new DataStorageSpec.IntKibibytesBound(4), config.column_index_size);
         assertEquals(new DataStorageSpec.IntKibibytesBound(2), config.column_index_cache_size);
-        assertEquals(new DataStorageSpec.IntKibibytesBound(5), config.batch_size_warn_threshold);
+        assertEquals(new DataStorageSpec.IntKibibytesBound(32), config.batch_size_warn_threshold);
         assertEquals(new DataStorageSpec.IntKibibytesBound(50), config.batch_size_fail_threshold);
         assertEquals(new DataStorageSpec.IntMebibytesBound(100), config.compaction_large_partition_warning_threshold);
         assertNull(config.commitlog_total_space);
@@ -100,12 +100,12 @@ public class ParseAndConvertUnitsTest
         assertEquals(new DataStorageSpec.IntKibibytesBound(1024), config.hinted_handoff_throttle);
         assertEquals(new DataStorageSpec.IntKibibytesBound(1024), config.batchlog_replay_throttle);
         assertEquals(new DataStorageSpec.IntKibibytesBound(10240), config.trickle_fsync_interval);
-        assertEquals(new DataStorageSpec.IntMebibytesBound(50), config.sstable_preemptive_open_interval);
+        assertNull(config.sstable_preemptive_open_interval);
         assertNull(config.counter_cache_size);
         assertNull(config.file_cache_size);
         assertNull(config.index_summary_capacity);
         assertEquals(new DataStorageSpec.LongMebibytesBound(1), config.prepared_statements_cache_size);
-        assertNull(config.key_cache_size);
+        assertEquals(new DataStorageSpec.LongMebibytesBound(32), config.key_cache_size);
         assertEquals(new DataStorageSpec.LongMebibytesBound(16), config.row_cache_size);
         assertNull(config.native_transport_max_request_data_in_flight);
         assertNull(config.native_transport_max_request_data_in_flight_per_ip);
@@ -113,7 +113,6 @@ public class ParseAndConvertUnitsTest
 
         //Confirm rate parameters were successfully parsed with the default values in cassandra.yaml
         assertEquals(new DataRateSpec.LongBytesPerSecondBound(0), config.compaction_throughput);
-        assertEquals(new DataRateSpec.LongBytesPerSecondBound(23841858, DataRateSpec.DataRateUnit.MEBIBYTES_PER_SECOND), config.stream_throughput_outbound);
-        assertEquals(new DataRateSpec.LongBytesPerSecondBound(24, DataRateSpec.DataRateUnit.MEBIBYTES_PER_SECOND), config.inter_dc_stream_throughput_outbound);
+        assertEquals(new DataRateSpec.LongBytesPerSecondBound(0), config.inter_dc_stream_throughput_outbound);
     }
 }

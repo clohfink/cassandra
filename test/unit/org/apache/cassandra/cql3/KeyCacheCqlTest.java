@@ -98,6 +98,7 @@ public class KeyCacheCqlTest extends CQLTester
     {
         CachingParams.DEFAULT = CachingParams.CACHE_NOTHING;
         CQLTester.setUpClass();
+        CacheService.instance.setKeyCacheCapacityInMB(32);
     }
 
     /**

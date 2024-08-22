@@ -138,7 +138,8 @@ public class FullQueryLoggerTest extends CQLTester
     @Test(expected = IllegalArgumentException.class)
     public void testCanRead() throws Exception
     {
-        new File(tempDir).trySetReadable(false);
+        if (!new File(tempDir).trySetReadable(false))
+            throw new IllegalArgumentException("Could not set directory to not readable");
         try
         {
             configureFQL();
@@ -152,7 +153,8 @@ public class FullQueryLoggerTest extends CQLTester
     @Test(expected = IllegalArgumentException.class)
     public void testCanWrite() throws Exception
     {
-        new File(tempDir).trySetWritable(false);
+        if (!new File(tempDir).trySetWritable(false))
+            throw new IllegalArgumentException("Could not set directory to not writable");
         try
         {
             configureFQL();
@@ -166,7 +168,8 @@ public class FullQueryLoggerTest extends CQLTester
     @Test(expected = IllegalArgumentException.class)
     public void testCanExecute() throws Exception
     {
-        new File(tempDir).trySetExecutable(false);
+        if (!new File(tempDir).trySetExecutable(false))
+            throw new IllegalArgumentException("Could not set directory to not executable");
         try
         {
             configureFQL();

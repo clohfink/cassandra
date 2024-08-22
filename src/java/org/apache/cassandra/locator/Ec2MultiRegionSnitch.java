@@ -59,7 +59,7 @@ public class Ec2MultiRegionSnitch extends Ec2Snitch
     Ec2MultiRegionSnitch(SnitchProperties props, Ec2MetadataServiceConnector connector) throws IOException
     {
         super(props, connector);
-        String publicIp = EC2MetadataUtils.getData(PUBLIC_IP_QUERY_URL);
+        String publicIp = connector.apiCall(PUBLIC_IP_QUERY_URL);
         if (publicIp == null) {
             throw new IOException("Failed to obtain public ip");
         }

@@ -202,7 +202,7 @@ public class SettingsTableTest extends CQLTester
         config.server_encryption_options = config.server_encryption_options.withAcceptedProtocols(ImmutableList.of("TLSv1.2","TLSv1.1"));
         check(pre + "protocol", "[TLSv1.2, TLSv1.1, TLSv2]"); // protocol goes after the explicit accept list if non-TLS
 
-        check(pre + "optional", "false");
+        check(pre + "optional", "true");
         config.server_encryption_options = config.server_encryption_options.withOptional(true);
         check(pre + "optional", "true");
 

@@ -32,6 +32,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.SortedMap;
+import java.util.UUID;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeoutException;
 import java.util.regex.Pattern;
@@ -81,6 +82,7 @@ public class JMXStandardsTest
                                                        .add(ByteBuffer.class)
                                                        .add(InetAddress.class)
                                                        .add(File.class)
+                                                       .add(UUID.class)
                                                        .add(List.class).add(Map.class).add(Set.class).add(SortedMap.class).add(Collection.class)
                                                        .add(ObjectName.class).add(TabularData.class).add(CompositeData.class)
                                                        // Exceptions

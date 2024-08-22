@@ -43,6 +43,7 @@ import io.netty.buffer.Unpooled;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelOutboundHandlerAdapter;
 import io.netty.channel.ChannelPromise;
+import io.netty.channel.DefaultFileRegion;
 import io.netty.channel.embedded.EmbeddedChannel;
 import org.apache.cassandra.SchemaLoader;
 import org.apache.cassandra.Util;
@@ -311,7 +312,7 @@ public class EntireSSTableStreamConcurrentComponentMutationTest
                     }
                     else
                     {
-                        ((SharedDefaultFileRegion) msg).transferTo(wbc, 0);
+                        ((DefaultFileRegion) msg).transferTo(wbc, 0);
                     }
                     super.write(ctx, msg, promise);
                 }

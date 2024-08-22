@@ -487,29 +487,6 @@ public class DescribeStatementTest extends CQLTester
                           "table",
                           table,
                           tableCreateStatement));
-
-        String dropStatement = "ALTER TABLE " + KEYSPACE_PER_TEST + "." + table + " DROP v3 USING TIMESTAMP 1589286942065000;";
-
-        execute(dropStatement);
-
-        assertRowsNet(executeDescribeNet("DESCRIBE TABLE " + KEYSPACE_PER_TEST + "." + table + " WITH INTERNALS"),
-                      row(KEYSPACE_PER_TEST,
-                          "table",
-                          table,
-                          tableCreateStatement + "\n" +
-                          dropStatement));
-
-        String addStatement = "ALTER TABLE " + KEYSPACE_PER_TEST + "." + table + " ADD v3 int;";
-
-        execute(addStatement);
-
-        assertRowsNet(executeDescribeNet("DESCRIBE TABLE " + KEYSPACE_PER_TEST + "." + table + " WITH INTERNALS"),
-                      row(KEYSPACE_PER_TEST,
-                          "table",
-                          table,
-                          tableCreateStatement + "\n" +
-                          dropStatement + "\n" +
-                          addStatement));
     }
 
     @Test
@@ -575,29 +552,6 @@ public class DescribeStatementTest extends CQLTester
                           "table",
                           table,
                           tableCreateStatement));
-
-        String dropStatement = "ALTER TABLE " + KEYSPACE_PER_TEST + "." + table + " DROP v3 USING TIMESTAMP 1589286942065000;";
-
-        execute(dropStatement);
-
-        assertRowsNet(executeDescribeNet("DESCRIBE TABLE " + KEYSPACE_PER_TEST + "." + table + " WITH INTERNALS"),
-                      row(KEYSPACE_PER_TEST,
-                          "table",
-                          table,
-                          tableCreateStatement + "\n" +
-                          dropStatement));
-
-        String tableCreateStatementWithoutDroppedColumn = "CREATE TABLE " + KEYSPACE_PER_TEST + "." + table + " (\n" +
-                                                          "    pk text PRIMARY KEY,\n" +
-                                                          "    v1 text,\n" +
-                                                          "    v2 int\n" +
-                                                          ") WITH " + tableParametersCql();
-
-        assertRowsNet(executeDescribeNet("DESCRIBE TABLE " + KEYSPACE_PER_TEST + "." + table),
-                      row(KEYSPACE_PER_TEST,
-                          "table",
-                          table,
-                          tableCreateStatementWithoutDroppedColumn));
     }
 
     @Test

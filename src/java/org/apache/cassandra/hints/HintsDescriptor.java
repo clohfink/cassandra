@@ -223,6 +223,22 @@ final class HintsDescriptor
         return new File(hintsDirectory, checksumFileName());
     }
 
+    /** cached size of the represented hints file */
+    private transient volatile long hintsFileSize = -1L;
+
+    long hintsFileSize(File hintsDirectory)
+    {
+        long size = hintsFileSize;
+        if (size == -1L) // we may race and duplicate lookup the first time the size is being queried, but that is fine
+            hintsFileSize = size = file(hintsDirectory).length();
+        return size;
+    }
+
+    void hintsFileSize(long value)
+    {
+        hintsFileSize = value;
+    }
+
     int messagingVersion()
     {
         return messagingVersion(version);

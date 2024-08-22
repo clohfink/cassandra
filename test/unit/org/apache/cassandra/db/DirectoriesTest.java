@@ -142,6 +142,7 @@ public class DirectoriesTest
     public static void beforeClass()
     {
         DatabaseDescriptor.daemonInitialization();
+        DatabaseDescriptor.setDiskFailurePolicy(DiskFailurePolicy.ignore);
         FileUtils.setFSErrorHandler(new DefaultFSErrorHandler());
     }
 

@@ -268,7 +268,6 @@ public class CompactionControllerTest extends SchemaLoader
             twcs.addSSTable(sstable);
 
         twcs.startup();
-
         CompactionTask task = (CompactionTask)twcs.getUserDefinedTask(sstables, 0);
 
         assertNotNull(task);
@@ -286,7 +285,7 @@ public class CompactionControllerTest extends SchemaLoader
         //this compaction should complete as normal
         Thread t2 = new Thread(() -> {
             Uninterruptibles.awaitUninterruptibly(createCompactionControllerLatch);
-            assertEquals(1, overlapRefreshCounter);
+            assertEquals(ignoreOverlaps? 0 : 1, overlapRefreshCounter);
             CompactionManager.instance.forceUserDefinedCompaction(sstable2);
 
             //after compaction2 is finished, wait 1 minute and then resume compaction1 (this gives enough time for the overlapIterator to be refreshed)
@@ -311,7 +310,7 @@ public class CompactionControllerTest extends SchemaLoader
         //at this point, the overlap iterator for compaction1 should be refreshed
 
         //verify that the overlap iterator for compaction1 is refreshed twice, (once during the constructor, and again after compaction2 finishes)
-        assertEquals(2, overlapRefreshCounter);
+        assertEquals(ignoreOverlaps? 0 : 2, overlapRefreshCounter);
 
         refreshCheckLatch.countDown();
         t.join();

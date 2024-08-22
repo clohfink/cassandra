@@ -197,7 +197,7 @@ public class CassandraEntireSSTableStreamWriterTest
                 @Override
                 public void write(ChannelHandlerContext ctx, Object msg, ChannelPromise promise) throws Exception
                 {
-                    ((SharedDefaultFileRegion) msg).transferTo(wbc, 0);
+                    ((DefaultFileRegion) msg).transferTo(wbc, 0);
                     super.write(ctx, msg, promise);
                 }
             });

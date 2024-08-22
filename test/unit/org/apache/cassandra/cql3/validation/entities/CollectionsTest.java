@@ -19,6 +19,7 @@ package org.apache.cassandra.cql3.validation.entities;
 
 import java.util.*;
 
+import org.junit.BeforeClass;
 import org.junit.Test;
 
 import com.datastax.driver.core.ColumnDefinitions;
@@ -26,6 +27,7 @@ import com.datastax.driver.core.DataType;
 import com.datastax.driver.core.ResultSet;
 import com.datastax.driver.core.Session;
 import com.datastax.driver.core.utils.UUIDs;
+import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.cql3.CQLTester;
 import org.apache.cassandra.cql3.ColumnSpecification;
 import org.apache.cassandra.cql3.UntypedResultSet;
@@ -37,6 +39,11 @@ import static org.junit.Assert.assertEquals;
 
 public class CollectionsTest extends CQLTester
 {
+    @BeforeClass
+    public static void enableDrop() {
+        DatabaseDescriptor.setEnableDroppedColumns(true);
+    }
+
     @Test
     public void testMapBulkRemoval() throws Throwable
     {

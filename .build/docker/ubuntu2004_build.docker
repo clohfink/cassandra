@@ -1,0 +1,89 @@
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+FROM ubuntu:20.04
+MAINTAINER Apache Cassandra <dev@cassandra.apache.org>
+
+# CONTEXT is expected to be cassandra/.build
+
+ENV BUILD_HOME=/home/cassandra
+ENV CASSANDRA_DIR=$BUILD_HOME/cassandra
+ENV DIST_DIR=$CASSANDRA_DIR/build
+ENV LANG=en_US.UTF-8
+ENV LC_CTYPE=en_US.UTF-8
+
+LABEL org.cassandra.buildenv=ubuntu_2004
+
+RUN echo "Building with arguments:" \
+    && echo " - DIST_DIR=${DIST_DIR}" \
+    && echo " - BUILD_HOME=${BUILD_HOME}" \
+    && echo " - CASSANDRA_DIR=${CASSANDRA_DIR}" \
+    && echo " - UID_ARG=${UID_ARG}" \
+    && echo " - GID_ARG=${GID_ARG}"
+
+# configure apt to retry downloads
+RUN echo 'APT::Acquire::Retries "99";' > /etc/apt/apt.conf.d/80-retries
+RUN echo 'Acquire::http::Timeout "60";' > /etc/apt/apt.conf.d/80proxy.conf
+RUN echo 'Acquire::ftp::Timeout "60";' >> /etc/apt/apt.conf.d/80proxy.conf
+
+RUN export DEBIAN_FRONTEND=noninteractive && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends software-properties-common apt-utils
+
+RUN export DEBIAN_FRONTEND=noninteractive && \
+    add-apt-repository -y ppa:deadsnakes/ppa && \
+    apt-get update && \
+    apt-get install -y curl git-core python3-pip python3.8-dev \
+        net-tools wget gcc libxml2 libxslt1-dev \
+        vim lsof sudo libjemalloc2 dumb-init locales \
+        openjdk-11-jdk ant ant-optional bc libssl-dev
+
+# generate locales for the standard en_US.UTF8 value we use for testing
+RUN locale-gen en_US.UTF-8
+
+# as we only need the requirements.txt file from the dtest repo, let's just get it from GitHub as a raw asset
+# so we can avoid needing to clone the entire repo just to get this file
+RUN curl https://raw.githubusercontent.com/apache/cassandra-dtest/trunk/requirements.txt --output /opt/requirements.txt
+RUN chmod 0644 /opt/requirements.txt
+
+RUN pip3 install -i https://pypi.netflix.net/simple metatron
+
+# enable legacy TLSv1 and TLSv1.1 (CASSANDRA-16848)
+RUN find /etc -type f -name java.security -exec sed -i 's/TLSv1, TLSv1.1//' {} \;
+RUN find /etc -type f -name java.security -exec sed -i 's/3DES_EDE_CBC$/3DES_EDE_CBC, TLSv1, TLSv1.1/' {} \;
+
+# create and change to cassandra-tmp user, use an rare uid to avoid collision later on
+RUN adduser --disabled-login --uid 901743 --lastuid 901743 --gecos cassandra cassandra-tmp
+RUN gpasswd -a cassandra-tmp sudo
+RUN echo "cassandra-tmp ALL=(root) NOPASSWD:ALL" > /etc/sudoers.d/build
+RUN chmod 0440 /etc/sudoers.d/build
+
+# switch to the cassandra user
+RUN mkdir -p ${BUILD_HOME} && chmod a+rwx ${BUILD_HOME}
+USER cassandra-tmp
+ENV HOME ${BUILD_HOME}
+WORKDIR ${BUILD_HOME}
+
+ENV ANT_HOME=/usr/share/ant
+
+# 5+ requires java11
+RUN sudo update-java-alternatives --set java-1.11.0-openjdk-$(dpkg --print-architecture)
+
+# the .git subdirectories to pip installed cassandra-driver breaks virtualenv-clone, so just remove them
+#  and other directories we don't need in image
+RUN rm -rf ${BUILD_HOME}/env*/src/cassandra-driver/.git /home/cassandra-tmp/.m2 /tmp/ccm-*.tar.gz
+
+# mark "/tmp" as a volume so it will get mounted as an ext4 mount and not
+# the stupid aufs/CoW stuff that the actual docker container mounts will have.
+# we've been seeing 3+ minute hangs when calling sync on an aufs backed mount
+# so it greatly makes tests flaky as things can hang basically anywhere
+VOLUME ["/tmp"]
