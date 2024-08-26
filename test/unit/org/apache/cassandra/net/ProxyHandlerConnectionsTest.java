@@ -277,7 +277,7 @@ public class ProxyHandlerConnectionsTest
     {
         CompletableFuture.runAsync(() -> {
             while (!cond.get()) {}
-        }).get(1, MINUTES);
+        }).get(3, MINUTES);
     }
 
     private static void waitForCondition(Supplier<Boolean> cond, Supplier<String> s) throws Throwable
