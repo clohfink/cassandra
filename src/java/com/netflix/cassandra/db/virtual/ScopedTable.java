@@ -45,10 +45,14 @@ import org.apache.cassandra.exceptions.InvalidRequestException;
 import org.apache.cassandra.locator.InetAddressAndPort;
 import org.apache.cassandra.net.Message;
 import org.apache.cassandra.net.MessagingService;
+import org.apache.cassandra.schema.KeyspaceMetadata;
+import org.apache.cassandra.schema.Schema;
 import org.apache.cassandra.schema.TableMetadata;
 import org.apache.cassandra.service.StorageService;
 import org.apache.cassandra.utils.Clock;
 import org.apache.cassandra.utils.concurrent.Future;
+
+import static org.apache.cassandra.cql3.statements.RequestValidations.invalidRequest;
 
 public abstract class ScopedTable implements VirtualTable
 {
@@ -81,6 +85,17 @@ public abstract class ScopedTable implements VirtualTable
         ByteBuffer[] key = ((CompositeType) this.metadata.partitionKeyType).split(partitionKey.getKey());
         String keyspace = UTF8Type.instance.getString(key[0]);
         String table = UTF8Type.instance.getString(key[1]);
+        // verify keyspace and table exists
+        KeyspaceMetadata ksm = Schema.instance.getKeyspaceMetadata(keyspace);
+        if (ksm == null)
+        {
+            throw invalidRequest("Keyspace %s does not exist", keyspace);
+        }
+        TableMetadata metadata = ksm.getTableOrViewNullable(table);
+        if (metadata == null)
+        {
+            throw invalidRequest("Table %s does not exist in keyspace %s", table, keyspace);
+        }
         return new SingletonUnfilteredPartitionIterator(select(partitionKey, keyspace, table));
     }
 

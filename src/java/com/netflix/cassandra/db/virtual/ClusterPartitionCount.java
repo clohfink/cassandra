@@ -64,7 +64,7 @@ public class ClusterPartitionCount extends ScopedTable
 {
     private static final Logger logger = LoggerFactory.getLogger(ClusterPartitionCount.class);
     public static final String NAME = "partition_count";
-    private Cache<String, UnfilteredRowIterator> cache;
+    private Cache<String, ICardinality> cache;
 
     protected ClusterPartitionCount(String keyspace)
     {
@@ -105,12 +105,11 @@ public class ClusterPartitionCount extends ScopedTable
     public synchronized UnfilteredRowIterator select(DecoratedKey partitionKey, String keyspace, String table)
     {
         String cacheKey = keyspace + '.' + table;
-        UnfilteredRowIterator cachedResult = cache.getIfPresent(cacheKey);
+        ICardinality cachedResult = cache.getIfPresent(cacheKey);
         if (cachedResult != null)
         {
-            return cachedResult;
+            return createRowIterator(partitionKey, cachedResult);
         }
-
         SinglePartitionReadCommand read = createReadCommand(partitionKey);
         Map<InetAddressAndPort, Future<Message<ReadResponse>>> results = sendReadCommandToAllEndpoints(read);
         waitForFutures(results, Clock.Global.currentTimeMillis(), DatabaseDescriptor.getReadRpcTimeout(TimeUnit.MILLISECONDS) / 2);
@@ -127,7 +126,7 @@ public class ClusterPartitionCount extends ScopedTable
         }
 
         UnfilteredRowIterator result = createRowIterator(partitionKey, base);
-        cache.put(cacheKey, result);
+        cache.put(cacheKey, base);
 
         return result;
     }
