@@ -19,19 +19,15 @@
 package org.apache.cassandra.tools;
 
 import java.io.IOException;
-import java.net.InetAddress;
-import java.net.InetSocketAddress;
 import java.nio.file.Paths;
 import java.security.Permission;
 
-import com.google.common.net.HostAndPort;
 import org.junit.Test;
 
 import org.apache.cassandra.io.util.File;
 
 import static org.apache.cassandra.tools.OfflineToolUtils.sstableDirName;
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertTrue;
 
 // LoaderOptionsTester for custom configuration
 public class LoaderOptionsTest
