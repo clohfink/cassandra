@@ -39,6 +39,18 @@
     <property name="scm.developerConnection" value="scm:https://gitbox.apache.org/repos/asf/cassandra.git"/>
     <property name="scm.url" value="https://gitbox.apache.org/repos/asf?p=cassandra.git;a=tree"/>
 
+    <!-- netflix added -->
+    <property name="checkstyle.version.java8" value="8.40"/>
+    <property name="checkstyle.version.java11" value="9.3"/>
+    <condition property="checkstyle.version" value="${checkstyle.version.java8}">
+        <equals arg1="${ant.java.version}" arg2="1.8"/>
+    </condition>
+    <condition property="checkstyle.version" value="${checkstyle.version.java11}">
+        <not>
+            <equals arg1="${ant.java.version}" arg2="1.8"/>
+        </not>
+    </condition>
+
     <!-- directory details -->
     <property name="basedir" value="."/>
     <property name="build.helpers.dir" value="${basedir}/.build"/>
@@ -702,7 +714,7 @@
           <dependency groupId="org.apache.cassandra" artifactId="harry-core" version="0.0.1" scope="test"/>
           <dependency groupId="org.reflections" artifactId="reflections" version="0.10.2" scope="test"/>
           <dependency groupId="org.apache.cassandra" artifactId="dtest-api" version="${dtest-api.version}" scope="test"/>
-          <dependency groupId="com.puppycrawl.tools" artifactId="checkstyle" version="8.40" scope="test"/>
+          <dependency groupId="com.puppycrawl.tools" artifactId="checkstyle" version="${checkstyle.version}" scope="test"/>
           <dependency groupId="org.apache.hadoop" artifactId="hadoop-core" version="1.0.3" scope="provided">
             <exclusion groupId="org.mortbay.jetty" artifactId="servlet-api"/>
             <exclusion groupId="commons-logging" artifactId="commons-logging"/>
@@ -2455,7 +2467,7 @@
                classpathref="checkstyle.lib.path"/>
   </target>
 
-  <target name="checkstyle" depends="init-checkstyle,build-project" description="Run custom checkstyle code analysis" if="java.version.8" unless="no-checkstyle">
+  <target name="checkstyle" depends="init-checkstyle,build-project" description="Run custom checkstyle code analysis">
       <property name="checkstyle.log.dir" value="${build.dir}/checkstyle" />
       <property name="checkstyle.report.file" value="${checkstyle.log.dir}/checkstyle_report.xml"/>
       <mkdir  dir="${checkstyle.log.dir}" />
@@ -2471,7 +2483,7 @@
       </checkstyle>
   </target>
 
-  <target name="checkstyle-test" depends="init-checkstyle,build-project" description="Run custom checkstyle code analysis on tests" if="java.version.8" unless="no-checkstyle">
+  <target name="checkstyle-test" depends="init-checkstyle,build-project" description="Run custom checkstyle code analysis on tests" unless="no-checkstyle">
       <property name="checkstyle.log.dir" value="${build.dir}/checkstyle" />
       <property name="checkstyle_test.report.file" value="${checkstyle.log.dir}/checkstyle_report_test.xml"/>
       <mkdir  dir="${checkstyle.log.dir}" />

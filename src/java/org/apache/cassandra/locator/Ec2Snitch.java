@@ -17,8 +17,6 @@
  */
 package org.apache.cassandra.locator;
 
-import com.amazonaws.util.EC2MetadataUtils;
-
 import java.io.IOException;
 import java.util.Map;
 import java.util.Set;

@@ -54,7 +54,6 @@ import org.apache.cassandra.locator.InetAddressAndPort;
 import org.apache.cassandra.locator.RangesAtEndpoint;
 import org.apache.cassandra.net.AsyncStreamingOutputPlus;
 import org.apache.cassandra.net.MessagingService;
-import org.apache.cassandra.net.SharedDefaultFileRegion;
 import org.apache.cassandra.schema.CompactionParams;
 import org.apache.cassandra.schema.KeyspaceParams;
 import org.apache.cassandra.streaming.async.NettyStreamingConnectionFactory;

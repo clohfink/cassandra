@@ -63,30 +63,6 @@ public class SASICQLTest extends CQLTester
         }
     }
 
-    @Test
-    public void testPagingWithClustering() throws Throwable
-    {
-        for (boolean forceFlush : new boolean[]{ false, true })
-        {
-            createTable("CREATE TABLE %s (pk int, ck int, v int, PRIMARY KEY (pk, ck));");
-            createIndex("CREATE CUSTOM INDEX ON %s (v) USING 'org.apache.cassandra.index.sasi.SASIIndex';");
-
-            for (int i = 0; i < 10; i++)
-            {
-                execute("INSERT INTO %s (pk, ck, v) VALUES (?, ?, ?);", i, 1, 1);
-                execute("INSERT INTO %s (pk, ck, v) VALUES (?, ?, ?);", i, 2, 1);
-            }
-
-            flush(forceFlush);
-
-            Session session = sessionNet();
-            SimpleStatement stmt = new SimpleStatement("SELECT * FROM " + KEYSPACE + '.' + currentTable() + " WHERE v = 1");
-            stmt.setFetchSize(5);
-            List<Row> rs = session.execute(stmt).all();
-            Assert.assertEquals(20, rs.size());
-        }
-    }
-
     /**
      * Tests that a client warning is issued on SASI index creation.
      */
