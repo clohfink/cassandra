@@ -97,7 +97,7 @@ public class HintsServiceTest
 
         HintsService.instance = new HintsService(failureDetector);
 
-        HintsService.instance.startDispatch();
+        HintsService.instance.startDispatch(1);
     }
 
     @Test
@@ -113,7 +113,9 @@ public class HintsServiceTest
 
         // wait until hints have been send
         spy.interceptMessageOut(100).get();
+
         spy.interceptNoMsg(500, TimeUnit.MILLISECONDS).get();
+
     }
 
     @Test

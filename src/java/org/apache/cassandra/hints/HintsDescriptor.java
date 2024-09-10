@@ -91,8 +91,8 @@ final class HintsDescriptor
         this.hostId = hostId;
         this.version = version;
         this.timestamp = timestamp;
-        this.hintsFileName = hostId + "-" + timestamp + "-" + version + ".hints";
-        this.crc32FileName = hostId + "-" + timestamp + "-" + version + ".crc32";
+        hintsFileName = hostId + "-" + timestamp + '-' + version + ".hints";
+        crc32FileName = hostId + "-" + timestamp + '-' + version + ".crc32";
         compressionConfig = createCompressionConfig(parameters);
 
         EncryptionData encryption = createEncryption(parameters);

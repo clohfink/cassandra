@@ -131,6 +131,7 @@ _run_testlist() {
     local _split_chunk=$3
     local _test_timeout=$4
     testlist="$( _list_tests "${_target_prefix}" | _split_tests "${_split_chunk}")"
+
     if [[ "${_split_chunk}" =~ ^[0-9]+/[0-9]+$ ]]; then
       if [[ -z "${testlist}" ]]; then
         # something has to run in the split to generate a junit xml result
@@ -148,6 +149,7 @@ _run_testlist() {
     for TEST in ${testlist}
     do
       TEST=$(echo "${TEST}" | tr / .)
+      echo "Starting $TEST at $(date -u +"%Y-%m-%d %H:%M:%S,%3N")"
       if ! ant testsome -Dtest.name="${TEST%.java}" -Duse.jdk11=true; then
         failed_tests+=("${TEST%.java}")
       fi
@@ -161,7 +163,6 @@ _run_testlist() {
     else
       echo "All tests passed."
     fi
-#    sudo ant testsome -Dtest.name=org.apache.cassandra.cql3.validation.miscellaneous.CrcCheckChanceTest -Duse.jdk11=true
 }
 
 _main() {

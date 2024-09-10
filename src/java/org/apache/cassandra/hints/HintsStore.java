@@ -210,9 +210,7 @@ final class HintsStore
     {
         File hintsFile = descriptor.file(hintsDirectory);
         if (hintsFile.tryDelete())
-        {
             logger.info("Deleted hint file {}", descriptor.fileName());
-        }
         else if (hintsFile.exists())
             logger.error("Failed to delete hint file {}", descriptor.fileName());
         else
@@ -250,6 +248,7 @@ final class HintsStore
         HintsWriter currentWriter = getWriter();
         if (null != currentWriter)
             total += currentWriter.descriptor().hintsFileSize(hintsDirectory);
+
         return total;
     }
 
@@ -287,7 +286,6 @@ final class HintsStore
     {
         if (hintsWriter == null)
             hintsWriter = openWriter();
-
         return hintsWriter;
     }
 

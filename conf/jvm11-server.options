@@ -126,5 +126,6 @@
 # creation of direct buffers using Unsafe. Without it, this falls back to ByteBuffer.allocateDirect which has
 # inferior performance and risks exceeding MaxDirectMemory
 -Dio.netty.tryReflectionSetAccessible=true
+--illegal-access=permit
 
 # The newline in the end of file is intentional

@@ -34,10 +34,10 @@
     <property name="debuglevel" value="source,lines,vars"/>
 
     <!-- default version and SCM information -->
-    <property name="base.version" value="4.1.4"/>
+    <property name="base.version" value="4.1.6"/>
     <property name="scm.connection" value="scm:https://gitbox.apache.org/repos/asf/cassandra.git"/>
     <property name="scm.developerConnection" value="scm:https://gitbox.apache.org/repos/asf/cassandra.git"/>
-    <property name="scm.url" value="https://gitbox.apache.org/repos/asf?p=cassandra.git;a=tree"/>
+    <property name="scm.url" value="https://gitbox.apache.org/repos/asf?p=cassandra.git"/>
 
     <!-- netflix added -->
     <property name="checkstyle.version.java8" value="8.40"/>
@@ -838,9 +838,9 @@
           <dependency groupId="com.google.j2objc" artifactId="j2objc-annotations" version="1.3"/>
           <!-- adding this dependency is necessary for assertj. When updating assertj, need to also update the version of
              this that the new assertj's `assertj-parent-pom` depends on. -->
-          <dependency groupId="org.junit" artifactId="junit-bom" version="5.6.0" type="pom" scope="test"/>
+          <dependency groupId="org.junit" artifactId="junit-bom" version="5.10.1" type="pom" scope="test"/>
           <!-- when updating assertj, make sure to also update the corresponding junit-bom dependency -->
-          <dependency groupId="org.assertj" artifactId="assertj-core" version="3.15.0" scope="test"/>
+          <dependency groupId="org.assertj" artifactId="assertj-core" version="3.25.3" scope="test"/>
           <dependency groupId="org.awaitility" artifactId="awaitility" version="4.0.3"  scope="test">
             <exclusion groupId="org.hamcrest" artifactId="hamcrest"/>
           </dependency>
@@ -1876,17 +1876,29 @@
     ant testsome -Dtest.name=org.apache.cassandra.service.StorageServiceServerTest
     ant testsome -Dtest.name=org.apache.cassandra.service.StorageServiceServerTest -Dtest.methods=testRegularMode,testGetAllRangesEmpty
   -->
-  <target name="testsome" depends="maybe-build-test" description="Execute specific unit tests" >
-    <testmacro inputdir="${test.unit.src}" timeout="${test.timeout}">
-      <test unless:blank="${test.methods}" name="${test.name}" methods="${test.methods}" outfile="build/test/output/TEST-${test.name}-${test.methods}"/>
-      <test if:blank="${test.methods}" name="${test.name}" outfile="build/test/output/TEST-${test.name}"/>
-      <jvmarg value="-Dlegacy-sstable-root=${test.data}/legacy-sstables"/>
-      <jvmarg value="-Dinvalid-legacy-sstable-root=${test.data}/invalid-legacy-sstables"/>
-      <jvmarg value="-Dcassandra.ring_delay_ms=1000"/>
-      <jvmarg value="-Dcassandra.tolerate_sstable_size=true"/>
-      <jvmarg value="-Dcassandra.skip_sync=true" />
-    </testmacro>
-  </target>
+    <target name="testsome" depends="maybe-build-test" description="Execute specific unit tests">
+
+        <!-- Add the illegal-access=permit argument if Java version is not 1.8 -->
+        <condition property="illegal.access.arg" value="--illegal-access=permit">
+            <not>
+                <equals arg1="${ant.java.version}" arg2="1.8"/>
+            </not>
+        </condition>
+
+        <testmacro inputdir="${test.unit.src}" timeout="${test.timeout}">
+            <test unless:blank="${test.methods}" name="${test.name}" methods="${test.methods}" outfile="build/test/output/TEST-${test.name}-${test.methods}"/>
+            <test if:blank="${test.methods}" name="${test.name}" outfile="build/test/output/TEST-${test.name}"/>
+
+            <jvmarg value="-Dlegacy-sstable-root=${test.data}/legacy-sstables"/>
+            <jvmarg value="-Dinvalid-legacy-sstable-root=${test.data}/invalid-legacy-sstables"/>
+            <jvmarg value="-Dcassandra.ring_delay_ms=1000"/>
+            <jvmarg value="-Dcassandra.tolerate_sstable_size=true"/>
+            <jvmarg value="-Dcassandra.skip_sync=true"/>
+
+            <!-- Use the argument if it is set -->
+            <jvmarg if:set="illegal.access.arg" value="${illegal.access.arg}"/>
+        </testmacro>
+    </target>
 
   <!-- Use this with an FQDN for test class, and an optional csv list of methods like this:
     ant long-testsome -Dtest.name=org.apache.cassandra.cql3.ManyRowsTest
