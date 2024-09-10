@@ -35,6 +35,7 @@ import org.slf4j.LoggerFactory;
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.AppenderBase;
+import org.apache.cassandra.concurrent.DebuggableTask;
 import org.apache.cassandra.cql3.CQLTester;
 
 import static com.google.common.collect.Lists.newArrayList;
@@ -42,6 +43,8 @@ import static java.util.stream.Collectors.groupingBy;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 public class StatusLoggerTest extends CQLTester
 {
@@ -157,5 +160,53 @@ public class StatusLoggerTest extends CQLTester
         {
             events.add(event);
         }
+    }
+
+    @Test
+    public void getTasksByStageGroupsTasksCorrectly()
+    {
+        List<DebuggableTask.RunningDebuggableTask> tasks = newArrayList(
+        createTask("thread-1-1", 0, 0),
+        createTask("thread-1-2", 0, 0),
+        createTask("thread-2-1", 0, 0),
+        createTask("thread-2-2", 0, 0),
+        createTask("thread-3", 0, 0)
+        );
+
+        Map<String, List<DebuggableTask.RunningDebuggableTask>> groupedTasks = StatusLogger.getTasksByStage(tasks);
+        assertEquals(3, groupedTasks.size());
+        assertTrue(groupedTasks.containsKey("thread-1"));
+        assertTrue(groupedTasks.containsKey("thread-2"));
+        assertTrue(groupedTasks.containsKey("thread"));
+
+        assertEquals(2, groupedTasks.get("thread-1").size());
+        assertEquals(2, groupedTasks.get("thread-2").size());
+        assertEquals(1, groupedTasks.get("thread").size());
+    }
+
+    @Test
+    public void worstTasksOfSortsTasksCorrectly()
+    {
+        List<DebuggableTask.RunningDebuggableTask> tasks = newArrayList(
+        createTask("thread-1", 1, 200),
+        createTask("thread-2", 100, 200),
+        createTask("thread-3", 200, 200)
+        );
+
+        Map.Entry<String, List<DebuggableTask.RunningDebuggableTask>> entry = StatusLogger.getTasksByStage(tasks).entrySet().iterator().next();
+        List<DebuggableTask.RunningDebuggableTask> sortedTasks = StatusLogger.worstTasksOf(entry);
+
+        assertEquals("thread-3", sortedTasks.get(2).threadId());
+        assertEquals("thread-2", sortedTasks.get(1).threadId());
+        assertEquals("thread-1", sortedTasks.get(0).threadId());
+    }
+
+    private DebuggableTask.RunningDebuggableTask createTask(String threadId, long creationTimeNanos, long startTimeNanos)
+    {
+        DebuggableTask.RunningDebuggableTask task = mock(DebuggableTask.RunningDebuggableTask.class);
+        when(task.threadId()).thenReturn(threadId);
+        when(task.creationTimeNanos()).thenReturn(creationTimeNanos);
+        when(task.startTimeNanos()).thenReturn(startTimeNanos);
+        return task;
     }
 }
