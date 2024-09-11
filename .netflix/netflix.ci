@@ -64,24 +64,8 @@ fi
 
 echo "No test failures or errors found."
 
-echo "Test chunks by execution time:"
-# List files and calculate the difference between modification and creation times
-find "$log_dir" -type f -name "chunk_*.log" -print0 | while IFS= read -r -d '' file; do
-    # Check if the file contains "error"
-    if ! grep -q "error" "$file"; then
-        mod_time=$(stat -c %Y "$file")
-        create_time=$(stat -c %W "$file")
-        # Check if creation time is available (-1 if not available)
-        if [[ $create_time -ne -1 ]]; then
-            time_diff=$((mod_time - create_time))
-        else
-            time_diff="N/A"
-        fi
-        echo "$time_diff $file"
-    fi
-done | sort -n | head -n 5 | awk '{print $2}'
-
-set -ex
+echo "Slowest Tests:"
+fgrep "Time elapsed" $log_dir/* | sort -nk15 | tail -n 10
 
 # UNKNOWN because we want to subversion behind C* version number (Eg. 3.0.25.1)
 if [[ "$ROCKET_TAG_TYPE" = "UNKNOWN" ]]; then  # Publish on version tag only

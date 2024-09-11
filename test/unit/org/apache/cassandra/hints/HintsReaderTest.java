@@ -99,6 +99,7 @@ public class HintsReaderTest
             }
             FileUtils.clean(buffer);
         }
+
         Assert.assertThat(descriptor.hintsFileSize(directory), Matchers.greaterThan(0L));
     }
 

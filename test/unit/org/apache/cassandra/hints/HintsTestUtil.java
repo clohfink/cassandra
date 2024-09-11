@@ -17,6 +17,7 @@
  */
 package org.apache.cassandra.hints;
 
+import java.util.Collections;
 import java.util.UUID;
 
 import com.google.common.collect.Iterators;
@@ -89,6 +90,7 @@ final class HintsTestUtil
             Hint hint = Hint.create(builder.buildAsMutation(), now);
             HintsService.instance.write(hostId, hint);
         }
+        HintsService.instance.flushAndFsyncBlockingly(Collections.singleton(hostId));
         return spy;
     }
 
