@@ -25,6 +25,13 @@ run_test_chunk() {
 # Do the build and verify build before chunking.
 .build/docker/run-ant-build.sh test 1/1024 11 > $log_dir/canary.log 2>&1
 
+if grep -q "BUILD FAILED" "$log_dir/canary.log"; then
+  echo "Canary Build failed. Exiting with status 1."
+  exit 1
+else
+  echo "Build succeeded or no build failed message found."
+fi
+
 # Run each chunk in the background
 for i in $(seq 1 $chunks); do
   echo "Running test chunk $i/$chunks"
