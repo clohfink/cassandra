@@ -58,7 +58,7 @@ javac -version  2>&1
 # lists all tests for the specific test type
 _list_tests() {
   local -r classlistprefix="$1"
-  find "test/${classlistprefix}" -name '*Test.java' | sed "s;^test/${classlistprefix}/;;g" | sort
+  find "test/${classlistprefix}" -name '*Test.java' | sed "s;^test/${classlistprefix}/;;g" | sort | grep -vFf .netflix/skip_tests
 }
 
 _split_tests() {

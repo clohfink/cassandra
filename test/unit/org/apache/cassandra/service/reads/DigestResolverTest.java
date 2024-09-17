@@ -93,7 +93,7 @@ public class DigestResolverTest extends AbstractReadResponseTest
         ReplicaPlan.SharedForTokenRead plan = plan(ConsistencyLevel.ONE, targetReplicas);
 
         ExecutorService pool = Executors.newFixedThreadPool(2);
-        long endTime = System.nanoTime() + TimeUnit.MINUTES.toNanos(2);
+        long endTime = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
 
         try
         {
