@@ -163,7 +163,7 @@ case ${target} in
     ;;
 esac
 
-docker_flags="${docker_flags} --cpus=2 -d --rm"
+docker_flags="${docker_flags} --cpus=1 -d --rm"
 
 # make sure build_dir is good
 mkdir -p "${build_dir}/tmp" || true
@@ -219,9 +219,10 @@ logfile="${build_dir}/test/logs/docker_attach_${container_name}.log"
 docker_command="source \${CASSANDRA_DIR}/.build/docker/_set_java.sh ${java_version} ; \
             \${CASSANDRA_DIR}/.build/docker/_docker_init_tests.sh ${target} ${split_chunk} ; exit \$?"
 
+echo "docker run --name ${container_name} ${docker_flags} ${docker_envs} ${docker_mounts} ${docker_volume_opt} ${image_name} sleep 4h"
+
 # start the container, timeout after 4 hours
 docker_id=$(docker run --name ${container_name} ${docker_flags} ${docker_envs} ${docker_mounts} ${docker_volume_opt} ${image_name} sleep 4h)
-
 echo "Running container ${container_name} ${docker_id}"
 
 docker exec --user root ${container_name} bash -c "\${CASSANDRA_DIR}/.build/docker/_create_user.sh cassandra $(id -u) $(id -g)" | tee -a ${logfile}

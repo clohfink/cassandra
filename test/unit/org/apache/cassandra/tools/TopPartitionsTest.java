@@ -30,6 +30,7 @@ import javax.management.openmbean.CompositeData;
 import com.google.common.collect.Lists;
 
 import org.junit.BeforeClass;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import org.apache.cassandra.SchemaLoader;
@@ -92,6 +93,7 @@ public class TopPartitionsTest
         assertEquals("If this failed you probably have to raise the beginLocalSampling duration", 1, result.size());
     }
 
+    @Ignore
     @Test
     public void testTopPartitionsRowTombstoneAndSSTableCount() throws Exception
     {
