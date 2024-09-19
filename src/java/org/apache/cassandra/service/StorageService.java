@@ -77,6 +77,10 @@ import com.google.common.util.concurrent.*;
 
 import com.netflix.cassandra.db.virtual.ClusterPartitionCount;
 import com.netflix.cassandra.db.virtual.NetflixViewsKeyspace;
+import org.apache.cassandra.auth.AuthenticatedUser;
+import org.apache.cassandra.auth.IAuthenticator;
+import org.apache.cassandra.auth.IAuthorizer;
+import org.apache.cassandra.auth.Roles;
 import org.apache.cassandra.config.CassandraRelevantProperties;
 import org.apache.cassandra.concurrent.*;
 import org.apache.cassandra.config.DataStorageSpec;
@@ -1784,6 +1788,68 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
             throw new IllegalArgumentException("Number of concurrent compactors should be greater than 0.");
         DatabaseDescriptor.setConcurrentCompactors(value);
         CompactionManager.instance.setConcurrentCompactors(value);
+    }
+
+    public String getAuthenticator()
+    {
+        return DatabaseDescriptor.getAuthenticator().getClass().getName();
+    }
+
+    public void setAuthenticator(String value)
+    {
+        if (value == null)
+            throw new IllegalArgumentException("Authenticator cannot be null");
+
+        try {
+            Class<?> cl = Class.forName(value);
+
+            // Ensure the class implements IAuthenticator
+            if (IAuthenticator.class.isAssignableFrom(cl)) {
+                IAuthenticator authenticator =
+                (IAuthenticator) cl.getDeclaredConstructor().newInstance();
+                authenticator.setup();
+                DatabaseDescriptor.setAuthenticator(authenticator);
+                Roles.resetRoleCache();
+                // NetworkPermissionsCache uses the authenticator, so it should be reset as well.
+                AuthenticatedUser.resetNetworkPermissionsCache();
+            } else {
+                throw new IllegalArgumentException(value + " does not implement IAuthenticator");
+            }
+        }
+        catch (Exception e)
+        {
+            throw new RuntimeException(e);
+        }
+    }
+
+    public String getAuthorizer()
+    {
+        return DatabaseDescriptor.getAuthorizer().getClass().getName();
+    }
+
+    public void setAuthorizer(String value)
+    {
+        if (value == null)
+            throw new IllegalArgumentException("Authorizer cannot be null");
+
+        try {
+            Class<?> cl = Class.forName(value);
+
+            // Ensure the class implements IAuthorizer
+            if (IAuthorizer.class.isAssignableFrom(cl)) {
+                IAuthorizer authorizer =
+                (IAuthorizer) cl.getDeclaredConstructor().newInstance();
+                authorizer.setup();
+                DatabaseDescriptor.setAuthorizer(authorizer);
+                AuthenticatedUser.resetPermissionsCache();
+            } else {
+                throw new IllegalArgumentException(value + " does not implement IAuthorizer");
+            }
+        }
+        catch (Exception e)
+        {
+            throw new RuntimeException(e);
+        }
     }
 
     public void bypassConcurrentValidatorsLimit()
