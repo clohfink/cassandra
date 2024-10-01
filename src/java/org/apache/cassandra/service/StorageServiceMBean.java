@@ -721,6 +721,8 @@ public interface StorageServiceMBean extends NotificationEmitter
     public void setAuthenticator(String value);
     public String getAuthorizer();
     public void setAuthorizer(String value);
+    public String getRoleManager();
+    public void setRoleManager(String value);
 
     public void bypassConcurrentValidatorsLimit();
     public void enforceConcurrentValidatorsLimit();
