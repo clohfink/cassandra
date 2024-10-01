@@ -92,6 +92,7 @@ public class NodeTool
     public int execute(String... args)
     {
         List<Class<? extends NodeToolCmdRunnable>> commands = newArrayList(
+                AutoRepairStatus.class,
                 Assassinate.class,
                 CassHelp.class,
                 CfHistograms.class,
@@ -133,6 +134,7 @@ public class NodeTool
                 GetAuthenticator.class,
                 GetAuthorizer.class,
                 GetAuthCacheConfig.class,
+                GetAutoRepairConfig.class,
                 GetBatchlogReplayTrottle.class,
                 GetColumnIndexSize.class,
                 GetCompactionThreshold.class,
@@ -193,6 +195,7 @@ public class NodeTool
                 SetAuthenticator.class,
                 SetAuthorizer.class,
                 SetAuthCacheConfig.class,
+                SetAutoRepairConfig.class,
                 SetBatchlogReplayThrottle.class,
                 SetCacheCapacity.class,
                 SetCacheKeysToSave.class,
