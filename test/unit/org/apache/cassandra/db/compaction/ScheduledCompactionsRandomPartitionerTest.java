@@ -76,7 +76,15 @@ public class ScheduledCompactionsRandomPartitionerTest
         cfsScheduled = keyspace.getColumnFamilyStore(CF_STANDARDDLEVELED_SCHEDULED);
         Assert.assertEquals(RandomPartitioner.instance, cfsScheduled.getPartitioner());
 
-        LeveledCompactionStrategyTest.testGetScheduledCompaction(100, cfsScheduled);
+        try
+        {
+            LeveledCompactionStrategyTest.testGetScheduledCompaction(100, cfsScheduled);
+        }
+        catch (Exception e)
+        {
+            e.printStackTrace();
+            throw new RuntimeException(e);
+        }
         StorageService.instance.getTokenMetadata().clearUnsafe();
     }
 

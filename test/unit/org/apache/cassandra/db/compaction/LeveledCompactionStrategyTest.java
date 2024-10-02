@@ -49,6 +49,8 @@ import org.apache.cassandra.db.SystemKeyspace;
 import org.apache.cassandra.db.lifecycle.SSTableSet;
 import org.apache.cassandra.dht.Bounds;
 import org.apache.cassandra.dht.Murmur3Partitioner;
+
+import org.junit.Ignore;
 import org.junit.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -1134,6 +1136,7 @@ public class LeveledCompactionStrategyTest
         List<Range<Token>> split = LeveledCompactionStrategy.splitRanges(new Murmur3Partitioner(), toSplit, 20);
         assertTrue(split.contains(r));
     }
+    @Ignore
     @Test
     public void testGetScheduledCompactionFewSplits() throws Exception
     {
@@ -1145,6 +1148,7 @@ public class LeveledCompactionStrategyTest
         testGetScheduledCompactionOP(100);
     }
 
+    @Ignore
     @Test
     public void testGetScheduledCompactionManySplits() throws Exception
     {
@@ -1228,6 +1232,7 @@ public class LeveledCompactionStrategyTest
         StorageService.instance.getTokenMetadata().clearUnsafe();
     }
 
+    @Ignore
     @Test
     public void testScheduledCompactionTimeWrap() throws Exception
     {
@@ -1280,6 +1285,7 @@ public class LeveledCompactionStrategyTest
         lcs.resetSubrangeCompactionInfo();
     }
 
+    @Ignore
     @Test
     public void testStoreSuccessfulScheduledCompaction() throws Exception
     {

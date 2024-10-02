@@ -1,4 +1,4 @@
 jenkins:
   agent:
     ec2:
-      instanceType: m5d.16xlarge
+      instanceType: m6id.32xlarge
