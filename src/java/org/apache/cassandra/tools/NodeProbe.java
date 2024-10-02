@@ -1335,6 +1335,16 @@ public class NodeProbe implements AutoCloseable
         ssProxy.setAuthorizer(value);
     }
 
+    public String getRoleManager()
+    {
+        return ssProxy.getRoleManager();
+    }
+
+    public void setRoleManager(String value)
+    {
+        ssProxy.setRoleManager(value);
+    }
+
     public int getConcurrentCompactors()
     {
         return ssProxy.getConcurrentCompactors();

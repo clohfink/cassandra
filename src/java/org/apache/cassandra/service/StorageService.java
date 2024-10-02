@@ -80,6 +80,7 @@ import com.netflix.cassandra.db.virtual.NetflixViewsKeyspace;
 import org.apache.cassandra.auth.AuthenticatedUser;
 import org.apache.cassandra.auth.IAuthenticator;
 import org.apache.cassandra.auth.IAuthorizer;
+import org.apache.cassandra.auth.IRoleManager;
 import org.apache.cassandra.auth.Roles;
 import org.apache.cassandra.config.CassandraRelevantProperties;
 import org.apache.cassandra.concurrent.*;
@@ -1864,6 +1865,35 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
                 AuthenticatedUser.resetPermissionsCache();
             } else {
                 throw new IllegalArgumentException(value + " does not implement IAuthorizer");
+            }
+        }
+        catch (Exception e)
+        {
+            throw new RuntimeException(e);
+        }
+    }
+
+    public String getRoleManager()
+    {
+        return DatabaseDescriptor.getRoleManager().getClass().getName();
+    }
+
+    public void setRoleManager(String value)
+    {
+        if (value == null)
+            throw new IllegalArgumentException("Role manager cannot be null");
+
+        try {
+            Class<?> cl = Class.forName(value);
+
+            // Ensure the class implements IRoleManager
+            if (IRoleManager.class.isAssignableFrom(cl)) {
+                IRoleManager roleManager =
+                (IRoleManager) cl.getDeclaredConstructor().newInstance();
+                roleManager.setup();
+                DatabaseDescriptor.setRoleManager(roleManager);
+            } else {
+                throw new IllegalArgumentException(value + " does not implement IRoleManager");
             }
         }
         catch (Exception e)
