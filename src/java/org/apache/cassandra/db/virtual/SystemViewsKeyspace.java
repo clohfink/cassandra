@@ -45,6 +45,7 @@ public final class SystemViewsKeyspace extends VirtualKeyspace
                     .add(new RolesCacheKeysTable(VIRTUAL_VIEWS))
                     .add(new CQLMetricsTable(VIRTUAL_VIEWS))
                     .add(new BatchMetricsTable(VIRTUAL_VIEWS))
+                    .add(new RepairMetricsTable(VIRTUAL_VIEWS))
                     .add(new StreamingVirtualTable(VIRTUAL_VIEWS))
                     .add(new GossipInfoTable(VIRTUAL_VIEWS))
                     .add(new QueriesTable(VIRTUAL_VIEWS))
