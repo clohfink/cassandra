@@ -7164,6 +7164,18 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
     }
 
     @Override
+    public String getAutoSnapshotTTL()
+    {
+        return DatabaseDescriptor.getAutoSnapshotTtl().toString();
+    }
+
+    @Override
+    public void setAutoSnapshotTTL(String newTtl)
+    {
+        DatabaseDescriptor.setAutoSnapshotTtl(newTtl);
+    }
+
+    @Override
     public String getCQLStartTime()
     {
         return DatabaseDescriptor.getCQLStartTime().toString();
