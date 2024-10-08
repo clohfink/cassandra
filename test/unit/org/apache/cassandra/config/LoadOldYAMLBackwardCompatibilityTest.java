@@ -71,15 +71,14 @@ public class LoadOldYAMLBackwardCompatibilityTest
         assertEquals(new DataStorageSpec.IntMebibytesBound(256), config.max_value_size);
         assertEquals(new DataStorageSpec.IntKibibytesBound(4), config.column_index_size);
         assertEquals(new DataStorageSpec.IntKibibytesBound(2), config.column_index_cache_size);
-        assertEquals(new DataStorageSpec.IntKibibytesBound(5), config.batch_size_warn_threshold);
+        assertEquals(new DataStorageSpec.IntKibibytesBound(32), config.batch_size_warn_threshold);
         assertEquals(new DataRateSpec.LongBytesPerSecondBound(64, DataRateSpec.DataRateUnit.MEBIBYTES_PER_SECOND), config.compaction_throughput);
         assertEquals(new DataStorageSpec.IntMebibytesBound(50), config.min_free_space_per_drive);
         assertEquals(new DataRateSpec.LongBytesPerSecondBound(25000000000000L).toString(), config.stream_throughput_outbound.toString());
-        assertEquals(DataRateSpec.LongBytesPerSecondBound.megabitsPerSecondInBytesPerSecond(200000000), config.stream_throughput_outbound);
-        assertEquals(new DataRateSpec.LongBytesPerSecondBound(24L  * 1024L * 1024L), config.inter_dc_stream_throughput_outbound);
+        assertEquals(new DataRateSpec.LongBytesPerSecondBound(0), config.inter_dc_stream_throughput_outbound);
         assertNull(config.commitlog_total_space);
         assertEquals(new DurationSpec.IntMillisecondsBound(0.0, TimeUnit.MILLISECONDS), config.commitlog_sync_group_window);
-        assertEquals(new DurationSpec.IntMillisecondsBound(0), config.commitlog_sync_period);
+        assertEquals(new DurationSpec.IntMillisecondsBound(10000), config.commitlog_sync_period);
         assertEquals(new DataStorageSpec.IntMebibytesBound(5), config.commitlog_segment_size);
         assertNull(config.periodic_commitlog_sync_lag_block);  //Integer
         assertNull(config.max_mutation_size);
@@ -92,8 +91,8 @@ public class LoadOldYAMLBackwardCompatibilityTest
         assertEquals(new DurationSpec.IntMillisecondsBound(10000), config.hints_flush_period);
         assertEquals(new DataStorageSpec.IntMebibytesBound(128), config.max_hints_file_size);
         assertEquals(new DataStorageSpec.IntKibibytesBound(10240), config.trickle_fsync_interval);
-        assertEquals(new DataStorageSpec.IntMebibytesBound(50), config.sstable_preemptive_open_interval);
-        assertNull( config.key_cache_size);
+        assertEquals(null, config.sstable_preemptive_open_interval);
+        assertEquals(new DataStorageSpec.IntKibibytesBound(0), config.key_cache_size);
         assertEquals(new DataStorageSpec.LongMebibytesBound(16), config.row_cache_size);
         assertNull(config.counter_cache_size);
         assertNull(config.networking_cache_size);

@@ -25,6 +25,7 @@ import java.nio.ByteBuffer;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeoutException;
 import javax.annotation.Nullable;
@@ -35,6 +36,7 @@ import javax.management.openmbean.TabularData;
 
 import org.apache.cassandra.db.ColumnFamilyStoreMBean;
 import org.apache.cassandra.exceptions.ConfigurationException;
+import org.apache.cassandra.exceptions.InvalidRequestException;
 import org.apache.cassandra.utils.BreaksJMX;
 
 public interface StorageServiceMBean extends NotificationEmitter
@@ -350,6 +352,8 @@ public interface StorageServiceMBean extends NotificationEmitter
      * in order to purge the tombstones and free up space quicker.
      */
     public void forceCompactionKeysIgnoringGcGrace(String keyspaceName, String tableName, String... partitionKeysIgnoreGcGrace) throws IOException, ExecutionException, InterruptedException;
+
+    public UUID calculateSchemaDigest();
 
     /**
      * Trigger a cleanup of keys on a single keyspace
@@ -714,6 +718,12 @@ public interface StorageServiceMBean extends NotificationEmitter
 
     public int getConcurrentCompactors();
     public void setConcurrentCompactors(int value);
+    public String getAuthenticator();
+    public void setAuthenticator(String value);
+    public String getAuthorizer();
+    public void setAuthorizer(String value);
+    public String getRoleManager();
+    public void setRoleManager(String value);
 
     public void bypassConcurrentValidatorsLimit();
     public void enforceConcurrentValidatorsLimit();
@@ -733,6 +743,9 @@ public interface StorageServiceMBean extends NotificationEmitter
 
     public boolean isIncrementalBackupsEnabled();
     public void setIncrementalBackupsEnabled(boolean value);
+
+    public void setPartitionCountCacheExpiryMin(int value);
+    public int getPartitionCountCacheExpiryMin();
 
     /**
      * Initiate a process of streaming data for which we are responsible from other nodes. It is similar to bootstrap
@@ -865,6 +878,10 @@ public interface StorageServiceMBean extends NotificationEmitter
 
     /** Sets the hinted handoff throttle in KiB per second, per delivery thread. */
     public void setHintedHandoffThrottleInKB(int throttleInKB);
+
+    public boolean getTransferHintsOnDecommission();
+    public void setTransferHintsOnDecommission(boolean enabled);
+
 
     /**
      * Resume bootstrap streaming when there is failed data streaming.
@@ -1061,4 +1078,28 @@ public interface StorageServiceMBean extends NotificationEmitter
     public void setMinTrackedPartitionTombstoneCount(long value);
     public String getAutoSnapshotTTL();
     public void setAutoSnapshotTTL(String newTtl);
+
+    String getCQLStartTime();
+    void setCQLStartTime(String value);
+
+    double getNativeTransportQueueMaxItemAgeThreshold();
+    void setNativeTransportQueueMaxItemAgeThreshold(double threshold);
+
+    long getNativeTransportMinBackoffOnQueueOverloadInMillis();
+    long getNativeTransportMaxBackoffOnQueueOverloadInMillis();
+    void setNativeTransportBackoffOnQueueOverloadInMillis(long min, long max);
+
+    boolean getNativeTransportThrowOnOverload();
+    void setNativeTransportThrowOnOverload(boolean throwOnOverload);
+
+    long getNativeTransportTimeoutMillis();
+    void setNativeTransportTimeoutMillis(long deadlineMillis);
+
+    boolean getEnforceNativeDeadlineForHints();
+    void setEnforceNativeDeadlineForHints(boolean value);
+    /** Gets the names of all tables for the given keyspace */
+    public List<String> getTablesForKeyspace(String keyspace);
+
+    /** Mutates the repaired state of all SSTables for the given SSTables */
+    public List<String> mutateSSTableRepairedState(boolean repaired, boolean preview, String keyspace, List<String> tables) throws InvalidRequestException;
 }

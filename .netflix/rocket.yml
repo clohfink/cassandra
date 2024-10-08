@@ -1,0 +1,4 @@
+jenkins:
+  agent:
+    ec2:
+      instanceType: m6id.32xlarge

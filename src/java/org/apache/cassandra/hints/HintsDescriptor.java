@@ -91,8 +91,8 @@ final class HintsDescriptor
         this.hostId = hostId;
         this.version = version;
         this.timestamp = timestamp;
-        this.hintsFileName = hostId + "-" + timestamp + "-" + version + ".hints";
-        this.crc32FileName = hostId + "-" + timestamp + "-" + version + ".crc32";
+        hintsFileName = hostId + "-" + timestamp + '-' + version + ".hints";
+        crc32FileName = hostId + "-" + timestamp + '-' + version + ".crc32";
         compressionConfig = createCompressionConfig(parameters);
 
         EncryptionData encryption = createEncryption(parameters);
@@ -221,6 +221,22 @@ final class HintsDescriptor
     File checksumFile(File hintsDirectory)
     {
         return new File(hintsDirectory, checksumFileName());
+    }
+
+    /** cached size of the represented hints file */
+    private transient volatile long hintsFileSize = -1L;
+
+    long hintsFileSize(File hintsDirectory)
+    {
+        long size = hintsFileSize;
+        if (size == -1L) // we may race and duplicate lookup the first time the size is being queried, but that is fine
+            hintsFileSize = size = file(hintsDirectory).length();
+        return size;
+    }
+
+    void hintsFileSize(long value)
+    {
+        hintsFileSize = value;
     }
 
     int messagingVersion()

@@ -21,11 +21,13 @@ package org.apache.cassandra.db.memtable;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
+import com.google.common.annotations.VisibleForTesting;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import org.apache.cassandra.concurrent.ImmediateExecutor;
 import org.apache.cassandra.concurrent.ScheduledExecutors;
+import org.apache.cassandra.config.Config;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.db.ClusteringComparator;
 import org.apache.cassandra.db.ColumnFamilyStore;
@@ -44,6 +46,7 @@ import org.apache.cassandra.utils.memory.MemtableCleaner;
 import org.apache.cassandra.utils.memory.MemtablePool;
 import org.apache.cassandra.utils.memory.NativePool;
 import org.apache.cassandra.utils.memory.SlabPool;
+import org.github.jamm.Unmetered;
 
 /**
  * A memtable that uses memory tracked and maybe allocated via a MemtableAllocator from a MemtablePool.
@@ -55,23 +58,35 @@ public abstract class AbstractAllocatorMemtable extends AbstractMemtableWithComm
 
     public static final MemtablePool MEMORY_POOL = AbstractAllocatorMemtable.createMemtableAllocatorPool();
 
+    @Unmetered
     protected final Owner owner;
+    @Unmetered
     protected final MemtableAllocator allocator;
 
     // Record the comparator of the CFS at the creation of the memtable. This
     // is only used when a user update the CF comparator, to know if the
     // memtable was created with the new or old comparator.
+    @Unmetered
     protected final ClusteringComparator initialComparator;
 
     private final long creationNano = Clock.Global.nanoTime();
 
     private static MemtablePool createMemtableAllocatorPool()
     {
+        Config.MemtableAllocationType allocationType = DatabaseDescriptor.getMemtableAllocationType();
         long heapLimit = DatabaseDescriptor.getMemtableHeapSpaceInMiB() << 20;
         long offHeapLimit = DatabaseDescriptor.getMemtableOffheapSpaceInMiB() << 20;
         float memtableCleanupThreshold = DatabaseDescriptor.getMemtableCleanupThreshold();
         MemtableCleaner cleaner = AbstractAllocatorMemtable::flushLargestMemtable;
-        switch (DatabaseDescriptor.getMemtableAllocationType())
+        return createMemtableAllocatorPoolInternal(allocationType, heapLimit, offHeapLimit, memtableCleanupThreshold, cleaner);
+    }
+
+    @VisibleForTesting
+    public static MemtablePool createMemtableAllocatorPoolInternal(Config.MemtableAllocationType allocationType,
+                                                                   long heapLimit, long offHeapLimit,
+                                                                   float memtableCleanupThreshold, MemtableCleaner cleaner)
+    {
+        switch (allocationType)
         {
         case unslabbed_heap_buffers_logged:
             return new HeapPool.Logged(heapLimit, memtableCleanupThreshold, cleaner);

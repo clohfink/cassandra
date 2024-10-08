@@ -7,7 +7,7 @@ name: cqlsh3
 org: cde
 python:
   test-versions:
-  - "3.7"
+  - "3.10"
 team-email: cde-team@netflix.com
 tool-versions:
-  python: "3.7"
+  python: "3.10"

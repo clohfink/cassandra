@@ -22,11 +22,12 @@ import java.io.IOException;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 
-import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.config.DatabaseDescriptor;
+import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.gms.ApplicationState;
 import org.apache.cassandra.gms.Gossiper;
 import org.apache.cassandra.service.StorageService;
+import com.google.common.annotations.VisibleForTesting;
 
 /**
  * 1) Snitch will automatically set the public IP by querying the AWS API
@@ -41,13 +42,24 @@ import org.apache.cassandra.service.StorageService;
  */
 public class Ec2MultiRegionSnitch extends Ec2Snitch
 {
-    private static final String PUBLIC_IP_QUERY_URL = "/latest/meta-data/public-ipv4";
-    private final String localPrivateAddress;
+      @VisibleForTesting
+      static final String PUBLIC_IP_QUERY_URL = "/latest/meta-data/public-ipv4";
+      private final String localPrivateAddress;
 
     public Ec2MultiRegionSnitch() throws IOException, ConfigurationException
     {
-        super();
-        String publicIp = EC2MetadataUtils.getData(PUBLIC_IP_QUERY_URL);
+        this(new SnitchProperties());
+    }
+
+    public Ec2MultiRegionSnitch(SnitchProperties props) throws IOException, ConfigurationException
+    {
+        this(props, Ec2MetadataServiceConnector.create(props));
+    }
+
+    Ec2MultiRegionSnitch(SnitchProperties props, Ec2MetadataServiceConnector connector) throws IOException
+    {
+        super(props, connector);
+        String publicIp = connector.apiCall(PUBLIC_IP_QUERY_URL);
         if (publicIp == null) {
             throw new IOException("Failed to obtain public ip");
         }

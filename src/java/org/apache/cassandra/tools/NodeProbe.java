@@ -28,16 +28,8 @@ import java.net.UnknownHostException;
 import java.rmi.ConnectException;
 import java.rmi.server.RMIClientSocketFactory;
 import java.rmi.server.RMISocketFactory;
-import java.util.AbstractMap;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Comparator;
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.Map.Entry;
-import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -75,6 +67,7 @@ import org.apache.cassandra.batchlog.BatchlogManagerMBean;
 import org.apache.cassandra.db.ColumnFamilyStoreMBean;
 import org.apache.cassandra.db.compaction.CompactionManager;
 import org.apache.cassandra.db.compaction.CompactionManagerMBean;
+import org.apache.cassandra.exceptions.InvalidRequestException;
 import org.apache.cassandra.fql.FullQueryLoggerOptions;
 import org.apache.cassandra.fql.FullQueryLoggerOptionsCompositeData;
 import org.apache.cassandra.gms.FailureDetector;
@@ -85,13 +78,17 @@ import org.apache.cassandra.hints.HintsService;
 import org.apache.cassandra.hints.HintsServiceMBean;
 import org.apache.cassandra.locator.DynamicEndpointSnitchMBean;
 import org.apache.cassandra.locator.EndpointSnitchInfoMBean;
+import org.apache.cassandra.locator.InetAddressAndPort;
 import org.apache.cassandra.metrics.CassandraMetricsRegistry;
 import org.apache.cassandra.metrics.StorageMetrics;
 import org.apache.cassandra.metrics.TableMetrics;
 import org.apache.cassandra.metrics.ThreadPoolMetrics;
 import org.apache.cassandra.net.MessagingService;
 import org.apache.cassandra.net.MessagingServiceMBean;
+import org.apache.cassandra.repair.autorepair.AutoRepairConfig;
 import org.apache.cassandra.service.ActiveRepairServiceMBean;
+import org.apache.cassandra.service.AutoRepairService;
+import org.apache.cassandra.service.AutoRepairServiceMBean;
 import org.apache.cassandra.service.CacheService;
 import org.apache.cassandra.service.CacheServiceMBean;
 import org.apache.cassandra.service.GCInspector;
@@ -154,6 +151,8 @@ public class NodeProbe implements AutoCloseable
     protected NetworkPermissionsCacheMBean npcProxy;
     protected PermissionsCacheMBean pcProxy;
     protected RolesCacheMBean rcProxy;
+    protected AutoRepairServiceMBean autoRepairProxy;
+
     protected Output output;
     private boolean failed;
 
@@ -278,6 +277,8 @@ public class NodeProbe implements AutoCloseable
             pcProxy = JMX.newMBeanProxy(mbeanServerConn, name, PermissionsCacheMBean.class);
             name = new ObjectName(AuthCache.MBEAN_NAME_BASE + RolesCache.CACHE_NAME);
             rcProxy = JMX.newMBeanProxy(mbeanServerConn, name, RolesCacheMBean.class);
+            name = new ObjectName(AutoRepairService.MBEAN_NAME);
+            autoRepairProxy = JMX.newMBeanProxy(mbeanServerConn, name, AutoRepairServiceMBean.class);
         }
         catch (MalformedObjectNameException e)
         {
@@ -463,6 +464,11 @@ public class NodeProbe implements AutoCloseable
     public void forceCompactionKeysIgnoringGcGrace(String keyspaceName, String tableName, String... partitionKeysIgnoreGcGrace) throws IOException, ExecutionException, InterruptedException
     {
         ssProxy.forceCompactionKeysIgnoringGcGrace(keyspaceName, tableName, partitionKeysIgnoreGcGrace);
+    }
+
+    public UUID calculateSchemaDigest()
+    {
+        return ssProxy.calculateSchemaDigest();
     }
 
     public void forceKeyspaceFlush(String keyspaceName, String... tableNames) throws IOException, ExecutionException, InterruptedException
@@ -1309,6 +1315,36 @@ public class NodeProbe implements AutoCloseable
         ssProxy.setConcurrentCompactors(value);
     }
 
+    public String getAuthenticator()
+    {
+        return ssProxy.getAuthenticator();
+    }
+
+    public void setAuthenticator(String value)
+    {
+        ssProxy.setAuthenticator(value);
+    }
+
+    public String getAuthorizer()
+    {
+        return ssProxy.getAuthorizer();
+    }
+
+    public void setAuthorizer(String value)
+    {
+        ssProxy.setAuthorizer(value);
+    }
+
+    public String getRoleManager()
+    {
+        return ssProxy.getRoleManager();
+    }
+
+    public void setRoleManager(String value)
+    {
+        ssProxy.setRoleManager(value);
+    }
+
     public int getConcurrentCompactors()
     {
         return ssProxy.getConcurrentCompactors();
@@ -1630,8 +1666,42 @@ public class NodeProbe implements AutoCloseable
                             new ObjectName("org.apache.cassandra.metrics:type=Cache,scope=" + cacheType + ",name=MissLatency"),
                             CassandraMetricsRegistry.JmxTimerMBean.class).getDurationUnit();
                 default:
-                    throw new RuntimeException("Unknown cache metric name.");
+                    throw new RuntimeException("Unknown Cache metric name " + metricName);
 
+            }
+        }
+        catch (MalformedObjectNameException e)
+        {
+            throw new RuntimeException(e);
+        }
+    }
+
+    /**
+     * Retrieve buffer pool metrics based on the buffer pool type
+     * @param poolType networking chunk-cache
+     * @param metricName UsedSize Size
+     * @return
+     */
+    public Object getBufferPoolMetric(String poolType, String metricName)
+    {
+        try
+        {
+            switch (metricName)
+            {
+                case "UsedSize":
+                case "OverflowSize":
+                case "Capacity":
+                case "Size":
+                    return JMX.newMBeanProxy(mbeanServerConn,
+                           new ObjectName("org.apache.cassandra.metrics:type=BufferPool,scope=" + poolType + ",name=" + metricName),
+                           CassandraMetricsRegistry.JmxGaugeMBean.class).getValue();
+                case "Hits":
+                case "Misses":
+                    return JMX.newMBeanProxy(mbeanServerConn,
+                    new ObjectName("org.apache.cassandra.metrics:type=BufferPool,scope=" + poolType + ",name=" + metricName),
+                    CassandraMetricsRegistry.JmxMeterMBean.class).getCount();
+                default:
+                    throw new RuntimeException("Unknown BufferPool metric name " + metricName);
             }
         }
         catch (MalformedObjectNameException e)
@@ -1691,7 +1761,7 @@ public class NodeProbe implements AutoCloseable
               case ThreadPoolMetrics.CURRENTLY_BLOCKED_TASKS:
                   return JMX.newMBeanProxy(mbeanServerConn, oName, JmxReporter.JmxCounterMBean.class).getCount();
               default:
-                  throw new AssertionError("Unknown metric name " + metricName);
+                  throw new AssertionError("Unknown ThreadPools metric name " + metricName);
           }
       }
       catch (Exception e)
@@ -2119,6 +2189,111 @@ public class NodeProbe implements AutoCloseable
     public int getDefaultKeyspaceReplicationFactor()
     {
         return ssProxy.getDefaultKeyspaceReplicationFactor();
+    }
+
+    public AutoRepairConfig getAutoRepairConfig() {
+        return autoRepairProxy.getAutoRepairConfig();
+    }
+
+    public void setAutoRepairEnabled(AutoRepairConfig.RepairType repairType, boolean enabled)
+    {
+        autoRepairProxy.setAutoRepairEnabled(repairType, enabled);
+    }
+
+    public void setRepairThreads(AutoRepairConfig.RepairType repairType, int repairThreads)
+    {
+        autoRepairProxy.setRepairThreads(repairType, repairThreads);
+    }
+
+    public void setRepairPriorityForHosts(AutoRepairConfig.RepairType repairType, Set<InetAddressAndPort> hosts)
+    {
+        autoRepairProxy.setRepairPriorityForHosts(repairType, hosts);
+    }
+
+    public Set<InetAddressAndPort> getRepairPriorityForHosts(AutoRepairConfig.RepairType repairType)
+    {
+        return autoRepairProxy.getRepairHostPriority(repairType);
+    }
+
+    public void setForceRepairForHosts(AutoRepairConfig.RepairType repairType, Set<InetAddressAndPort> hosts){
+        autoRepairProxy.setForceRepairForHosts(repairType, hosts);
+    }
+
+    public void setRepairSubRangeNum(AutoRepairConfig.RepairType repairType, int repairSubRanges)
+    {
+        autoRepairProxy.setRepairSubRangeNum(repairType, repairSubRanges);
+    }
+
+    public void setRepairMinInterval(AutoRepairConfig.RepairType repairType, String minRepairInterval)
+    {
+        autoRepairProxy.setRepairMinInterval(repairType, minRepairInterval);
+    }
+
+    public void setAutoRepairHistoryClearDeleteHostsBufferDuration(String duration)
+    {
+        autoRepairProxy.setAutoRepairHistoryClearDeleteHostsBufferDuration(duration);
+    }
+
+    public void setAutoRepairMaxRetriesCount(int retries)
+    {
+        autoRepairProxy.setAutoRepairMaxRetriesCount(retries);
+    }
+
+    public void setAutoRepairRetryBackoff(String interval)
+    {
+        autoRepairProxy.setAutoRepairRetryBackoff(interval);
+    }
+
+    public void setRepairSSTableCountHigherThreshold(AutoRepairConfig.RepairType repairType, int ssTableHigherThreshold)
+    {
+        autoRepairProxy.setRepairSSTableCountHigherThreshold(repairType, ssTableHigherThreshold);
+    }
+
+    public void setAutoRepairTableMaxRepairTime(AutoRepairConfig.RepairType repairType, String autoRepairTableMaxRepairTime)
+    {
+        autoRepairProxy.setAutoRepairTableMaxRepairTime(repairType, autoRepairTableMaxRepairTime);
+    }
+
+    public void setAutoRepairIgnoreDCs(AutoRepairConfig.RepairType repairType, Set<String> ignoreDCs)
+    {
+        autoRepairProxy.setIgnoreDCs(repairType, ignoreDCs);
+    }
+
+    public void setParallelRepairPercentageInGroup(AutoRepairConfig.RepairType repairType, int percentageInGroup) {
+        autoRepairProxy.setParallelRepairPercentageInGroup(repairType, percentageInGroup);
+    }
+
+    public void setParallelRepairCountInGroup(AutoRepairConfig.RepairType repairType, int countInGroup) {
+        autoRepairProxy.setParallelRepairCountInGroup(repairType, countInGroup);
+    }
+
+    public void setPrimaryTokenRangeOnly(AutoRepairConfig.RepairType repairType, boolean primaryTokenRangeOnly)
+    {
+        autoRepairProxy.setPrimaryTokenRangeOnly(repairType, primaryTokenRangeOnly);
+    }
+
+    public void setMVRepairEnabled(AutoRepairConfig.RepairType repairType, boolean enabled)
+    {
+        autoRepairProxy.setMVRepairEnabled(repairType, enabled);
+    }
+
+    public List<String> mutateSSTableRepairedState(boolean repair, boolean preview, String keyspace, List<String> tables) throws InvalidRequestException
+    {
+        return ssProxy.mutateSSTableRepairedState(repair, preview, keyspace, tables);
+    }
+
+    public List<String> getTablesForKeyspace(String keyspace) {
+        return ssProxy.getTablesForKeyspace(keyspace);
+    }
+
+    public void setRepairSessionTimeout(AutoRepairConfig.RepairType repairType, String timeout)
+    {
+        autoRepairProxy.setRepairSessionTimeout(repairType, timeout);
+    }
+
+    public Set<String> getOnGoingRepairHostIds(AutoRepairConfig.RepairType type)
+    {
+        return autoRepairProxy.getOnGoingRepairHostIds(type);
     }
 }
 

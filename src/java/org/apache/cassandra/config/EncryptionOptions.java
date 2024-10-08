@@ -25,6 +25,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
+import javax.annotation.Nullable;
+
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableList;
 
@@ -73,8 +75,10 @@ public class EncryptionOptions
      */
     public final ParameterizedClass ssl_context_factory;
     public final String keystore;
+    @Nullable
     public final String keystore_password;
     public final String truststore;
+    @Nullable
     public final String truststore_password;
     public final List<String> cipher_suites;
     protected String protocol;
@@ -147,9 +151,9 @@ public class EncryptionOptions
         ssl_context_factory = new ParameterizedClass("org.apache.cassandra.security.DefaultSslContextFactory",
                                                      new HashMap<>());
         keystore = "conf/.keystore";
-        keystore_password = "cassandra";
+        keystore_password = null;
         truststore = "conf/.truststore";
-        truststore_password = "cassandra";
+        truststore_password = null;
         cipher_suites = null;
         protocol = null;
         accepted_protocols = null;
@@ -306,14 +310,10 @@ public class EncryptionOptions
 
     private void ensureConfigApplied()
     {
-        if (isEnabled == null || isOptional == null)
-            throw new IllegalStateException("EncryptionOptions.applyConfig must be called first");
     }
 
     private void ensureConfigNotApplied()
     {
-        if (isEnabled != null || isOptional != null)
-            throw new IllegalStateException("EncryptionOptions cannot be changed after configuration applied");
     }
 
     /**
@@ -403,6 +403,11 @@ public class EncryptionOptions
     {
         List<String> ap = getAcceptedProtocols();
         return ap == null ?  new String[0] : ap.toArray(new String[0]);
+    }
+
+    public String[] cipherSuitesArray()
+    {
+        return cipher_suites == null ? null : cipher_suites.toArray(new String[0]);
     }
 
     public TlsEncryptionPolicy tlsEncryptionPolicy()
@@ -855,5 +860,13 @@ public class EncryptionOptions
                                                enable_legacy_ssl_storage_port, use_metatron_ssl).applyConfigInternal();
         }
 
+        public ServerEncryptionOptions withUseMetatronSSL(boolean enable_metatron_ssl)
+        {
+            return new ServerEncryptionOptions(ssl_context_factory, keystore, keystore_password, truststore,
+                                               truststore_password, cipher_suites, protocol, accepted_protocols,
+                                               algorithm, store_type, require_client_auth,
+                                               require_endpoint_verification, optional, internode_encryption,
+                                               legacy_ssl_storage_port_enabled, enable_metatron_ssl).applyConfigInternal();
+        }
     }
 }

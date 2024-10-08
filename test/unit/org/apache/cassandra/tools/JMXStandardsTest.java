@@ -32,6 +32,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.SortedMap;
+import java.util.UUID;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeoutException;
 import java.util.regex.Pattern;
@@ -50,6 +51,9 @@ import org.junit.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import org.apache.cassandra.exceptions.InvalidRequestException;
+import org.apache.cassandra.locator.InetAddressAndPort;
+import org.apache.cassandra.repair.autorepair.AutoRepairConfig;
 import org.apache.cassandra.utils.BreaksJMX;
 import org.assertj.core.api.Assertions;
 import org.reflections.Reflections;
@@ -81,6 +85,7 @@ public class JMXStandardsTest
                                                        .add(ByteBuffer.class)
                                                        .add(InetAddress.class)
                                                        .add(File.class)
+                                                       .add(UUID.class)
                                                        .add(List.class).add(Map.class).add(Set.class).add(SortedMap.class).add(Collection.class)
                                                        .add(ObjectName.class).add(TabularData.class).add(CompositeData.class)
                                                        // Exceptions
@@ -98,6 +103,10 @@ public class JMXStandardsTest
                                                        .add(IllegalStateException.class)
                                                        .add(ClassNotFoundException.class)
                                                        .add(OpenDataException.class)
+                                                       .add(InvalidRequestException.class)
+                                                       .add(AutoRepairConfig.RepairType.class)
+                                                       .add(InetAddressAndPort.class)
+                                                       .add(AutoRepairConfig.class)
                                                        .build();
     /**
      * This list is a set of types under java.* and javax.*, but are too vague that could cause issues; this does not

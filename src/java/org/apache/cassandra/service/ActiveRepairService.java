@@ -45,9 +45,11 @@ import org.apache.cassandra.concurrent.ExecutorPlus;
 import org.apache.cassandra.config.Config;
 import org.apache.cassandra.config.DurationSpec;
 import org.apache.cassandra.db.compaction.CompactionManager;
+import org.apache.cassandra.repair.Scheduler;
 import org.apache.cassandra.locator.AbstractReplicationStrategy;
 import org.apache.cassandra.locator.EndpointsByRange;
 import org.apache.cassandra.locator.EndpointsForRange;
+import org.apache.cassandra.service.disk.usage.DiskUsageMonitor;
 import org.apache.cassandra.utils.ExecutorUtils;
 import org.apache.cassandra.repair.state.CoordinatorState;
 import org.apache.cassandra.repair.state.ParticipateState;
@@ -306,6 +308,19 @@ public class ActiveRepairService implements IEndpointStateChangeSubscriber, IFai
         return DatabaseDescriptor.getRepairSessionSpaceInMiB();
     }
 
+    @Override
+    public int getConcurrentMerkleTreeRequests()
+    {
+        return DatabaseDescriptor.getConcurrentMerkleTreeRequests();
+    }
+
+    @Override
+    public void setConcurrentMerkleTreeRequests(int value)
+    {
+        logger.info("Setting concurrent_merkle_tree_requests to {}", value);
+        DatabaseDescriptor.setConcurrentMerkleTreeRequests(value);
+    }
+
     public List<CompositeData> getRepairStats(List<String> schemaArgs, String rangeString)
     {
         List<CompositeData> stats = new ArrayList<>();
@@ -387,6 +402,7 @@ public class ActiveRepairService implements IEndpointStateChangeSubscriber, IFai
                                              boolean repairPaxos,
                                              boolean paxosOnly,
                                              ExecutorPlus executor,
+                                             Scheduler validationScheduler,
                                              String... cfnames)
     {
         if (repairPaxos && previewKind != PreviewKind.NONE)
@@ -398,7 +414,7 @@ public class ActiveRepairService implements IEndpointStateChangeSubscriber, IFai
         if (cfnames.length == 0)
             return null;
 
-        final RepairSession session = new RepairSession(parentRepairSession, range, keyspace,
+        final RepairSession session = new RepairSession(parentRepairSession, validationScheduler, range, keyspace,
                                                         parallelismDegree, isIncremental, pullRepair,
                                                         previewKind, optimiseStreams, repairPaxos, paxosOnly, cfnames);
         repairs.getIfPresent(parentRepairSession).register(session.state);
@@ -584,8 +600,29 @@ public class ActiveRepairService implements IEndpointStateChangeSubscriber, IFai
         return true;
     }
 
+    public static boolean verifyDiskHeadroomThreshold(TimeUUID parentRepairSession, PreviewKind previewKind, boolean isIncremental)
+    {
+        if (!isIncremental) // disk headroom is required for anti-compaction which is only performed by incremental repair
+            return true;
+
+        double diskUsage = DiskUsageMonitor.instance.getDiskUsage();
+        double rejectRatio = ActiveRepairService.instance.getIncrementalRepairDiskHeadroomRejectRatio();
+
+        if (diskUsage + rejectRatio > 1)
+        {
+            logger.error("[{}] Rejecting incoming repair, disk usage ({}%) above threshold ({}%)",
+                         previewKind.logPrefix(parentRepairSession), String.format("%.2f", diskUsage * 100), String.format("%.2f", (1 - rejectRatio) * 100));
+            return false;
+        }
+
+        return true;
+    }
+
     public TimeUUID prepareForRepair(TimeUUID parentRepairSession, InetAddressAndPort coordinator, Set<InetAddressAndPort> endpoints, RepairOption options, boolean isForcedRepair, List<ColumnFamilyStore> columnFamilyStores)
     {
+        if (!verifyDiskHeadroomThreshold(parentRepairSession, options.getPreviewKind(), options.isIncremental()))
+            failRepair(parentRepairSession, "Rejecting incoming repair, disk usage above threshold"); // failRepair throws exception
+
         if (!verifyCompactionsPendingThreshold(parentRepairSession, options.getPreviewKind()))
             failRepair(parentRepairSession, "Rejecting incoming repair, pending compactions above threshold"); // failRepair throws exception
 
@@ -966,6 +1003,16 @@ public class ActiveRepairService implements IEndpointStateChangeSubscriber, IFai
     public void setRepairPendingCompactionRejectThreshold(int value)
     {
         DatabaseDescriptor.setRepairPendingCompactionRejectThreshold(value);
+    }
+
+    public double getIncrementalRepairDiskHeadroomRejectRatio()
+    {
+        return DatabaseDescriptor.getIncrementalRepairDiskHeadroomRejectRatio();
+    }
+
+    public void setIncrementalRepairDiskHeadroomRejectRatio(double value)
+    {
+        DatabaseDescriptor.setIncrementalRepairDiskHeadroomRejectRatio(value);
     }
 
     /**

@@ -58,6 +58,7 @@ import com.datastax.driver.core.DataType;
 import com.datastax.driver.core.ResultSet;
 import com.datastax.driver.core.exceptions.UnauthorizedException;
 
+import com.datastax.shaded.netty.channel.EventLoopGroup;
 import org.apache.cassandra.SchemaLoader;
 import org.apache.cassandra.ServerTestUtils;
 import org.apache.cassandra.Util;
@@ -144,7 +145,7 @@ public abstract class CQLTester
     protected static int jmxPort;
     protected static MBeanServerConnection jmxConnection;
 
-    protected static final int nativePort;
+    protected static int nativePort;
     protected static final InetAddress nativeAddr;
     protected static final Set<InetAddressAndPort> remoteAddrs = new HashSet<>();
     private static final Map<Pair<User, ProtocolVersion>, Cluster> clusters = new HashMap<>();
@@ -161,6 +162,16 @@ public abstract class CQLTester
                                                                    "(\\((?:\\s*\\w+\\s*\\()?%<s\\))?",
                                                                    CREATE_INDEX_NAME_REGEX);
     private static final Pattern CREATE_INDEX_PATTERN = Pattern.compile(CREATE_INDEX_REGEX, Pattern.CASE_INSENSITIVE);
+
+    public static final NettyOptions IMMEDIATE_CONNECTION_SHUTDOWN_NETTY_OPTIONS = new NettyOptions()
+    {
+        @Override
+        public void onClusterClose(EventLoopGroup eventLoopGroup)
+        {
+            // shutdown driver connection immediatelly
+            eventLoopGroup.shutdownGracefully(0, 0, TimeUnit.SECONDS).syncUninterruptibly();
+        }
+    };
 
     /** Return the current server version if supported by the driver, else
      * the latest that is supported.
@@ -179,8 +190,6 @@ public abstract class CQLTester
         checkProtocolVersion();
 
         nativeAddr = InetAddress.getLoopbackAddress();
-        nativePort = getAutomaticallyAllocatedPort(nativeAddr);
-
         ServerTestUtils.daemonInitialization();
     }
 
@@ -307,12 +316,19 @@ public abstract class CQLTester
     @BeforeClass
     public static void setUpClass()
     {
-        if (ROW_CACHE_SIZE_IN_MIB > 0)
-            DatabaseDescriptor.setRowCacheSizeInMiB(ROW_CACHE_SIZE_IN_MIB);
-        StorageService.instance.setPartitionerUnsafe(Murmur3Partitioner.instance);
+        prePrepareServer();
 
         // Once per-JVM is enough
         prepareServer();
+    }
+
+    protected static void prePrepareServer()
+    {
+        System.setProperty("cassandra.superuser_setup_delay_ms", "0");
+
+        if (ROW_CACHE_SIZE_IN_MIB > 0)
+            DatabaseDescriptor.setRowCacheSizeInMiB(ROW_CACHE_SIZE_IN_MIB);
+        StorageService.instance.setPartitionerUnsafe(Murmur3Partitioner.instance);
     }
 
     @AfterClass
@@ -552,6 +568,7 @@ public abstract class CQLTester
 
     private static void startServer(Consumer<Server.Builder> decorator)
     {
+        nativePort = getAutomaticallyAllocatedPort(nativeAddr);
         Server.Builder serverBuilder = new Server.Builder().withHost(nativeAddr).withPort(nativePort);
         decorator.accept(serverBuilder);
         server = serverBuilder.build();
@@ -574,7 +591,9 @@ public abstract class CQLTester
                                          .addContactPoints(nativeAddr)
                                          .withClusterName("Test Cluster")
                                          .withPort(nativePort)
-                                         .withSocketOptions(socketOptions);
+                                         .withSocketOptions(socketOptions)
+                                         .withNettyOptions(IMMEDIATE_CONNECTION_SHUTDOWN_NETTY_OPTIONS);
+
         if (user != null)
             builder.withCredentials(user.username, user.password);
 
@@ -867,7 +886,12 @@ public abstract class CQLTester
 
     protected String createTable(String keyspace, String query)
     {
-        String currentTable = createTableName();
+        return createTable(keyspace, query, null);
+    }
+
+    protected String createTable(String keyspace, String query, String tableName)
+    {
+        String currentTable = createTableName(tableName);
         String fullQuery = formatQuery(keyspace, query);
         logger.info(fullQuery);
         schemaChange(fullQuery);
@@ -876,7 +900,12 @@ public abstract class CQLTester
 
     protected String createTableName()
     {
-        String currentTable = String.format("table_%02d", seqNumber.getAndIncrement());
+        return createTableName(null);
+    }
+
+    protected String createTableName(String tableName)
+    {
+        String currentTable = tableName == null ? String.format("table_%02d", seqNumber.getAndIncrement()) : tableName;
         tables.add(currentTable);
         return currentTable;
     }
@@ -1288,7 +1317,10 @@ public abstract class CQLTester
 
     protected SimpleClient newSimpleClient(ProtocolVersion version) throws IOException
     {
-        return new SimpleClient(nativeAddr.getHostAddress(), nativePort, version, version.isBeta(), new EncryptionOptions().applyConfig())
+        EncryptionOptions encryptionOptions = new EncryptionOptions();
+        encryptionOptions.setEnabled(false);
+        encryptionOptions.setOptional(false);
+        return new SimpleClient(nativeAddr.getHostAddress(), nativePort, version, version.isBeta(), encryptionOptions.applyConfig())
                .connect(false, false);
     }
 

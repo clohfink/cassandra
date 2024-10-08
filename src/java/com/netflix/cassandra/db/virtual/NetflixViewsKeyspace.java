@@ -18,6 +18,7 @@
 package com.netflix.cassandra.db.virtual;
 
 import com.google.common.collect.ImmutableList;
+
 import org.apache.cassandra.db.virtual.VirtualKeyspace;
 import org.apache.cassandra.db.virtual.VirtualTable;
 
@@ -29,8 +30,21 @@ public final class NetflixViewsKeyspace extends VirtualKeyspace
     private NetflixViewsKeyspace()
     {
         super(NAME, new ImmutableList.Builder<VirtualTable>()
-                .add(new PriamConfigTable(NAME))
                 .add(new DistributedJsonTable(NAME))
+                .add(new ExcessSSTablesTable(NAME))
+                .add(new TableHLL(NAME))
+                .add(new ClusterPartitionCount(NAME))
+                .add(new PriamConfigTable(NAME))
                 .build());
+    }
+
+    public VirtualTable getTable(String name)
+    {
+        for (VirtualTable table : tables()) {
+            if (table.metadata().name.equals(name)) {
+                return table;
+            }
+        }
+        return null;
     }
 }

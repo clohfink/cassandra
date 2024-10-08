@@ -26,6 +26,7 @@ import java.util.concurrent.TimeUnit;
 
 import com.google.common.base.Predicates;
 import org.apache.cassandra.dht.Murmur3Partitioner;
+import org.apache.cassandra.exceptions.RequestFailureReason;
 import org.apache.cassandra.locator.EndpointsForToken;
 import org.apache.cassandra.locator.ReplicaPlans;
 import org.junit.Before;
@@ -47,6 +48,7 @@ import org.apache.cassandra.locator.TokenMetadata;
 import org.apache.cassandra.net.Message;
 import org.apache.cassandra.net.Verb;
 import org.apache.cassandra.schema.KeyspaceParams;
+import org.apache.cassandra.transport.Dispatcher;
 import org.apache.cassandra.utils.ByteBufferUtil;
 
 import static java.util.concurrent.TimeUnit.DAYS;
@@ -147,22 +149,28 @@ public class WriteResponseHandlerTest
     {
         long startingCount = ks.metric.idealCLWriteLatency.latency.getCount();
         //Specify query start time in past to ensure minimum latency measurement
-        AbstractWriteResponseHandler awr = createWriteResponseHandler(ConsistencyLevel.LOCAL_QUORUM, ConsistencyLevel.EACH_QUORUM, nanoTime() - DAYS.toNanos(1));
+        AbstractWriteResponseHandler awr = createWriteResponseHandler(ConsistencyLevel.LOCAL_QUORUM, ConsistencyLevel.EACH_QUORUM, new Dispatcher.RequestTime(nanoTime() - DAYS.toNanos(1)));
 
         //dc1
         awr.onResponse(createDummyMessage(0));
         awr.onResponse(createDummyMessage(1));
+
+        // there are not enough responses for ideal EACH_QUORUM yet
+        assertEquals(startingCount, ks.metric.idealCLWriteLatency.latency.getCount());
+
         //dc2
         awr.onResponse(createDummyMessage(4));
         awr.onResponse(createDummyMessage(5));
+
+        // there are enough responses for ideal EACH_QUORUM, we should not wait for all responses
+        assertTrue( TimeUnit.DAYS.toMicros(1) < ks.metric.idealCLWriteLatency.totalLatency.getCount());
+        assertEquals(startingCount + 1, ks.metric.idealCLWriteLatency.latency.getCount());
 
         //Don't need the others
         awr.expired();
         awr.expired();
 
         assertEquals(0,  ks.metric.writeFailedIdealCL.getCount());
-        assertTrue( TimeUnit.DAYS.toMicros(1) < ks.metric.idealCLWriteLatency.totalLatency.getCount());
-        assertEquals(startingCount + 1, ks.metric.idealCLWriteLatency.latency.getCount());
     }
 
     /**
@@ -234,6 +242,30 @@ public class WriteResponseHandlerTest
         assertEquals(0, ks.metric.idealCLWriteLatency.totalLatency.getCount());
     }
 
+    @Test
+    public void failedIdealCLIncrementsStatForExplicitOnFailure()
+    {
+        AbstractWriteResponseHandler awr = createWriteResponseHandler(ConsistencyLevel.LOCAL_QUORUM, ConsistencyLevel.EACH_QUORUM);
+
+        long startingCountForWriteFailedIdealCL = ks.metric.writeFailedIdealCL.getCount();
+        long startingCountForIdealCLWriteLatency = ks.metric.idealCLWriteLatency.totalLatency.getCount();
+
+
+        //Succeed in local DC
+        awr.onResponse(createDummyMessage(0));
+        awr.onResponse(createDummyMessage(1));
+        awr.onResponse(createDummyMessage(2));
+
+
+        //Fail in remote DC
+        awr.onFailure(targets.get(3).endpoint(), RequestFailureReason.TIMEOUT);
+        awr.onFailure(targets.get(4).endpoint(), RequestFailureReason.TIMEOUT);
+        awr.onResponse(createDummyMessage(5));
+
+        assertEquals(startingCountForWriteFailedIdealCL + 1, ks.metric.writeFailedIdealCL.getCount());
+        assertEquals(startingCountForIdealCLWriteLatency, ks.metric.idealCLWriteLatency.totalLatency.getCount());
+    }
+
     /**
      * Validate that failing to achieve ideal CL doesn't increase the failure counter when not meeting CL
      * @throws Throwable
@@ -259,16 +291,40 @@ public class WriteResponseHandlerTest
         assertEquals(startingCount, ks.metric.writeFailedIdealCL.getCount());
     }
 
+    @Test
+    public void failedIdealCLDoesNotIncrementsStatOnExplicitQueryFailure()
+    {
+        AbstractWriteResponseHandler awr = createWriteResponseHandler(ConsistencyLevel.LOCAL_QUORUM, ConsistencyLevel.EACH_QUORUM);
+
+        long startingCountForWriteFailedIdealCL = ks.metric.writeFailedIdealCL.getCount();
+        long startingCountForIdealCLWriteLatency = ks.metric.idealCLWriteLatency.totalLatency.getCount();
+
+
+        //Fail in local DC
+        awr.onFailure(targets.get(0).endpoint(), RequestFailureReason.TIMEOUT);
+        awr.onFailure(targets.get(1).endpoint(), RequestFailureReason.TIMEOUT);
+        awr.onResponse(createDummyMessage(2));
+
+
+        //Fail in remote DC
+        awr.onFailure(targets.get(3).endpoint(), RequestFailureReason.TIMEOUT);
+        awr.onFailure(targets.get(4).endpoint(), RequestFailureReason.TIMEOUT);
+        awr.onResponse(createDummyMessage(5));
+
+        assertEquals(startingCountForWriteFailedIdealCL, ks.metric.writeFailedIdealCL.getCount());
+        assertEquals(startingCountForIdealCLWriteLatency, ks.metric.idealCLWriteLatency.totalLatency.getCount());
+    }
+
 
     private static AbstractWriteResponseHandler createWriteResponseHandler(ConsistencyLevel cl, ConsistencyLevel ideal)
     {
-        return createWriteResponseHandler(cl, ideal, nanoTime());
+        return createWriteResponseHandler(cl, ideal, Dispatcher.RequestTime.forImmediateExecution());
     }
 
-    private static AbstractWriteResponseHandler createWriteResponseHandler(ConsistencyLevel cl, ConsistencyLevel ideal, long queryStartTime)
+    private static AbstractWriteResponseHandler createWriteResponseHandler(ConsistencyLevel cl, ConsistencyLevel ideal, Dispatcher.RequestTime requestTime)
     {
         return ks.getReplicationStrategy().getWriteResponseHandler(ReplicaPlans.forWrite(ks, cl, targets, pending, Predicates.alwaysTrue(), ReplicaPlans.writeAll),
-                                                                   null, WriteType.SIMPLE, null, queryStartTime, ideal);
+                                                                   null, WriteType.SIMPLE, null, requestTime, ideal);
     }
 
     private static Message createDummyMessage(int target)

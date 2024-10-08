@@ -17,6 +17,7 @@
  */
 package org.apache.cassandra.transport.messages;
 
+import java.nio.ByteBuffer;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 
@@ -35,9 +36,11 @@ import org.apache.cassandra.service.ClientState;
 import org.apache.cassandra.service.QueryState;
 import org.apache.cassandra.tracing.Tracing;
 import org.apache.cassandra.transport.CBUtil;
+import org.apache.cassandra.transport.Dispatcher;
 import org.apache.cassandra.transport.Message;
 import org.apache.cassandra.transport.ProtocolException;
 import org.apache.cassandra.transport.ProtocolVersion;
+import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.JVMStabilityInspector;
 import org.apache.cassandra.utils.MD5Digest;
 import org.apache.cassandra.utils.NoSpamLogger;
@@ -125,7 +128,7 @@ public class ExecuteMessage extends Message.Request
     }
 
     @Override
-    protected Message.Response execute(QueryState state, long queryStartNanoTime, boolean traceRequest)
+    protected Message.Response execute(QueryState state, Dispatcher.RequestTime requestTime, boolean traceRequest)
     {
         QueryHandler.Prepared prepared = null;
         try
@@ -148,7 +151,6 @@ public class ExecuteMessage extends Message.Request
                 nospam.error(msg);
             }
 
-
             CQLStatement statement = prepared.statement;
             options.prepare(statement.getBindVariables());
 
@@ -164,7 +166,7 @@ public class ExecuteMessage extends Message.Request
 
             long requestStartTime = currentTimeMillis();
 
-            Message.Response response = handler.processPrepared(statement, state, queryOptions, getCustomPayload(), queryStartNanoTime);
+            Message.Response response = handler.processPrepared(statement, state, queryOptions, getCustomPayload(), requestTime);
 
             QueryEvents.instance.notifyExecuteSuccess(prepared.statement, prepared.rawCQLStatement, options, state, requestStartTime, response);
 
@@ -224,7 +226,8 @@ public class ExecuteMessage extends Message.Request
         {
             ColumnSpecification cs = prepared.statement.getBindVariables().get(i);
             String boundName = cs.name.toString();
-            String boundValue = cs.type.asCQL3Type().toCQLLiteral(options.getValues().get(i), options.getProtocolVersion());
+            ByteBuffer bytes = options.getValues().get(i);
+            String boundValue = (bytes == ByteBufferUtil.UNSET_BYTE_BUFFER) ? "<unset>" : cs.type.asCQL3Type().toCQLLiteral(bytes, options.getProtocolVersion());
             if (boundValue.length() > 1000)
                 boundValue = boundValue.substring(0, 1000) + "...'";
 

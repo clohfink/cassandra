@@ -3,10 +3,10 @@
 # Consider the effects on 'o.a.c.i.s.LegacySSTableTest' before changing schemas in this file.
 #
 cluster_name: Test Cluster
-# memtable_allocation_type: heap_buffers
-memtable_allocation_type: offheap_objects
-commitlog_sync: batch
-commitlog_sync_batch_window_in_ms: 1.0
+memtable_allocation_type: heap_buffers
+# memtable_allocation_type: offheap_objects
+commitlog_sync: periodic
+commitlog_sync_period: 10s
 commitlog_segment_size: 5MiB
 commitlog_directory: build/test/cassandra/commitlog
 # commitlog_compression:
@@ -25,6 +25,8 @@ saved_caches_directory: build/test/cassandra/saved_caches
 data_file_directories:
     - build/test/cassandra/data
 disk_access_mode: mmap
+enable_dropped_columns: true
+key_cache_size: 32MiB
 seed_provider:
     - class_name: org.apache.cassandra.locator.SimpleSeedProvider
       parameters:
@@ -37,6 +39,11 @@ server_encryption_options:
     keystore_password: cassandra
     truststore: conf/.truststore
     truststore_password: cassandra
+    enabled: false
+    optional: false
+client_encryption_options:
+    enabled: false
+    optional: false
 incremental_backups: true
 concurrent_compactors: 4
 compaction_throughput: 0MiB/s
@@ -52,6 +59,8 @@ sasi_indexes_enabled: true
 materialized_views_enabled: true
 drop_compact_storage_enabled: true
 file_cache_enabled: true
+full_query_logging_options:
+  allow_nodetool_archive_command: true
 auto_hints_cleanup_enabled: true
 
 read_thresholds_enabled: true

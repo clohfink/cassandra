@@ -92,6 +92,7 @@ public class NodeTool
     public int execute(String... args)
     {
         List<Class<? extends NodeToolCmdRunnable>> commands = newArrayList(
+                AutoRepairStatus.class,
                 Assassinate.class,
                 CassHelp.class,
                 CfHistograms.class,
@@ -130,7 +131,10 @@ public class NodeTool
                 GarbageCollect.class,
                 GcStats.class,
                 GetAuditLog.class,
+                GetAuthenticator.class,
+                GetAuthorizer.class,
                 GetAuthCacheConfig.class,
+                GetAutoRepairConfig.class,
                 GetBatchlogReplayTrottle.class,
                 GetColumnIndexSize.class,
                 GetCompactionThreshold.class,
@@ -144,6 +148,7 @@ public class NodeTool
                 GetInterDCStreamThroughput.class,
                 GetLoggingLevels.class,
                 GetMaxHintWindow.class,
+                GetRoleManager.class,
                 GetSSTables.class,
                 GetSeeds.class,
                 GetSnapshotThrottle.class,
@@ -188,7 +193,10 @@ public class NodeTool
                 ResumeHandoff.class,
                 Ring.class,
                 Scrub.class,
+                SetAuthenticator.class,
+                SetAuthorizer.class,
                 SetAuthCacheConfig.class,
+                SetAutoRepairConfig.class,
                 SetBatchlogReplayThrottle.class,
                 SetCacheCapacity.class,
                 SetCacheKeysToSave.class,
@@ -203,6 +211,7 @@ public class NodeTool
                 SetInterDCStreamThroughput.class,
                 SetLoggingLevel.class,
                 SetMaxHintWindow.class,
+                SetRoleManager.class,
                 SetSnapshotThrottle.class,
                 SetStreamThroughput.class,
                 SetTimeout.class,
@@ -226,7 +235,9 @@ public class NodeTool
                 Verify.class,
                 Version.class,
                 ViewBuildStatus.class,
-                ForceCompact.class
+                ForceCompact.class,
+                CalculateSchemaDigest.class,
+                GetUnknownDc.class
         );
 
         Cli.CliBuilder<NodeToolCmdRunnable> builder = Cli.builder("nodetool");

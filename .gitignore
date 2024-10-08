@@ -1,6 +1,7 @@
 .gitignore
 
 # C*
+build
 build/
 src/gen-java/
 src/resources/org/apache/cassandra/config/
@@ -13,6 +14,7 @@ doc/build/
 lib/
 pylib/src/
 **/cqlshlib.xml
+pylib/cqlshlib/serverversion.py
 !lib/cassandra-driver-internal-only-*.zip
 !lib/puresasl-*.zip
 
@@ -110,3 +112,5 @@ pylib/venv*/
 pylib/.venv*/
 pylib/cqlshlib/cqlshbin.py
 pylib/.setupmeta.version
+
+conf/triggers/trigger-example.jar

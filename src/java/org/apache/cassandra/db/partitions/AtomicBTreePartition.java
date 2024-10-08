@@ -39,6 +39,7 @@ import org.apache.cassandra.utils.concurrent.OpOrder;
 import org.apache.cassandra.utils.memory.Cloner;
 import org.apache.cassandra.utils.memory.HeapCloner;
 import org.apache.cassandra.utils.memory.MemtableAllocator;
+import org.github.jamm.Unmetered;
 import com.google.common.annotations.VisibleForTesting;
 
 import static org.apache.cassandra.utils.Clock.Global.nanoTime;
@@ -83,6 +84,7 @@ public final class AtomicBTreePartition extends AbstractBTreePartition
      */
     private volatile int wasteTracker = TRACKER_NEVER_WASTED;
 
+    @Unmetered
     private final MemtableAllocator allocator;
     private volatile Holder ref;
 
@@ -376,7 +378,7 @@ public final class AtomicBTreePartition extends AbstractBTreePartition
             indexer.onInserted(insert);
 
             this.dataSize += data.dataSize();
-            onAllocatedOnHeap(data.unsharedHeapSizeExcludingData());
+            this.heapSize += data.unsharedHeapSizeExcludingData();
             if (inserted == null)
                 inserted = new ArrayList<>();
             inserted.add(data);
@@ -410,12 +412,11 @@ public final class AtomicBTreePartition extends AbstractBTreePartition
 
         public Cell<?> merge(Cell<?> previous, Cell<?> insert)
         {
-            if (insert != previous)
-            {
-                long timeDelta = Math.abs(insert.timestamp() - previous.timestamp());
-                if (timeDelta < colUpdateTimeDelta)
-                    colUpdateTimeDelta = timeDelta;
-            }
+            if (insert == previous)
+                return insert;
+            long timeDelta = Math.abs(insert.timestamp() - previous.timestamp());
+            if (timeDelta < colUpdateTimeDelta)
+                colUpdateTimeDelta = timeDelta;
             if (cloner != null)
                 insert = cloner.clone(insert);
             dataSize += insert.dataSize() - previous.dataSize();

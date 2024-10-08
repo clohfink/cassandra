@@ -25,6 +25,7 @@ import java.util.HashMap;
 import java.util.Map;
 
 import com.google.common.collect.Lists;
+import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
@@ -60,7 +61,8 @@ public class ScheduledCompactionsRandomPartitionerTest
         SchemaLoader.createKeyspace(KEYSPACE1,
                                     KeyspaceParams.simple(1),
                                     SchemaLoader.standardCFMD(KEYSPACE1, CF_STANDARDDLEVELED_SCHEDULED)
-                                                .compaction(CompactionParams.lcs(scheduledOpts)));
+                                                .compaction(CompactionParams.lcs(scheduledOpts))
+                                                .partitioner(RandomPartitioner.instance));
     }
 
     @Test
@@ -72,7 +74,17 @@ public class ScheduledCompactionsRandomPartitionerTest
                                                                       InetAddressAndPort.getByAddress(InetAddress.getByName("127.0.0.2")));
         keyspace = Keyspace.open(KEYSPACE1);
         cfsScheduled = keyspace.getColumnFamilyStore(CF_STANDARDDLEVELED_SCHEDULED);
-        LeveledCompactionStrategyTest.testGetScheduledCompaction(100, cfsScheduled);
+        Assert.assertEquals(RandomPartitioner.instance, cfsScheduled.getPartitioner());
+
+        try
+        {
+            LeveledCompactionStrategyTest.testGetScheduledCompaction(100, cfsScheduled);
+        }
+        catch (Exception e)
+        {
+            e.printStackTrace();
+            throw new RuntimeException(e);
+        }
         StorageService.instance.getTokenMetadata().clearUnsafe();
     }
 

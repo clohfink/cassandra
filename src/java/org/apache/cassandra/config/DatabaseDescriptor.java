@@ -46,6 +46,7 @@ import com.google.common.collect.ImmutableSet;
 import com.google.common.primitives.Ints;
 import com.google.common.primitives.Longs;
 import com.google.common.util.concurrent.RateLimiter;
+import org.apache.cassandra.repair.autorepair.AutoRepairConfig;
 import org.apache.commons.lang3.ArrayUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
@@ -900,6 +901,15 @@ public class DatabaseDescriptor
             conf.paxos_state_purging = PaxosStatePurging.legacy;
 
         logInitializationOutcome(logger);
+
+        if (conf.native_transport_min_backoff_on_queue_overload.toMilliseconds() <= 0)
+            throw new IllegalArgumentException("native_transport_min_backoff_on_queue_overload should be positive");
+
+        if (conf.native_transport_min_backoff_on_queue_overload.toMilliseconds() >= conf.native_transport_max_backoff_on_queue_overload.toMilliseconds())
+            throw new IllegalArgumentException(String.format("native_transport_min_backoff_on_queue_overload should be strictly less than native_transport_max_backoff_on_queue_overload, but %s >= %s",
+                                                             conf.native_transport_min_backoff_on_queue_overload,
+                                                             conf.native_transport_max_backoff_on_queue_overload));
+
     }
 
     @VisibleForTesting
@@ -1718,6 +1728,16 @@ public class DatabaseDescriptor
         return conf.num_tokens;
     }
 
+    public static int getPartitionCountCacheExpiryMinutes()
+    {
+        return conf.partition_count_cache_expiry_min.toMinutes();
+    }
+
+    public static void setPartitionCountCacheExpiryMinutes(int partitionCountCacheExpiryMinutes)
+    {
+        conf.partition_count_cache_expiry_min = new DurationSpec.IntMinutesBound(partitionCountCacheExpiryMinutes);
+    }
+
     public static boolean getDieOnUnknownGossipState()
     {
         return conf.die_on_unknown_gossip_state;
@@ -1825,11 +1845,6 @@ public class DatabaseDescriptor
         conf.write_request_timeout = new DurationSpec.LongMillisecondsBound(timeOutInMillis);
     }
 
-    public static boolean isUpgradeFrom30Possible()
-    {
-        return conf.upgrade_from_30_possible;
-    }
-
     public static long getCounterWriteRpcTimeout(TimeUnit unit)
     {
         return conf.counter_write_request_timeout.to(unit);
@@ -1838,6 +1853,11 @@ public class DatabaseDescriptor
     public static void setCounterWriteRpcTimeout(long timeOutInMillis)
     {
         conf.counter_write_request_timeout = new DurationSpec.LongMillisecondsBound(timeOutInMillis);
+    }
+
+    public static boolean isUpgradeFrom30Possible()
+    {
+        return conf.upgrade_from_30_possible;
     }
 
     public static long getCasContentionTimeout(TimeUnit unit)
@@ -1896,6 +1916,81 @@ public class DatabaseDescriptor
                          getWriteRpcTimeout(unit),
                          getCounterWriteRpcTimeout(unit),
                          getTruncateRpcTimeout(unit));
+    }
+
+    /**
+     * How much time the item is allowed to spend in (currently only Native) queue, compared to {@link #nativeTransportIdleTimeout()},
+     * before backpressure starts being applied.
+     *
+     * For example, setting this value to 0.5 means and having the largest of read/range/write/counter timeouts to 10 seconds
+     * means that if any item spends more than 5 seconds in the queue, backpressure will be applied to the socket associated
+     * with this queue.
+     *
+     * Set to 0 or any negative value to fully disable.
+     */
+    public static double getNativeTransportQueueMaxItemAgeThreshold()
+    {
+        return conf.native_transport_queue_max_item_age_threshold;
+    }
+
+    public static void setNativeTransportMaxQueueItemAgeThreshold(double threshold)
+    {
+        conf.native_transport_queue_max_item_age_threshold = threshold;
+    }
+
+    public static long getNativeTransportMinBackoffOnQueueOverload(TimeUnit timeUnit)
+    {
+        return conf.native_transport_min_backoff_on_queue_overload.to(timeUnit);
+    }
+
+    public static long getNativeTransportMaxBackoffOnQueueOverload(TimeUnit timeUnit)
+    {
+        return conf.native_transport_max_backoff_on_queue_overload.to(timeUnit);
+    }
+
+    public static void setNativeTransportBackoffOnQueueOverload(long minBackoffMillis,
+                                                                long maxBackoffMillis,
+                                                                TimeUnit timeUnit)
+    {
+        if (minBackoffMillis <= 0)
+            throw new IllegalArgumentException("native_transport_min_backoff_on_queue_overload should be positive");
+
+        if (minBackoffMillis >= maxBackoffMillis)
+            throw new IllegalArgumentException(String.format("native_transport_max_backoff_on_queue_overload should be greater than native_transport_min_backoff_on_queue_overload, but %s >= %s", minBackoffMillis, maxBackoffMillis));
+
+
+        conf.native_transport_min_backoff_on_queue_overload = new DurationSpec.LongMillisecondsBound(minBackoffMillis, timeUnit);
+        conf.native_transport_max_backoff_on_queue_overload = new DurationSpec.LongMillisecondsBound(maxBackoffMillis, timeUnit);
+    }
+
+    public static long getNativeTransportTimeout(TimeUnit timeUnit)
+    {
+        return conf.native_transport_timeout.to(timeUnit);
+    }
+
+    public static void setNativeTransportTimeout(long dealine, TimeUnit timeUnit)
+    {
+        conf.native_transport_timeout = new DurationSpec.LongMillisecondsBound(dealine, timeUnit);
+    }
+
+    public static boolean getEnforceNativeDeadlineForHints()
+    {
+        return conf.enforce_native_deadline_for_hints;
+    }
+
+    public static void setEnforceNativeDeadlineForHints(boolean value)
+    {
+        conf.enforce_native_deadline_for_hints = value;
+    }
+
+    public static boolean getNativeTransportThrowOnOverload()
+    {
+        return conf.native_transport_throw_on_overload;
+    }
+
+    public static void setNativeTransportThrowOnOverload(boolean throwOnOverload)
+    {
+        conf.native_transport_throw_on_overload = throwOnOverload;
     }
 
     public static long getPingTimeout(TimeUnit unit)
@@ -3140,6 +3235,15 @@ public class DatabaseDescriptor
     {
         conf.auto_hints_cleanup_enabled = value;
     }
+    public static boolean getTransferHintsOnDecommission()
+    {
+        return conf.transfer_hints_on_decommission;
+    }
+
+    public static void setTransferHintsOnDecommission(boolean enabled)
+    {
+        conf.transfer_hints_on_decommission = enabled;
+    }
 
     public static boolean isIncrementalBackupsEnabled()
     {
@@ -3436,6 +3540,16 @@ public class DatabaseDescriptor
                         " is likely to cause heap pressure.");
 
         conf.repair_session_space = new DataStorageSpec.IntMebibytesBound(sizeInMiB);
+    }
+
+    public static int getConcurrentMerkleTreeRequests()
+    {
+        return conf.concurrent_merkle_tree_requests;
+    }
+
+    public static void setConcurrentMerkleTreeRequests(int value)
+    {
+        conf.concurrent_merkle_tree_requests = value;
     }
 
     public static int getPaxosRepairParallelism()
@@ -3745,6 +3859,11 @@ public class DatabaseDescriptor
     public static FullQueryLoggerOptions getFullQueryLogOptions()
     {
         return  conf.full_query_logging_options;
+    }
+
+    public static void setFullQueryLogOptions(FullQueryLoggerOptions options)
+    {
+        conf.full_query_logging_options = options;
     }
 
     public static boolean getBlockForPeersInRemoteDatacenters()
@@ -4551,5 +4670,29 @@ public class DatabaseDescriptor
                 throw new ConfigurationException("Could only supported time units are: s, h, d, got: "+unitCharacter);
         }
         return timeUnit.toSeconds(value);
+    }
+
+    public static Config.CQLStartTime getCQLStartTime()
+    {
+        return conf.cql_start_time;
+    }
+
+    public static void setCQLStartTime(Config.CQLStartTime value)
+    {
+        conf.cql_start_time = value;
+    }
+    public static AutoRepairConfig getAutoRepairConfig()
+    {
+        return conf.auto_repair;
+    }
+
+    public static double getIncrementalRepairDiskHeadroomRejectRatio()
+    {
+        return conf.incremental_repair_disk_headroom_reject_ratio;
+    }
+
+    public static void setIncrementalRepairDiskHeadroomRejectRatio(double value)
+    {
+        conf.incremental_repair_disk_headroom_reject_ratio = value;
     }
 }

@@ -27,7 +27,7 @@ ext {
 dependencies {
     implementation "com.netflix.priam:priam-cass-extensions:${priam_extensions_version}"
     implementation 'software.amazon.cryptools:AmazonCorrettoCryptoProvider:2.3.3:linux-x86_64'
-    implementation 'netflix:nfcassandra-authn-authz-lib-4.x:2.0.2'
+    implementation 'netflix:nfcassandra-authn-authz-lib-4.x:2.0.4'
 }
 
 task unpackTarball(type: Copy, dependsOn: antartifacts) {

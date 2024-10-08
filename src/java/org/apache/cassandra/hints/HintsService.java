@@ -217,6 +217,11 @@ public final class HintsService implements HintsServiceMBean
 
     public synchronized void startDispatch()
     {
+        startDispatch(10);
+    }
+
+    public synchronized void startDispatch(int pause)
+    {
         if (isShutDown)
             throw new IllegalStateException("HintsService is shut down and cannot be restarted");
 
@@ -227,7 +232,7 @@ public final class HintsService implements HintsServiceMBean
         HintsDispatchTrigger trigger = new HintsDispatchTrigger(catalog, writeExecutor, dispatchExecutor, isDispatchPaused);
         // triggering hint dispatch is now very cheap, so we can do it more often - every 10 seconds vs. every 10 minutes,
         // previously; this reduces mean time to delivery, and positively affects batchlog delivery latencies, too
-        triggerDispatchFuture = ScheduledExecutors.scheduledTasks.scheduleWithFixedDelay(trigger, 10, 10, TimeUnit.SECONDS);
+        triggerDispatchFuture = ScheduledExecutors.scheduledTasks.scheduleWithFixedDelay(trigger, pause, pause, TimeUnit.SECONDS);
     }
 
     public void pauseDispatch()
@@ -399,6 +404,8 @@ public final class HintsService implements HintsServiceMBean
 
         // delete all the hints files and remove the HintsStore instance from the map in the catalog
         catalog.exciseStore(hostId);
+
+        bufferPool.clearEarliestHintsForHostId(hostId);
     }
 
     /**
@@ -475,5 +482,10 @@ public final class HintsService implements HintsServiceMBean
     public boolean isDispatchPaused()
     {
         return isDispatchPaused.get();
+    }
+
+    HintsBufferPool getHintsBufferPool()
+    {
+        return bufferPool;
     }
 }

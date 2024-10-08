@@ -34,6 +34,7 @@ import com.google.common.base.Joiner;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Sets;
 
+import org.apache.cassandra.repair.autorepair.AutoRepairConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -204,6 +205,8 @@ public class Config
     @Replaces(oldName = "repair_session_space_in_mb", converter = Converters.MEBIBYTES_DATA_STORAGE_INT, deprecated = true)
     public volatile DataStorageSpec.IntMebibytesBound repair_session_space = null;
 
+    public volatile int concurrent_merkle_tree_requests = 0;
+
     public volatile boolean use_offheap_merkle_trees = true;
 
     public int storage_port = 7000;
@@ -216,6 +219,8 @@ public class Config
     public String internode_authenticator;
 
     public boolean traverse_auth_from_root = false;
+
+    public volatile DurationSpec.IntMinutesBound partition_count_cache_expiry_min = new DurationSpec.IntMinutesBound("10m");
 
     /*
      * RPC address and interface refer to the address/interface used for the native protocol used to communicate with
@@ -337,6 +342,8 @@ public class Config
     public volatile int concurrent_materialized_view_builders = 1;
     public volatile int reject_repair_compaction_threshold = 1000;
 
+    public volatile double incremental_repair_disk_headroom_reject_ratio = 0.2; // at least 20% of disk must be unused to run incremental repair
+
     /**
      * @deprecated retry support removed on CASSANDRA-10992
      */
@@ -429,6 +436,7 @@ public class Config
 
     public ParameterizedClass hints_compression;
     public volatile boolean auto_hints_cleanup_enabled = true;
+    public volatile boolean transfer_hints_on_decommission = true;
 
     public volatile boolean incremental_backups = false;
     public boolean trickle_fsync = false;
@@ -881,6 +889,7 @@ public class Config
     public volatile DurationSpec.LongNanosecondsBound repair_state_expires = new DurationSpec.LongNanosecondsBound("3d");
     public volatile int repair_state_size = 100_000;
 
+    public volatile AutoRepairConfig auto_repair = new AutoRepairConfig();
     /** The configuration of timestamp bounds */
     public volatile DurationSpec.LongMicrosecondsBound maximum_timestamp_warn_threshold = null;
     public volatile DurationSpec.LongMicrosecondsBound maximum_timestamp_fail_threshold = null;
@@ -1196,4 +1205,20 @@ public class Config
 
         logger.info("Node configuration:[{}]", Joiner.on("; ").join(configMap.entrySet()));
     }
+
+    public enum CQLStartTime
+    {
+        REQUEST, // uses a timestamp that represent the start of processing of the request
+        QUEUE    // uses a timestamp that represents when the request was enqueued
+    }
+    public volatile CQLStartTime cql_start_time = CQLStartTime.REQUEST;
+
+    public boolean native_transport_throw_on_overload = false;
+    public double native_transport_queue_max_item_age_threshold = Double.MAX_VALUE;
+    public DurationSpec.LongMillisecondsBound native_transport_min_backoff_on_queue_overload = new DurationSpec.LongMillisecondsBound("10ms");
+    public DurationSpec.LongMillisecondsBound native_transport_max_backoff_on_queue_overload = new DurationSpec.LongMillisecondsBound("200ms");
+
+    // 3.0 Cassandra Driver has its "read" timeout set to 12 seconds. Our recommendation is match this.
+    public DurationSpec.LongMillisecondsBound native_transport_timeout = new DurationSpec.LongMillisecondsBound("12000ms");
+    public boolean enforce_native_deadline_for_hints = false;
 }

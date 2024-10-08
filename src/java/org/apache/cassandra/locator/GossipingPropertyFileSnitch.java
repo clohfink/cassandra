@@ -18,14 +18,12 @@
 
 package org.apache.cassandra.locator;
 
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.Map;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.db.SystemKeyspace;
 import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.gms.ApplicationState;
@@ -33,14 +31,11 @@ import org.apache.cassandra.gms.EndpointState;
 import org.apache.cassandra.gms.Gossiper;
 import org.apache.cassandra.service.StorageService;
 import org.apache.cassandra.utils.FBUtilities;
-import org.apache.cassandra.utils.JVMStabilityInspector;
-import org.apache.cassandra.utils.NoSpamLogger;
 
 
 public class GossipingPropertyFileSnitch extends AbstractNetworkTopologySnitch// implements IEndpointStateChangeSubscriber
 {
     private static final Logger logger = LoggerFactory.getLogger(GossipingPropertyFileSnitch.class);
-    private static final NoSpamLogger nospam1m = NoSpamLogger.getLogger(logger, 1, TimeUnit.MINUTES);
 
     private PropertyFileSnitch psnitch;
 
@@ -51,7 +46,7 @@ public class GossipingPropertyFileSnitch extends AbstractNetworkTopologySnitch//
 
     private Map<InetAddressAndPort, Map<String, String>> savedEndpoints;
     public static final String DEFAULT_DC = "UNKNOWN_DC";
-    private static final String DEFAULT_RACK = "UNKNOWN_RACK";
+    public static final String DEFAULT_RACK = "UNKNOWN_RACK";
 
     public GossipingPropertyFileSnitch() throws ConfigurationException
     {
@@ -103,18 +98,6 @@ public class GossipingPropertyFileSnitch extends AbstractNetworkTopologySnitch//
                 if (savedEndpoints.containsKey(endpoint))
                     return savedEndpoints.get(endpoint).get("data_center");
 
-                // https://netflix.atlassian.net/browse/ODS-136
-                // Its unsafe to use incorrect DC/Rack information when gossip missing info
-                if (DatabaseDescriptor.getDieOnUnknownGossipState())
-                {
-                    logger.error("Unknown DC for cluster: {}, endpoint: {}, not in gossip. disable this check with die_on_unknown_gossip_state in cassandra.yaml. Shutting down server.", DatabaseDescriptor.getClusterName(), endpoint);
-                    Throwable t = new RuntimeException("Unknown DC for " + endpoint + ", using disk_failure_policy");
-                    JVMStabilityInspector.killCurrentJVM(t, true);
-                }
-                else
-                {
-                    nospam1m.warn("Unknown DC for cluster: {}, endpoint: {},  defaulting to {}", DatabaseDescriptor.getClusterName(), endpoint, DEFAULT_DC);
-                }
                 return DEFAULT_DC;
             }
             else

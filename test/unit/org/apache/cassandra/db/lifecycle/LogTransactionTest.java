@@ -31,6 +31,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -47,16 +48,22 @@ import org.apache.cassandra.db.SerializationHeader;
 import org.apache.cassandra.db.compaction.OperationType;
 import org.apache.cassandra.io.sstable.Component;
 import org.apache.cassandra.io.sstable.Descriptor;
+import org.apache.cassandra.io.sstable.SSTable;
+import org.apache.cassandra.io.sstable.SSTableId;
 import org.apache.cassandra.io.sstable.SequenceBasedSSTableId;
 import org.apache.cassandra.io.sstable.format.SSTableFormat;
 import org.apache.cassandra.io.sstable.format.SSTableReader;
 import org.apache.cassandra.io.sstable.metadata.MetadataCollector;
 import org.apache.cassandra.io.sstable.metadata.MetadataType;
 import org.apache.cassandra.io.sstable.metadata.StatsMetadata;
+import org.apache.cassandra.io.util.DiskOptimizationStrategy;
 import org.apache.cassandra.io.util.File;
 import org.apache.cassandra.io.util.FileHandle;
 import org.apache.cassandra.io.util.FileUtils;
+import org.apache.cassandra.io.util.SpinningDiskOptimizationStrategy;
 import org.apache.cassandra.schema.MockSchema;
+import org.apache.cassandra.schema.TableMetadata;
+import org.apache.cassandra.schema.TableMetadataRef;
 import org.apache.cassandra.utils.AlwaysPresentFilter;
 import org.apache.cassandra.utils.Throwables;
 import org.apache.cassandra.utils.concurrent.AbstractTransactionalTest;
@@ -1093,62 +1100,6 @@ public class LogTransactionTest extends AbstractTransactionalTest
     }
 
     @Test
-    public void testObsoletedDataFileUpdateTimeChanged() throws IOException
-    {
-        testObsoletedFilesChanged(sstable ->
-                                  {
-                                      // increase the modification time of the Data file
-                                      for (String filePath : sstable.getAllFilePaths())
-                                      {
-                                          if (filePath.endsWith("Data.db"))
-                                              assertTrue(new File(filePath).trySetLastModified(System.currentTimeMillis() + 60000)); //one minute later
-                                      }
-                                  });
-    }
-
-    private static void testObsoletedFilesChanged(Consumer<SSTableReader> modifier) throws IOException
-    {
-        ColumnFamilyStore cfs = MockSchema.newCFS(KEYSPACE);
-        File dataFolder = new Directories(cfs.metadata()).getDirectoryForNewSSTables();
-        SSTableReader sstableOld = sstable(dataFolder, cfs, 0, 128);
-        SSTableReader sstableNew = sstable(dataFolder, cfs, 1, 128);
-
-        // simulate tracking sstables with a committed transaction except the checksum will be wrong
-        LogTransaction log = new LogTransaction(OperationType.COMPACTION);
-        assertNotNull(log);
-
-        log.trackNew(sstableNew);
-        LogTransaction.SSTableTidier tidier = log.obsoleted(sstableOld);
-
-        //modify the old sstable files
-        modifier.accept(sstableOld);
-
-        //Fake a commit
-        log.txnFile().commit();
-
-        //This should not remove the old files
-        LogTransaction.removeUnfinishedLeftovers(cfs.metadata());
-
-        assertFiles(dataFolder.path(), Sets.newHashSet(Iterables.concat(
-                                                                          sstableNew.getAllFilePaths(),
-                                                                          sstableOld.getAllFilePaths(),
-                                                                          log.logFilePaths())));
-
-        sstableOld.selfRef().release();
-        sstableNew.selfRef().release();
-
-        // complete the transaction to avoid LEAK errors
-        assertNull(log.complete(null));
-
-        assertFiles(dataFolder.path(), Sets.newHashSet(Iterables.concat(sstableNew.getAllFilePaths(),
-                                                                        sstableOld.getAllFilePaths(),
-                                                                        log.logFilePaths())));
-
-        // make sure to run the tidier to avoid any leaks in the logs
-        tidier.run();
-    }
-
-    @Test
     public void testTruncateFileUpdateTime() throws IOException
     {
         // Idea is that we truncate the actual modification time on disk after creating the log file.
@@ -1392,5 +1343,30 @@ public class LogTransactionTest extends AbstractTransactionalTest
                        .stream()
                        .flatMap(LogTransactionTest::toCanonicalIgnoringNotFound)
                        .collect(Collectors.toSet());
+    }
+
+    final String DUMMY_KS = "ks";
+    final String DUMMY_TBL = "tbl";
+    final File dir = new File(".");
+    Supplier<SequenceBasedSSTableId> idSupplier = SequenceBasedSSTableId.Builder.instance.generator(Stream.of());
+    final Set<Component> dummyComponents = Collections.singleton(Component.DATA);
+    final TableMetadataRef dummyMetadata = TableMetadataRef.forOfflineTools(TableMetadata.minimal(DUMMY_KS, DUMMY_TBL));
+    final DiskOptimizationStrategy dummyOptimizationStrategy = new SpinningDiskOptimizationStrategy();
+
+    SSTable dummySSTable()
+    {
+        SSTableId id = idSupplier.get();
+        Descriptor descriptor = new Descriptor(dir, DUMMY_KS, DUMMY_TBL, id);
+        return new SSTable(descriptor, dummyComponents, dummyMetadata, dummyOptimizationStrategy)
+        {
+        };
+    }
+
+    @Test(expected = TransactionAlreadyCompletedException.class)
+    public void useAfterCompletedTest()
+    {
+        LogTransaction txnFile = new LogTransaction(OperationType.STREAM);
+        txnFile.abort(); // this should complete the txn
+        txnFile.trackNew(dummySSTable()); // expect an IllegalStateException here
     }
 }

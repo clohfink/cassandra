@@ -499,11 +499,32 @@ public class Directories
                   continue;
             DataDirectoryCandidate candidate = new DataDirectoryCandidate(dataDir);
             // exclude directory if its total writeSize does not fit to data directory
+            logger.debug("DataDirectory {} has {} bytes available, checking if we can write {} bytes", dataDir.location, candidate.availableSpace, writeSize);
             if (candidate.availableSpace < writeSize)
+            {
+                logger.warn("DataDirectory {} can't be used for compaction. Only {} is available, but {} is the minimum write size.",
+                            candidate.dataDirectory.location,
+                            FileUtils.stringifyFileSize(candidate.availableSpace),
+                            FileUtils.stringifyFileSize(writeSize));
                 continue;
+            }
             totalAvailable += candidate.availableSpace;
         }
-        return totalAvailable > expectedTotalWriteSize;
+
+        if (totalAvailable <= expectedTotalWriteSize)
+        {
+            StringJoiner pathString = new StringJoiner(",", "[", "]");
+            for (DataDirectory p: paths)
+            {
+                pathString.add(p.location.toJavaIOFile().getAbsolutePath());
+            }
+            logger.warn("Insufficient disk space for compaction. Across {} there's only {} available, but {} is needed.",
+                        pathString.toString(),
+                        FileUtils.stringifyFileSize(totalAvailable),
+                        FileUtils.stringifyFileSize(expectedTotalWriteSize));
+            return false;
+        }
+        return true;
     }
 
     public DataDirectory[] getWriteableLocations()
@@ -883,13 +904,44 @@ public class Directories
 
         public Map<Descriptor, Set<Component>> list()
         {
-            filter();
+            return list(false);
+        }
+
+        /**
+         * This method is used upon SSTable importing (nodetool import) as there is no strict requirement to
+         * place SSTables in a directory structure where name of a directory equals to table name
+         * and parent of such directory equals to keyspace name. For such cases, we want to include such SSTables too,
+         * rendering the parameter to be set to true.
+         *
+         * @param includeForeignTables whether descriptors not matching metadata of this lister should be included
+         * @return found descriptors and related set of components
+         */
+        public Map<Descriptor, Set<Component>> list(boolean includeForeignTables)
+        {
+            filter(includeForeignTables);
             return ImmutableMap.copyOf(components);
+        }
+
+        /**
+         * Returns a sorted version of the {@code list} method.
+         * Descriptors are sorted by generation.
+         * @return a List of descriptors to their components.
+         */
+        public List<Map.Entry<Descriptor, Set<Component>>> sortedList()
+        {
+            List<Map.Entry<Descriptor, Set<Component>>> sortedEntries = new ArrayList<>(list().entrySet());
+            sortedEntries.sort((o1, o2) -> SSTableIdFactory.COMPARATOR.compare(o1.getKey().id, o2.getKey().id));
+            return sortedEntries;
         }
 
         public List<File> listFiles()
         {
-            filter();
+            return listFiles(false);
+        }
+
+        public List<File> listFiles(boolean includeForeignTables)
+        {
+            filter(includeForeignTables);
             List<File> l = new ArrayList<>(nbFiles);
             for (Map.Entry<Descriptor, Set<Component>> entry : components.entrySet())
             {
@@ -901,7 +953,7 @@ public class Directories
             return l;
         }
 
-        private void filter()
+        private void filter(boolean includeForeignTables)
         {
             if (filtered)
                 return;
@@ -913,21 +965,21 @@ public class Directories
 
                 if (snapshotName != null)
                 {
-                    LifecycleTransaction.getFiles(getSnapshotDirectory(location, snapshotName).toPath(), getFilter(), onTxnErr);
+                    LifecycleTransaction.getFiles(getSnapshotDirectory(location, snapshotName).toPath(), getFilter(includeForeignTables), onTxnErr);
                     continue;
                 }
 
                 if (!onlyBackups)
-                    LifecycleTransaction.getFiles(location.toPath(), getFilter(), onTxnErr);
+                    LifecycleTransaction.getFiles(location.toPath(), getFilter(includeForeignTables), onTxnErr);
 
                 if (includeBackups)
-                    LifecycleTransaction.getFiles(getBackupsDirectory(location).toPath(), getFilter(), onTxnErr);
+                    LifecycleTransaction.getFiles(getBackupsDirectory(location).toPath(), getFilter(includeForeignTables), onTxnErr);
             }
 
             filtered = true;
         }
 
-        private BiPredicate<File, FileType> getFilter()
+        private BiPredicate<File, FileType> getFilter(boolean includeForeignTables)
         {
             // This function always return false since it adds to the components map
             return (file, type) ->
@@ -945,15 +997,31 @@ public class Directories
                         if (pair == null)
                             return false;
 
+                        Descriptor descriptor = null;
+
                         // we are only interested in the SSTable files that belong to the specific ColumnFamily
                         if (!pair.left.ksname.equals(metadata.keyspace) || !pair.left.cfname.equals(metadata.name))
-                            return false;
+                        {
+                            if (!includeForeignTables)
+                                return false;
 
-                        Set<Component> previous = components.get(pair.left);
+                            descriptor = new Descriptor(pair.left.version,
+                                                        pair.left.directory,
+                                                        metadata.keyspace,
+                                                        metadata.name,
+                                                        pair.left.id,
+                                                        pair.left.formatType);
+                        }
+                        else
+                        {
+                            descriptor = pair.left;
+                        }
+
+                        Set<Component> previous = components.get(descriptor);
                         if (previous == null)
                         {
                             previous = new HashSet<>();
-                            components.put(pair.left, previous);
+                            components.put(descriptor, previous);
                         }
                         previous.add(pair.right);
                         nbFiles++;
@@ -1119,9 +1187,11 @@ public class Directories
             {
                 FileUtils.deleteRecursiveWithThrottle(snapshotDir, snapshotRateLimiter);
             }
-            catch (FSWriteError e)
+            catch (RuntimeException ex)
             {
-                throw e;
+                if (!snapshotDir.exists())
+                    return; // ignore
+                throw ex;
             }
         }
     }

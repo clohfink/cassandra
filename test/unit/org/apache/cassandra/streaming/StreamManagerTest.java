@@ -53,7 +53,14 @@ public class StreamManagerTest
         defaultInterDCStreamThroughputBytesPerSec = c.inter_dc_stream_throughput_outbound.toBytesPerSecond();
         defaultEntireSSTableStreamThroughputBytesPerSec = c.entire_sstable_stream_throughput_outbound.toBytesPerSecond();
         defaultEntireSSTableInterDCStreamThroughputBytesPerSec = c.entire_sstable_inter_dc_stream_throughput_outbound.toBytesPerSecond();
-
+        if (defaultEntireSSTableInterDCStreamThroughputBytesPerSec == 0)
+            defaultEntireSSTableInterDCStreamThroughputBytesPerSec = Double.MAX_VALUE;
+        if (defaultEntireSSTableStreamThroughputBytesPerSec == 0)
+            defaultEntireSSTableStreamThroughputBytesPerSec = Double.MAX_VALUE;
+        if (defaultInterDCStreamThroughputBytesPerSec == 0)
+            defaultInterDCStreamThroughputBytesPerSec = Double.MAX_VALUE;
+        if (defaultStreamThroughputBytesPerSec == 0)
+            defaultStreamThroughputBytesPerSec = Double.MAX_VALUE;
         DatabaseDescriptor.daemonInitialization(() -> c);
     }
 

@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 #
 # Licensed to the Apache Software Foundation (ASF) under one
 # or more contributor license agreements.  See the NOTICE file
@@ -19,6 +19,7 @@
 
 BASEDIR=`dirname $0`
 BASE_BRANCH=cassandra-4.1
+set -e
 
 die ()
 {
@@ -29,13 +30,17 @@ die ()
 
 print_help()
 {
-  echo "Usage: $0 [-l|-m|-h|-f|-e]"
-  echo "   -a Generate the default config.yml using low resources and the three templates"
-  echo "      (config.yml.LOWRES, config.yml.MIDRES and config.yml.HIGHRES). Use this for"
-  echo "      permanent changes in config-2_1.yml that will be committed to the main repo."
-  echo "   -l Generate config.yml using low resources"
-  echo "   -m Generate config.yml using mid resources"
-  echo "   -h Generate config.yml using high resources"
+  echo "Usage: $0 [-f|-p|-a|-e|-i|-b|-s]"
+  echo "   -a Generate the config.yml, config.yml.FREE and config.yml.PAID expanded configuration"
+  echo "      files from the main config_template.yml reusable configuration file."
+  echo "      Use this for permanent changes in config that will be committed to the main repo."
+  echo "   -f Generate config.yml for tests compatible with the CircleCI free tier resources"
+  echo "   -p Generate config.yml for tests compatible with the CircleCI paid tier resources"
+  echo "   -b Specify the base git branch for comparison when determining changed tests to"
+  echo "      repeat. Defaults to ${BASE_BRANCH}. Note that this option is not used when"
+  echo "      the '-a' option is specified."
+  echo "   -s Skip automatic detection of changed tests. Useful when you need to repeat a few ones,"
+  echo "      or when there are too many changed tests for CircleCI."
   echo "   -e <key=value> Environment variables to be used in the generated config.yml, e.g.:"
   echo "                   -e DTEST_BRANCH=CASSANDRA-8272"
   echo "                   -e DTEST_REPO=https://github.com/adelapena/cassandra-dtest.git"
@@ -56,7 +61,7 @@ print_help()
   echo "                   -e REPEATED_JVM_UPGRADE_DTESTS_COUNT=500"
   echo "                   -e REPEATED_DTESTS=cdc_test.py cqlsh_tests/test_cqlsh.py::TestCqlshSmoke"
   echo "                   -e REPEATED_DTESTS_COUNT=500"
-  echo "                   -e REPEATED_LARGE_DTESTS=consistency_test.py::TestAvailability::test_network_topology_strategy"
+  echo "                   -e REPEATED_LARGE_DTESTS=replace_address_test.py::TestReplaceAddress::test_replace_stopped_node"
   echo "                   -e REPEATED_LARGE_DTESTS=100"
   echo "                   -e REPEATED_UPGRADE_DTESTS=upgrade_tests/cql_tests.py upgrade_tests/paging_test.py"
   echo "                   -e REPEATED_UPGRADE_DTESTS_COUNT=25"
@@ -66,28 +71,29 @@ print_help()
   echo "                   -e REPEATED_ANT_TEST_VNODES=false"
   echo "                   -e REPEATED_ANT_TEST_COUNT=500"
   echo "                  For the complete list of environment variables, please check the"
-  echo "                  list of examples in config-2_1.yml and/or the documentation."
+  echo "                  list of examples in config_template.yml and/or the documentation."
   echo "                  If you want to specify multiple environment variables simply add"
-  echo "                  multiple -e options. The flags -l/-m/-h should be used when using -e."
-  echo "   -f Stop checking that the environment variables are known"
+  echo "                  multiple -e options. The flags -f/-p should be used when using -e."
+  echo "   -i Ignore unknown environment variables"
 }
 
 all=false
-lowres=false
-midres=false
-highres=false
+free=false
+paid=false
 env_vars=""
 has_env_vars=false
 check_env_vars=true
-while getopts "e:almhf" opt; do
+detect_changed_tests=true
+while getopts "e:afpib:s" opt; do
   case $opt in
       a ) all=true
+          detect_changed_tests=false
           ;;
-      l ) lowres=true
+      f ) free=true
           ;;
-      m ) midres=true
+      p ) paid=true
           ;;
-      h ) highres=true
+      b ) BASE_BRANCH="$OPTARG"
           ;;
       e ) if (! ($has_env_vars)); then
             env_vars="$OPTARG"
@@ -96,7 +102,9 @@ while getopts "e:almhf" opt; do
           fi
           has_env_vars=true
           ;;
-      f ) check_env_vars=false
+      i ) check_env_vars=false
+          ;;
+      s ) detect_changed_tests=false
           ;;
       \?) die "Invalid option: -$OPTARG"
           ;;
@@ -144,52 +152,40 @@ if $has_env_vars && $check_env_vars; then
   done
 fi
 
-if $lowres; then
-  ($all || $midres || $highres) && die "Cannot use option -l with options -a, -m or -h"
-  echo "Generating new config.yml file with low resources from config-2_1.yml"
-  circleci config process $BASEDIR/config-2_1.yml > $BASEDIR/config.yml.LOWRES.tmp
-  cat $BASEDIR/license.yml $BASEDIR/config.yml.LOWRES.tmp > $BASEDIR/config.yml
-  rm $BASEDIR/config.yml.LOWRES.tmp
+if $free; then
+  ($all || $paid) && die "Cannot use option -f with options -a or -p"
+  echo "Generating new config.yml file for free tier from config_template.yml"
+  circleci config process $BASEDIR/config_template.yml > $BASEDIR/config.yml.FREE.tmp
+  cat $BASEDIR/license.yml $BASEDIR/config.yml.FREE.tmp > $BASEDIR/config.yml
+  rm $BASEDIR/config.yml.FREE.tmp
 
-elif $midres; then
-  ($all || $lowres || $highres) && die "Cannot use option -m with options -a, -l or -h"
-  echo "Generating new config.yml file with middle resources from config-2_1.yml"
-  patch -o $BASEDIR/config-2_1.yml.MIDRES $BASEDIR/config-2_1.yml $BASEDIR/config-2_1.yml.mid_res.patch
-  circleci config process $BASEDIR/config-2_1.yml.MIDRES > $BASEDIR/config.yml.MIDRES.tmp
-  cat $BASEDIR/license.yml $BASEDIR/config.yml.MIDRES.tmp > $BASEDIR/config.yml
-  rm $BASEDIR/config-2_1.yml.MIDRES $BASEDIR/config.yml.MIDRES.tmp
-
-elif $highres; then
-  ($all || $lowres || $midres) && die "Cannot use option -h with options -a, -l or -m"
-  echo "Generating new config.yml file with high resources from config-2_1.yml"
-  patch -o $BASEDIR/config-2_1.yml.HIGHRES $BASEDIR/config-2_1.yml $BASEDIR/config-2_1.yml.high_res.patch
-  circleci config process $BASEDIR/config-2_1.yml.HIGHRES > $BASEDIR/config.yml.HIGHRES.tmp
-  cat $BASEDIR/license.yml $BASEDIR/config.yml.HIGHRES.tmp > $BASEDIR/config.yml
-  rm $BASEDIR/config-2_1.yml.HIGHRES $BASEDIR/config.yml.HIGHRES.tmp
+elif $paid; then
+  ($all || $free) && die "Cannot use option -p with options -a or -f"
+  echo "Generating new config.yml file for paid tier from config_template.yml"
+  patch -o $BASEDIR/config_template.yml.PAID $BASEDIR/config_template.yml $BASEDIR/config_template.yml.PAID.patch
+  circleci config process $BASEDIR/config_template.yml.PAID > $BASEDIR/config.yml.PAID.tmp
+  cat $BASEDIR/license.yml $BASEDIR/config.yml.PAID.tmp > $BASEDIR/config.yml
+  rm $BASEDIR/config_template.yml.PAID $BASEDIR/config.yml.PAID.tmp
 
 elif $all; then
-  ($lowres || $midres || $highres || $has_env_vars) && die "Cannot use option -a with options -l, -m, -h or -e"
-  echo "Generating new config.yml file with low resources and LOWRES/MIDRES/HIGHRES templates from config-2_1.yml"
+  ($free || $paid || $has_env_vars) && die "Cannot use option -a with options -f, -p or -e"
+  echo "Generating new default config.yml file for free tier and FREE/PAID templates from config_template.yml."
+  echo "Make sure you commit the newly generated config.yml, config.yml.FREE and config.yml.PAID files"
+  echo "after running this command if you want them to persist."
 
-  # setup lowres
-  circleci config process $BASEDIR/config-2_1.yml > $BASEDIR/config.yml.LOWRES.tmp
-  cat $BASEDIR/license.yml $BASEDIR/config.yml.LOWRES.tmp > $BASEDIR/config.yml.LOWRES
-  rm $BASEDIR/config.yml.LOWRES.tmp
+  # setup config for free tier
+  circleci config process $BASEDIR/config_template.yml > $BASEDIR/config.yml.FREE.tmp
+  cat $BASEDIR/license.yml $BASEDIR/config.yml.FREE.tmp > $BASEDIR/config.yml.FREE
+  rm $BASEDIR/config.yml.FREE.tmp
 
-  # setup midres
-  patch -o $BASEDIR/config-2_1.yml.MIDRES $BASEDIR/config-2_1.yml $BASEDIR/config-2_1.yml.mid_res.patch
-  circleci config process $BASEDIR/config-2_1.yml.MIDRES > $BASEDIR/config.yml.MIDRES.tmp
-  cat $BASEDIR/license.yml $BASEDIR/config.yml.MIDRES.tmp > $BASEDIR/config.yml.MIDRES
-  rm $BASEDIR/config-2_1.yml.MIDRES $BASEDIR/config.yml.MIDRES.tmp
+  # setup config for paid tier
+  patch -o $BASEDIR/config_template.yml.PAID $BASEDIR/config_template.yml $BASEDIR/config_template.yml.PAID.patch
+  circleci config process $BASEDIR/config_template.yml.PAID > $BASEDIR/config.yml.PAID.tmp
+  cat $BASEDIR/license.yml $BASEDIR/config.yml.PAID.tmp > $BASEDIR/config.yml.PAID
+  rm $BASEDIR/config_template.yml.PAID $BASEDIR/config.yml.PAID.tmp
 
-  # setup highres
-  patch -o $BASEDIR/config-2_1.yml.HIGHRES $BASEDIR/config-2_1.yml $BASEDIR/config-2_1.yml.high_res.patch
-  circleci config process $BASEDIR/config-2_1.yml.HIGHRES > $BASEDIR/config.yml.HIGHRES.tmp
-  cat $BASEDIR/license.yml $BASEDIR/config.yml.HIGHRES.tmp > $BASEDIR/config.yml.HIGHRES
-  rm $BASEDIR/config-2_1.yml.HIGHRES $BASEDIR/config.yml.HIGHRES.tmp
-
-  # copy lower into config.yml to make sure this gets updated
-  cp $BASEDIR/config.yml.LOWRES $BASEDIR/config.yml
+  # copy free tier into config.yml to make sure this gets updated
+  cp $BASEDIR/config.yml.FREE $BASEDIR/config.yml
 
 elif (! ($has_env_vars)); then
   print_help
@@ -197,7 +193,14 @@ elif (! ($has_env_vars)); then
 fi
 
 # add new or modified tests to the sets of tests to be repeated
-if (! ($all)); then
+if $detect_changed_tests; then
+  # Sanity check that the referenced branch exists
+  if ! git show ${BASE_BRANCH} -- >&/dev/null; then
+    echo -e "\n\nUnknown base branch: ${BASE_BRANCH}. Unable to detect changed tests.\n"
+    echo    "Please use the '-b' option to choose an existing branch name"
+    echo    "(e.g. origin/${BASE_BRANCH}, apache/${BASE_BRANCH}, etc.)."
+    exit 2
+  fi
   add_diff_tests ()
   {
     dir="${BASEDIR}/../${2}"
@@ -207,7 +210,8 @@ if (! ($all)); then
            | sed -e "s/\\.java//" \
            | sed -e "s,^${2},," \
            | tr  '/' '.' \
-           | grep ${3} )
+           | grep ${3} )\
+           || : # avoid execution interruptions due to grep return codes and set -e
     for test in $tests; do
       echo "  $test"
       has_env_vars=true
@@ -257,8 +261,8 @@ delete_job()
     sed -Ei.bak "/^    - ${2}/d" "$1"
   }
   file="$BASEDIR/$1"
-  delete_yaml_block "$file" "${2}"
-  delete_yaml_block "$file" "start_${2}"
+  delete_yaml_block "$file" "${2}:"
+  delete_yaml_block "$file" "start_${2}:"
 }
 
 # Define function to remove any unneeded repeated jobs.
@@ -326,7 +330,6 @@ delete_repeated_jobs()
 
 delete_repeated_jobs "config.yml"
 if $all; then
-  delete_repeated_jobs "config.yml.LOWRES"
-  delete_repeated_jobs "config.yml.MIDRES"
-  delete_repeated_jobs "config.yml.HIGHRES"
+  delete_repeated_jobs "config.yml.FREE"
+  delete_repeated_jobs "config.yml.PAID"
 fi
