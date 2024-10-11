@@ -1097,6 +1097,8 @@ public interface StorageServiceMBean extends NotificationEmitter
 
     boolean getEnforceNativeDeadlineForHints();
     void setEnforceNativeDeadlineForHints(boolean value);
+    void deleteUnusedKeyspaces(boolean dryRun) throws IOException;
+
     /** Gets the names of all tables for the given keyspace */
     public List<String> getTablesForKeyspace(String keyspace);
 
