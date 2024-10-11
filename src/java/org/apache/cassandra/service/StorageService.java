@@ -7252,6 +7252,34 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
     {
         DatabaseDescriptor.setEnforceNativeDeadlineForHints(value);
     }
+
+    public void deleteUnusedKeyspaces(boolean dryRun) throws IOException
+    {
+        // walk the data directories and remove any directories that don't have a keyspace
+        for (String dataDir : DatabaseDescriptor.getAllDataFileLocations())
+        {
+            File[] files = new File(dataDir).list();
+            if (files == null)
+                continue;
+
+            for (File file : files)
+            {
+                if (file.isDirectory() && !Schema.instance.getKeyspaces().contains(file.name()))
+                {
+                    if (dryRun)
+                    {
+                        logger.info("Would delete unused keyspace directory {}", file);
+                    }
+                    else
+                    {
+                        logger.info("Deleting unused keyspace directory {}", file);
+                        file.deleteRecursive();
+                    }
+                }
+            }
+        }
+    }
+
     public List<String> getTablesForKeyspace(String keyspace) {
         return Keyspace.open(keyspace).getColumnFamilyStores().stream().map(cfs -> cfs.name).collect(Collectors.toList());
     }
