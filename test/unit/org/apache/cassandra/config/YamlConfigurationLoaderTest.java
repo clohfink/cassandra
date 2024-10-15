@@ -36,6 +36,7 @@ import org.apache.cassandra.io.util.File;
 import org.yaml.snakeyaml.error.YAMLException;
 
 import static org.apache.cassandra.config.CassandraRelevantProperties.CONFIG_ALLOW_SYSTEM_PROPERTIES;
+import static org.apache.cassandra.config.DataStorageSpec.DataStorageUnit.GIBIBYTES;
 import static org.apache.cassandra.config.DataStorageSpec.DataStorageUnit.KIBIBYTES;
 import static org.apache.cassandra.config.YamlConfigurationLoader.SYSTEM_PROPERTY_PREFIX;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -189,7 +190,7 @@ public class YamlConfigurationLoaderTest
         assertThat(c.coordinator_read_size_warn_threshold).isEqualTo(new DataStorageSpec.LongBytesBound(1024, KIBIBYTES));
         assertThat(c.coordinator_read_size_fail_threshold).isNull();
 
-        assertThat(c.local_read_size_warn_threshold).isNull();
+        assertThat(c.local_read_size_warn_threshold).isEqualTo(new DataStorageSpec.LongBytesBound(1, GIBIBYTES));
         assertThat(c.local_read_size_fail_threshold).isEqualTo(new DataStorageSpec.LongBytesBound(1024, KIBIBYTES));
 
         assertThat(c.row_index_read_size_warn_threshold).isEqualTo(new DataStorageSpec.LongBytesBound(1024, KIBIBYTES));
