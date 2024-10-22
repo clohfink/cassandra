@@ -118,6 +118,24 @@ public class ProfileLoad extends NodeToolCmd
             .addColumn("Bytes", "count")
             .print(probe.output().out);
 
+        rb.forType(SamplerType.READ_ROW_COUNT, "Largest reads by row count")
+          .addColumn("Table", "table")
+          .addColumn("Partition", "value")
+          .addColumn("Bytes", "count")
+          .print(probe.output().out);
+
+        rb.forType(SamplerType.READ_TOMBSTONE_COUNT, "Largest reads by tombstone count")
+          .addColumn("Table", "table")
+          .addColumn("Partition", "value")
+          .addColumn("Bytes", "count")
+          .print(probe.output().out);
+
+        rb.forType(SamplerType.READ_SSTABLE_COUNT, "Largest reads by sstable count")
+          .addColumn("Table", "table")
+          .addColumn("Partition", "value")
+          .addColumn("Bytes", "count")
+          .print(probe.output().out);
+
         rb.forType(SamplerType.LOCAL_READ_TIME, "Longest read query times")
             .addColumn("Query", "value")
             .addColumn("Microseconds", "count")
