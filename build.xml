@@ -102,10 +102,59 @@
 
     <property name="doc.dir" value="${basedir}/doc"/>
 
-    <condition property="version" value="${base.version}">
-      <isset property="release"/>
+    <echo message="ROCKET_TAG environment variable: ${env.ROCKET_TAG}"/>
+    <!-- Check if ROCKET_TAG exists -->
+
+    <condition property="rocket.tag" value="${env.ROCKET_TAG}">
+        <isset property="env.ROCKET_TAG"/>
     </condition>
-    <property name="version" value="${base.version}.1"/>
+
+    <!-- Default rocket.tag.cleaned to "1" if ROCKET_TAG is not set -->
+    <condition property="rocket.tag.cleaned" value="4.1.1">
+        <not>
+            <isset property="rocket.tag"/>
+        </not>
+    </condition>
+    <condition property="rocket.tag.cleaned" value="${rocket.tag}">
+        <isset property="rocket.tag"/>
+    </condition>
+
+    <condition property="fail.because.rocket.tag.invalid" value="true">
+        <and>
+            <!-- Must be set to check the pattern -->
+            <isset property="rocket.tag"/>
+            <not>
+                <matches pattern="^v4\.1\.\d+.*$" string="${rocket.tag}"/>
+            </not>
+        </and>
+    </condition>
+
+    <!-- Fail if the above property is set -->
+    <fail message="ROCKET_TAG must match v4.1.(number); got '${rocket.tag}'" if="fail.because.rocket.tag.invalid"/>
+
+    <!-- Remove leading "v" from ROCKET_TAG if present -->
+    <echo file="rocket-tag.tmp" message="${rocket.tag.cleaned}"/>
+    <replaceregexp file="rocket-tag.tmp" match="^v" replace=""/>
+    <loadfile property="rocket.tag.stripped" srcFile="rocket-tag.tmp"/>
+    <delete file="rocket-tag.tmp"/>
+
+    <!-- Extract the last part of the tag; e.g., 4.1.X -> X -->
+    <echo file="rocket-tag-last.tmp" message="${rocket.tag.stripped}"/>
+    <replaceregexp file="rocket-tag-last.tmp" match="^4\.1\.(\d+).*" replace="\1"/>
+    <loadfile property="rocket.tag.last" srcFile="rocket-tag-last.tmp"/>
+    <delete file="rocket-tag-last.tmp"/>
+
+    <!-- Default rocket.tag.last to "1" if extraction fails -->
+    <condition property="rocket.tag.last" value="1">
+        <not>
+            <isset property="rocket.tag.last"/>
+        </not>
+    </condition>
+
+    <!-- Set the final version property -->
+    <property name="version" value="${base.version}.${rocket.tag.last}"/>
+    <echo message="Final Version: ${version}"/>
+
     <property name="version.properties.dir"
               value="${build.src.resources}/org/apache/cassandra/config/" />
     <property name="final.name" value="${ant.project.name}-${version}"/>
@@ -115,7 +164,10 @@
     <!-- "CI" is set. #engineering-help reference: https://netflix.slack.com/archives/C0N913649/p1631039976403200 -->
     <!-- Ideally we want to just check if the env.CI variable is set, and we should not need to worry about the actual value -->
     <condition property="local.repository" value="/agent/.m2/repository" else="${user.home}/.m2/repository">
-        <equals arg1="${env.CI}" arg2="disable_gradle_daemon_msg" />
+        <or>
+            <equals arg1="${env.CI}" arg2="disable_gradle_daemon_msg" />
+            <equals arg1="${env.CI}" arg2="true" />
+        </or>
     </condition>
 
 <!--    <property name="local.repository" value="${user.home}/.m2/repository" />-->
