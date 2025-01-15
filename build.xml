@@ -419,7 +419,6 @@
         </fileset>
         <fileset dir="${test.lib}/jars">
             <include name="**/*.jar" />
-            <exclude name="**/ant-*.jar"/>
         </fileset>
     </path>
 
@@ -1147,6 +1146,9 @@
             <classpath>
                 <path refid="cassandra.classpath.test"/>
                 <pathelement location="${fqltool.build.classes}" />
+                <fileset dir="${build.dir.lib}">
+                    <include name="**/*.jar" />
+                </fileset>
             </classpath>
             <src path="${fqltool.test.src}"/>
         </javac>
@@ -1501,6 +1503,9 @@
      <classpath>
         <path refid="cassandra.classpath.test"/>
         <pathelement location="${fqltool.build.classes}"/>
+         <fileset dir="${build.dir.lib}">
+             <include name="**/*.jar" />
+         </fileset>
      </classpath>
      <compilerarg value="-XDignore.symbol.file"/>
      <compilerarg line="${jdk11-javac-exports}"/>
