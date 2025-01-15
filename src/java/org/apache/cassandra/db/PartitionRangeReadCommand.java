@@ -66,7 +66,8 @@ public class PartitionRangeReadCommand extends ReadCommand implements PartitionR
 
     protected final DataRange dataRange;
 
-    private PartitionRangeReadCommand(boolean isDigest,
+    @VisibleForTesting
+    protected PartitionRangeReadCommand(boolean isDigest,
                                       int digestVersion,
                                       boolean acceptsTransient,
                                       TableMetadata metadata,
@@ -539,7 +540,7 @@ public class PartitionRangeReadCommand extends ReadCommand implements PartitionR
         public UnfilteredPartitionIterator executeLocally(ReadExecutionController executionController)
         {
             VirtualTable view = VirtualKeyspaceRegistry.instance.getTableNullable(metadata().id);
-            UnfilteredPartitionIterator resultIterator = view.select(dataRange, columnFilter());
+            UnfilteredPartitionIterator resultIterator = view.select(dataRange, columnFilter(), rowFilter());
             return limits().filter(rowFilter().filter(resultIterator, nowInSec()), nowInSec(), selectsFullPartition());
         }
 

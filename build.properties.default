@@ -23,3 +23,4 @@ artifact.remoteRepository.apache:      https://repo.maven.apache.org/maven2
 artifact.remoteRepository.netflix:     https://artifacts.netflix.net/libs-releases-local-pom
 #https://artifacts.netflix.net/libs-releases
 
+artifact.remoteRepository.apacheSnapshot: https://repository.apache.org/content/repositories/snapshots

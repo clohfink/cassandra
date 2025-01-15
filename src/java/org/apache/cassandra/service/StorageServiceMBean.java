@@ -571,6 +571,13 @@ public interface StorageServiceMBean extends NotificationEmitter
      */
     public int getDynamicUpdateInterval();
 
+    public String getBatchlogEndpointStrategy();
+
+    /**
+     * See {@link org.apache.cassandra.config.Config.BatchlogEndpointStrategy} for valid values.
+     */
+    public void setBatchlogEndpointStrategy(String batchlogEndpointStrategy);
+
     // allows a user to forcibly 'kill' a sick node
     public void stopGossiping();
 
@@ -1104,4 +1111,22 @@ public interface StorageServiceMBean extends NotificationEmitter
 
     /** Mutates the repaired state of all SSTables for the given SSTables */
     public List<String> mutateSSTableRepairedState(boolean repaired, boolean preview, String keyspace, List<String> tables) throws InvalidRequestException;
+
+    /**
+     * Toggles to turn on the logging or rejection of operations for token ranges that the node does not own,
+     * or is not about to acquire.
+     */
+    boolean isOutOfTokenRangeRequestLoggingEnabled();
+    void setOutOfTokenRangeRequestLoggingEnabled(boolean enabled);
+
+    boolean isOutOfTokenRangeRequestRejectionEnabled();
+    void setOutOfTokenRangeRequestRejectionEnabled(boolean enabled);
+
+    /**
+     * Get the per-keyspace counts of operations that the node has received for tokens outside
+     * its owned ranges. Represented as a {@code Map<String, long[]>}, keys are keyspace names and the
+     * values are the counts for read, write and paxos ops respectivly.
+     * e.g. keyspace_name -> [reads, writes, paxos].
+     */
+    Map<String, long[]> getOutOfRangeOperationCounts();
 }

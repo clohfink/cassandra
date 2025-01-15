@@ -1,3 +1,37 @@
+4.1.8
+ * Enforce CQL message size limit on multiframe messages (CASSANDRA-20052)
+ * Add nodetool checktokenmetadata command that checks TokenMetadata is insync with Gossip endpointState (CASSANDRA-18758)
+ * Backport Java 11 support for Simulator (CASSANDRA-17178/CASSANDRA-19935)
+ * Equality check for Paxos.Electorate should not depend on collection types (CASSANDRA-19935)
+ * Fix race condition in DecayingEstimatedHistogramReservoir during rescale (CASSANDRA-19365)
+Merged from 4.0:
+ * Allow hint delivery during schema mismatch (CASSANDRA-20188)
+ * IndexOutOfBoundsException when accessing partition where the column was deleted (CASSANDRA-20108)
+ * Enhance CQLSSTableWriter to notify clients on sstable production (CASSANDRA-19800)
+ * Fix gossip issue with gossip-only and bootstrapping nodes missing DC/Rack/Host ID endpoint state (CASSANDRA-19983)
+ * Change the resolution of AbstractCommitLogService#lastSyncedAt to nanos to be aligned with later comparisons (CASSANDRA-20074)
+ * Backport of CASSANDRA-17812: Rate-limit new client connection auth setup to avoid overwhelming bcrypt (CASSANDRA-20057)
+ * Support UDTs and vectors as clustering keys in descending order (CASSANDRA-20050)
+ * Fix CQL in snapshot's schema which did not contained UDTs used as reverse clustering columns (CASSANDRA-20036)
+ * Add configurable batchlog endpoint strategies: random_remote, prefer_local, dynamic_remote, and dynamic (CASSANDRA-18120)
+ * Fix bash-completion for debian distro (CASSANDRA-19999)
+ * Ensure thread-safety for CommitLogArchiver in CommitLog (CASSANDRA-19960)
+ * Fix text containing "/*" being interpreted as multiline comment in cqlsh (CASSANDRA-17667)
+ * Fix indexing of a frozen collection that is the clustering key and reversed (CASSANDRA-19889)
+ * Emit error when altering a table with non-frozen UDTs with nested non-frozen collections the same way as done upon table creation (CASSANDRA-19925)
+
+
+4.1.7
+Merged from 4.0:
+ * Safer handling of out-of-range tokens (CASSANDRA-13704)
+ * Fix memory leak in BTree.FastBuilder (CASSANDRA-19785)
+ * Fix millisecond and microsecond precision for commit log replay (CASSANDRA-19448)
+ * Improve accuracy of memtable heap usage tracking (CASSANDRA-17298)
+ * Fix rendering UNSET collection types in query tracing (CASSANDRA-19880)
+ * Fix latency reported by ideal consistency level monitoring (CASSANDRA-19651)
+ * Use default commitlog settings in test YAMLs (CASSANDRA-19830)
+
+
 4.1.6
  * Add native transport deadline, an ultimate deadline for all tasks related to a specific request (CASSANDRA-19534)
  * Do not create a role if ALTER ROLE IF EXISTS operates on non-existing role (CASSANDRA-19749)
@@ -81,7 +115,7 @@ Merged from 3.11:
  * Fix NPE when using udfContext in UDF after a restart of a node (CASSANDRA-18739)
 Merged from 3.0:
  * Backport CASSANDRA-16418 to 3.x (CASSANDRA-18824)
- * Suppress CVE-2023-6378 (CASSANDRA-19142) 
+ * Suppress CVE-2023-6378 (CASSANDRA-19142)
  * Do not set RPC_READY to false on transports shutdown in order to not fail counter updates for deployments with coordinator and storage nodes with transports turned off (CASSANDRA-18935)
  * Suppress CVE-2023-44487 (CASSANDRA-18943)
  * Fix nodetool enable/disablebinary to correctly set rpc readiness in gossip (CASSANDRA-18935)

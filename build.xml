@@ -34,7 +34,7 @@
     <property name="debuglevel" value="source,lines,vars"/>
 
     <!-- default version and SCM information -->
-    <property name="base.version" value="4.1.6"/>
+    <property name="base.version" value="4.1.8"/>
     <property name="scm.connection" value="scm:https://gitbox.apache.org/repos/asf/cassandra.git"/>
     <property name="scm.developerConnection" value="scm:https://gitbox.apache.org/repos/asf/cassandra.git"/>
     <property name="scm.url" value="https://gitbox.apache.org/repos/asf?p=cassandra.git"/>
@@ -296,16 +296,6 @@
     </macrodef>
     <set-keepbrief-property test-name="${test.name}" />
 
-<!--    <script language="javascript">-->
-<!--        if (project.getProperty("cassandra.keepBriefBrief") == null)-->
-<!--        {-->
-<!--            if (project.getProperty("test.name").equals("*Test"))-->
-<!--                project.setProperty("cassandra.keepBriefBrief", "true");-->
-<!--            else-->
-<!--                project.setProperty("cassandra.keepBriefBrief", "false");-->
-<!--        }-->
-<!--    </script>-->
-
     <condition property="java.version.8">
         <equals arg1="${ant.java.version}" arg2="1.8"/>
     </condition>
@@ -418,31 +408,18 @@
     <path id="maven-ant-tasks.classpath" path="${build.dir}/maven-ant-tasks-${maven-ant-tasks.version}.jar" />
     <path id="cassandra.classpath">
         <pathelement location="${build.classes.main}" />
-<!--        <fileset dir="${build.lib}">-->
-<!--            <include name="**/*.jar" />-->
-<!--            <exclude name="**/*-sources.jar"/>-->
-<!--            <exclude name="**/ant-*.jar"/>-->
-<!--        </fileset>-->
         <fileset dir="${build.dir.lib}">
             <include name="**/*.jar" />
-<!--            <exclude name="**/*-sources.jar"/>-->
-<!--            <exclude name="**/ant-*.jar"/>-->
         </fileset>
     </path>
     <path id="cassandra.classpath.test">
         <file file="${build.dir}/${final.name}.jar"/> <!-- we need the jar for tests and benchmarks (multi-version jar) -->
-<!--        <fileset dir="${build.lib}">-->
-<!--            <include name="**/*.jar" />-->
-<!--            <exclude name="**/*-sources.jar"/>-->
-<!--            <exclude name="**/ant-*.jar"/>-->
-<!--        </fileset>-->
         <fileset dir="${build.dir.lib}">
             <include name="**/*.jar" />
-<!--            <exclude name="**/*-sources.jar"/>-->
-<!--            <exclude name="**/ant-*.jar"/>-->
         </fileset>
         <fileset dir="${test.lib}/jars">
             <include name="**/*.jar" />
+            <exclude name="**/ant-*.jar"/>
         </fileset>
     </path>
 
@@ -632,64 +609,6 @@
     <target name="maven-ant-tasks-init" depends="maven-ant-tasks-download,resolver-init" unless="maven-ant-tasks.initialized"
             description="Initialize Maven ANT Tasks">
       <typedef uri="antlib:org.apache.maven.artifact.ant" classpathref="maven-ant-tasks.classpath" />
-      <!-- define the remote repositories we use -->
-<!--      <artifact:remoteRepository id="central"   url="${artifact.remoteRepository.central}"/>-->
-<!--      <artifact:remoteRepository id="apache"    url="${artifact.remoteRepository.apache}"/>-->
-
-<!--      <macrodef name="install">-->
-<!--         <attribute name="pomFile"/>-->
-<!--         <attribute name="file"/>-->
-<!--         <attribute name="classifier" default=""/>-->
-<!--         <attribute name="packaging" default="jar"/>-->
-<!--         <sequential>-->
-<!--            <artifact:mvn mavenVersion="${maven.version}" fork="true" failonerror="true">-->
-<!--               <arg value="org.apache.maven.plugins:maven-install-plugin:2.3.1:install-file" />-->
-<!--               <arg value="-DpomFile=@{pomFile}" />-->
-<!--               <arg value="-Dfile=@{file}" />-->
-<!--               <arg value="-Dclassifier=@{classifier}" />-->
-<!--               <arg value="-Dpackaging=@{packaging}" />-->
-<!--            </artifact:mvn>-->
-<!--         </sequential>-->
-<!--      </macrodef>-->
-
-<!--      <macrodef name="deploy">-->
-<!--         <attribute name="pomFile"/>-->
-<!--         <attribute name="file"/>-->
-<!--         <attribute name="classifier" default=""/>-->
-<!--         <attribute name="packaging" default="jar"/>-->
-<!--         <sequential>-->
-<!--             <artifact:mvn mavenVersion="${maven.version}" fork="true" failonerror="true">-->
-<!--                <jvmarg value="-Xmx512m"/>-->
-<!--                <arg value="org.apache.maven.plugins:maven-gpg-plugin:1.6:sign-and-deploy-file" />-->
-<!--                <arg value="-DretryFailedDeploymentCount=5" />-->
-<!--                <arg value="-Durl=${maven-repository-url}" />-->
-<!--                <arg value="-DrepositoryId=${maven-repository-id}" />-->
-<!--                <arg value="-DpomFile=@{pomFile}" />-->
-<!--                <arg value="-Dfile=@{file}" />-->
-<!--                <arg value="-Dclassifier=@{classifier}" />-->
-<!--                <arg value="-Dpackaging=@{packaging}" />-->
-<!--             </artifact:mvn>-->
-<!--         </sequential>-->
-<!--      </macrodef>-->
-
-<!--      <macrodef name="sign-dist">-->
-<!--         <attribute name="file"/>-->
-<!--         <sequential>-->
-<!--             <echo message="gpg signing @{file}" />-->
-<!--             <artifact:mvn mavenVersion="${maven.version}" fork="true" failonerror="true">-->
-<!--                <jvmarg value="-Xmx512m"/>-->
-<!--                <arg value="-q" />-->
-<!--                <arg value="org.apache.maven.plugins:maven-gpg-plugin:1.6:sign-and-deploy-file" />-->
-<!--                <arg value="-Dfile=@{file}" />-->
-<!--                <arg value="-DgroupId=org.apache.cassandra" />-->
-<!--                <arg value="-DartifactId=cassandra-parent" />-->
-<!--                <arg value="-Dversion=${version}" />-->
-<!--                &lt;!&ndash; intentionally dummy out the deploy step &ndash;&gt;-->
-<!--                <arg value="-Durl=file:///tmp/" />-->
-<!--                <arg value="-DrepositoryId=tmp" />-->
-<!--             </artifact:mvn>-->
-<!--         </sequential>-->
-<!--      </macrodef>-->
       <property name="maven-ant-tasks.initialized" value="true"/>
     </target>
 
@@ -1187,14 +1106,6 @@
             <src path="${stress.build.src}" />
             <classpath>
                 <path refid="cassandra.classpath" />
-<!--                <path>-->
-<!--                    <fileset dir="${build.lib}">-->
-<!--                        <include name="**/*.jar" />-->
-<!--                    </fileset>-->
-<!--                    <fileset dir="${build.dir.lib}">-->
-<!--                        <include name="**/*.jar" />-->
-<!--                    </fileset>-->
-<!--                </path>-->
             </classpath>
         </javac>
         <copy todir="${stress.build.classes}">
@@ -1236,9 +1147,6 @@
             <classpath>
                 <path refid="cassandra.classpath.test"/>
                 <pathelement location="${fqltool.build.classes}" />
-                <fileset dir="${build.dir.lib}">
-                    <include name="**/*.jar" />
-                </fileset>
             </classpath>
             <src path="${fqltool.test.src}"/>
         </javac>
@@ -1256,11 +1164,6 @@
             <src path="${fqltool.build.src}" />
             <classpath>
                 <path refid="cassandra.classpath" />
-<!--                <path>-->
-<!--                    <fileset dir="${build.lib}">-->
-<!--                        <include name="**/*.jar" />-->
-<!--                    </fileset>-->
-<!--                </path>-->
             </classpath>
         </javac>
     </target>
@@ -1392,41 +1295,6 @@
             <fileset dir="${fqltool.build.classes}"/>
         </jar>
     </target>
-
-<!--    <target name="simulator-jars"-->
-<!--            depends="simulator-asm-build,simulator-bootstrap-build"-->
-<!--            description="Assemble Cassandra JAR files">-->
-
-<!--        &lt;!&ndash; simulator asm jar &ndash;&gt;-->
-<!--        <manifest file="${simulator-asm.manifest}">-->
-<!--            <attribute name="Built-By" value="Benedict Elliott Smith"/>-->
-<!--            <attribute name="Premain-Class" value="org.apache.cassandra.simulator.asm.InterceptAgent"/>-->
-<!--            <attribute name="Agent-Class" value="org.apache.cassandra.simulator.asm.InterceptAgent"/>-->
-<!--            <attribute name="Can-Redefine-Classes" value="true"/>-->
-<!--            <attribute name="Can-Retransform-Classes" value="true"/>-->
-<!--        </manifest>-->
-<!--        <mkdir dir="${simulator-asm.build.classes}/META-INF" />-->
-<!--        <mkdir dir="${test.lib}/jars/" />-->
-<!--        <jar destfile="${test.lib}/jars/simulator-asm.jar" manifest="${simulator-asm.manifest}">-->
-<!--            <fileset dir="${simulator-asm.build.classes}"/>-->
-<!--            <fileset dir="${test.lib}/jars">-->
-<!--                <include name="**/asm-*${asm.version}.jar" />-->
-<!--            </fileset>-->
-<!--        </jar>-->
-
-<!--        &lt;!&ndash; simulator bootstrap jar &ndash;&gt;-->
-<!--        <manifest file="${simulator-bootstrap.manifest}">-->
-<!--            <attribute name="Built-By" value="Benedict Elliott Smith"/>-->
-<!--        </manifest>-->
-<!--        <mkdir dir="${simulator-bootstrap.build.classes}/META-INF" />-->
-<!--        <mkdir dir="${test.lib}/jars/" />-->
-<!--        <jar destfile="${test.lib}/jars/simulator-bootstrap.jar" manifest="${simulator-bootstrap.manifest}">-->
-<!--            <fileset dir="${simulator-bootstrap.build.classes}"/>-->
-<!--            <fileset dir="${test.lib}/jars">-->
-<!--                <include name="**/asm-*${asm.version}.jar" />-->
-<!--            </fileset>-->
-<!--        </jar>-->
-<!--    </target>-->
 
     <target name="jar"
             depends="_main-jar,build-test,stress-jar,fqltool-jar,write-poms"
@@ -1633,9 +1501,6 @@
      <classpath>
         <path refid="cassandra.classpath.test"/>
         <pathelement location="${fqltool.build.classes}"/>
-         <fileset dir="${build.dir.lib}">
-             <include name="**/*.jar" />
-         </fileset>
      </classpath>
      <compilerarg value="-XDignore.symbol.file"/>
      <compilerarg line="${jdk11-javac-exports}"/>

@@ -29,6 +29,7 @@ import org.apache.cassandra.schema.KeyspaceParams;
 import org.apache.cassandra.schema.Schema;
 import org.apache.cassandra.utils.Clock;
 import org.apache.cassandra.utils.FBUtilities;
+
 import org.junit.BeforeClass;
 import org.junit.Rule;
 import org.junit.Test;
@@ -243,6 +244,7 @@ public class HintsCatalogTest
                 session.append(hint);
             }
         }
+
         assertThat(descriptor.hintsFileSize(directory), greaterThan(0L));
     }
 }

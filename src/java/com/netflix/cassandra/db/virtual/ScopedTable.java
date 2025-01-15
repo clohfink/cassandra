@@ -34,6 +34,7 @@ import org.apache.cassandra.db.ReadCommand;
 import org.apache.cassandra.db.ReadResponse;
 import org.apache.cassandra.db.filter.ClusteringIndexFilter;
 import org.apache.cassandra.db.filter.ColumnFilter;
+import org.apache.cassandra.db.filter.RowFilter;
 import org.apache.cassandra.db.marshal.CompositeType;
 import org.apache.cassandra.db.marshal.UTF8Type;
 import org.apache.cassandra.db.partitions.PartitionUpdate;
@@ -80,7 +81,7 @@ public abstract class ScopedTable implements VirtualTable
     public abstract UnfilteredRowIterator select(DecoratedKey partitionKey, String keyspace, String table);
 
     @Override
-    public UnfilteredPartitionIterator select(DecoratedKey partitionKey, ClusteringIndexFilter clusteringIndexFilter, ColumnFilter columnFilter)
+    public UnfilteredPartitionIterator select(DecoratedKey partitionKey, ClusteringIndexFilter clusteringIndexFilter, ColumnFilter columnFilter, RowFilter rowFilter)
     {
         ByteBuffer[] key = ((CompositeType) this.metadata.partitionKeyType).split(partitionKey.getKey());
         String keyspace = UTF8Type.instance.getString(key[0]);
@@ -100,7 +101,7 @@ public abstract class ScopedTable implements VirtualTable
     }
 
     @Override
-    public UnfilteredPartitionIterator select(DataRange dataRange, ColumnFilter columnFilter)
+    public UnfilteredPartitionIterator select(DataRange dataRange, ColumnFilter columnFilter, RowFilter rowFilter)
     {
         throw new InvalidRequestException("Range queries are not supported by table, keyspace_name and table_name must be included in query" + metadata);
     }

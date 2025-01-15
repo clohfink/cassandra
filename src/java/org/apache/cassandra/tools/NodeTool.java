@@ -97,6 +97,7 @@ public class NodeTool
                 CassHelp.class,
                 CfHistograms.class,
                 CfStats.class,
+                CheckTokenMetadata.class,
                 Cleanup.class,
                 ClearSnapshot.class,
                 ClientStats.class,

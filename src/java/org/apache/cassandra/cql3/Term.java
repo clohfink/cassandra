@@ -23,6 +23,7 @@ import java.util.List;
 import org.apache.cassandra.cql3.functions.Function;
 import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.exceptions.InvalidRequestException;
+import org.apache.cassandra.schema.SchemaConstants;
 import org.apache.cassandra.transport.ProtocolVersion;
 
 /**
@@ -79,6 +80,19 @@ public interface Term
     }
 
     public void addFunctionsTo(List<Function> functions);
+
+    /**
+     * Converts the term represented by the specified {@code String} into its binary representation.
+     * @param term the term to convert
+     * @param type the type of the term
+     * @return the term binary representation
+     */
+    static ByteBuffer asBytes(String keyspace, String term, AbstractType<?> type)
+    {
+        ColumnSpecification receiver = new ColumnSpecification(keyspace, SchemaConstants.DUMMY_KEYSPACE_OR_TABLE_NAME, new ColumnIdentifier("(dummy)", true), type);
+        Term.Raw rawTerm = CQLFragmentParser.parseAny(CqlParser::term, term, "CQL term");
+        return rawTerm.prepare(keyspace, receiver).bindAndGet(QueryOptions.DEFAULT);
+    }
 
     /**
      * A parsed, non prepared (thus untyped) term.

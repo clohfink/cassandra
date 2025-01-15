@@ -27,8 +27,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 import com.codahale.metrics.ExponentiallyDecayingReservoir;
-
 import com.codahale.metrics.Snapshot;
+
 import org.apache.cassandra.concurrent.ScheduledExecutors;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.gms.ApplicationState;
@@ -271,7 +271,7 @@ public class DynamicEndpointSnitch extends AbstractEndpointSnitch implements Lat
         sample.update(unit.toMillis(latency));
     }
 
-    private void updateScores() // this is expensive
+    public void updateScores() // this is expensive
     {
         if (!StorageService.instance.isInitialized())
             return;

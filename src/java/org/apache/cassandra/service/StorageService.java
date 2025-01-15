@@ -137,6 +137,7 @@ import org.apache.cassandra.db.lifecycle.LifecycleTransaction;
 import org.apache.cassandra.db.virtual.VirtualKeyspaceRegistry;
 import org.apache.cassandra.dht.BootStrapper;
 import org.apache.cassandra.dht.IPartitioner;
+import org.apache.cassandra.dht.OwnedRanges;
 import org.apache.cassandra.dht.Range;
 import org.apache.cassandra.dht.RangeStreamer;
 import org.apache.cassandra.dht.StreamStateStore;
@@ -311,6 +312,35 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
 
     public static final StorageService instance = new StorageService();
 
+    private final java.util.function.Predicate<Keyspace> anyOutOfRangeOpsRecorded
+            = keyspace -> keyspace.metric.outOfRangeTokenReads.getCount() > 0
+                          || keyspace.metric.outOfRangeTokenWrites.getCount() > 0
+                          || keyspace.metric.outOfRangeTokenPaxosRequests.getCount() > 0;
+
+    private long[] getOutOfRangeOperationCounts(Keyspace keyspace)
+    {
+        return new long[]
+        {
+               keyspace.metric.outOfRangeTokenReads.getCount(),
+               keyspace.metric.outOfRangeTokenWrites.getCount(),
+               keyspace.metric.outOfRangeTokenPaxosRequests.getCount()
+        };
+    }
+
+    public Map<String, long[]> getOutOfRangeOperationCounts()
+    {
+        return Schema.instance.getKeyspaces()
+                              .stream()
+                              .map(Keyspace::open)
+                              .filter(anyOutOfRangeOpsRecorded)
+                              .collect(Collectors.toMap(Keyspace::getName, this::getOutOfRangeOperationCounts));
+    }
+
+    public void incOutOfRangeOperationCount()
+    {
+        (isStarting() ? StorageMetrics.startupOpsForInvalidToken : StorageMetrics.totalOpsForInvalidToken).inc();
+    }
+
     @Deprecated
     public boolean isInShutdownHook()
     {
@@ -357,6 +387,11 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
         for (Replica r : getTokenMetadata().getPendingRanges(ks, broadcastAddress))
             ranges.add(r.range());
         return ranges;
+    }
+
+    public OwnedRanges getNormalizedLocalRanges(String keyspaceName)
+    {
+        return new OwnedRanges(getLocalReplicas(keyspaceName).ranges());
     }
 
     public Collection<Range<Token>> getPrimaryRanges(String keyspace)
@@ -2964,7 +2999,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
             Gossiper.instance.addLocalApplicationState(ApplicationState.RPC_READY, valueFactory.rpcReady(value));
     }
 
-    private Collection<Token> getTokensFor(InetAddressAndPort endpoint)
+    public Collection<Token> getTokensFor(InetAddressAndPort endpoint)
     {
         try
         {
@@ -5015,6 +5050,12 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
         return tokenMetadata.partitioner.getToken(partitionKeyToBytes(keyspaceName, table, key)).toString();
     }
 
+    public boolean isEndpointValidForWrite(String keyspace, Token token)
+    {
+        AbstractReplicationStrategy replicationStrategy = Keyspace.open(keyspace).getReplicationStrategy();
+        return replicationStrategy.isTokenInLocalNaturalOrPendingRange(token);
+    }
+
     public void setLoggingLevel(String classQualifier, String rawLevel) throws Exception
     {
         LoggingSupportFactory.getLoggingSupport().setLoggingLevel(classQualifier, rawLevel);
@@ -6114,6 +6155,16 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
         updateTopology();
     }
 
+    public String getBatchlogEndpointStrategy()
+    {
+        return DatabaseDescriptor.getBatchlogEndpointStrategy().name();
+    }
+
+    public void setBatchlogEndpointStrategy(String batchlogEndpointStrategy)
+    {
+        DatabaseDescriptor.setBatchlogEndpointStrategy(Config.BatchlogEndpointStrategy.valueOf(batchlogEndpointStrategy));
+    }
+
     /**
      * Send data to the endpoints that will be responsible for it in the future
      *
@@ -6684,6 +6735,36 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
         return DatabaseDescriptor.getNativeTransportRateLimitingEnabled();
     }
 
+    public boolean isOutOfTokenRangeRequestLoggingEnabled()
+    {
+        return DatabaseDescriptor.getLogOutOfTokenRangeRequests();
+    }
+
+    public void setOutOfTokenRangeRequestLoggingEnabled(boolean enabled)
+    {
+        if (enabled)
+            logger.info("Enabling logging of requests on tokens outside owned ranges");
+        else
+            logger.info("Disabling logging of requests on tokens outside owned ranges");
+
+        DatabaseDescriptor.setLogOutOfTokenRangeRequests(enabled);
+    }
+
+    public boolean isOutOfTokenRangeRequestRejectionEnabled()
+    {
+        return DatabaseDescriptor.getRejectOutOfTokenRangeRequests();
+    }
+
+    public void setOutOfTokenRangeRequestRejectionEnabled(boolean enabled)
+    {
+        if (enabled)
+            logger.info("Enabling rejection of requests on tokens outside owned ranges");
+        else
+            logger.info("Disabling rejection of requests on tokens outside owned ranges");
+
+        DatabaseDescriptor.setRejectOutOfTokenRangeRequests(enabled);
+    }
+
     @VisibleForTesting
     public void shutdownServer()
     {
@@ -7175,6 +7256,65 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
         DatabaseDescriptor.setAutoSnapshotTtl(newTtl);
     }
 
+    public void deleteUnusedKeyspaces(boolean dryRun) throws IOException
+    {
+        // walk the data directories and remove any directories that don't have a keyspace
+        for (String dataDir : DatabaseDescriptor.getAllDataFileLocations())
+        {
+            File[] files = new File(dataDir).list();
+            if (files == null)
+                continue;
+
+            for (File file : files)
+            {
+                if (file.isDirectory() && !Schema.instance.getKeyspaces().contains(file.name()))
+                {
+                    if (dryRun)
+                    {
+                        logger.info("Would delete unused keyspace directory {}", file);
+                    }
+                    else
+                    {
+                        logger.info("Deleting unused keyspace directory {}", file);
+                        file.deleteRecursive();
+                    }
+                }
+            }
+        }
+    }
+
+    public List<String> getTablesForKeyspace(String keyspace) {
+        return Keyspace.open(keyspace).getColumnFamilyStores().stream().map(cfs -> cfs.name).collect(Collectors.toList());
+    }
+
+    public List<String> mutateSSTableRepairedState(boolean repaired, boolean preview, String keyspace, List<String> tableNames) throws InvalidRequestException
+    {
+        Map<String, ColumnFamilyStore> tables =  Keyspace.open(keyspace).getColumnFamilyStores()
+                                                         .stream().collect(Collectors.toMap(c -> c.name, c -> c));
+        for (String tableName : tableNames) {
+            if (!tables.containsKey(tableName))
+                throw new InvalidRequestException("Table " + tableName + " does not exist in keyspace " + keyspace);
+        }
+
+        // only select SSTables that are unrepaired when repaired is true and vice versa
+        Predicate<SSTableReader> predicate = sst -> repaired != sst.isRepaired();
+
+        // mutate SSTables
+        long repairedAt = !repaired ? 0 : currentTimeMillis();
+        List<String> sstablesTouched = new ArrayList<>();
+        for (String tableName : tableNames) {
+            ColumnFamilyStore table = tables.get(tableName);
+            Set<SSTableReader> result = table.runWithCompactionsDisabled(() -> {
+                Set<SSTableReader> sstables = table.getLiveSSTables().stream().filter(predicate).collect(Collectors.toSet());
+                if (!preview)
+                    table.getCompactionStrategyManager().mutateRepaired(sstables, repairedAt, null, false);
+                return sstables;
+            }, predicate, true, false, true);
+            sstablesTouched.addAll(result.stream().map(sst -> sst.descriptor.baseFilename()).collect(Collectors.toList()));
+        }
+        return sstablesTouched;
+    }
+
     @Override
     public String getCQLStartTime()
     {
@@ -7253,62 +7393,4 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
         DatabaseDescriptor.setEnforceNativeDeadlineForHints(value);
     }
 
-    public void deleteUnusedKeyspaces(boolean dryRun) throws IOException
-    {
-        // walk the data directories and remove any directories that don't have a keyspace
-        for (String dataDir : DatabaseDescriptor.getAllDataFileLocations())
-        {
-            File[] files = new File(dataDir).list();
-            if (files == null)
-                continue;
-
-            for (File file : files)
-            {
-                if (file.isDirectory() && !Schema.instance.getKeyspaces().contains(file.name()))
-                {
-                    if (dryRun)
-                    {
-                        logger.info("Would delete unused keyspace directory {}", file);
-                    }
-                    else
-                    {
-                        logger.info("Deleting unused keyspace directory {}", file);
-                        file.deleteRecursive();
-                    }
-                }
-            }
-        }
-    }
-
-    public List<String> getTablesForKeyspace(String keyspace) {
-        return Keyspace.open(keyspace).getColumnFamilyStores().stream().map(cfs -> cfs.name).collect(Collectors.toList());
-    }
-
-    public List<String> mutateSSTableRepairedState(boolean repaired, boolean preview, String keyspace, List<String> tableNames) throws InvalidRequestException
-    {
-        Map<String, ColumnFamilyStore> tables =  Keyspace.open(keyspace).getColumnFamilyStores()
-                                                         .stream().collect(Collectors.toMap(c -> c.name, c -> c));
-        for (String tableName : tableNames) {
-            if (!tables.containsKey(tableName))
-                throw new InvalidRequestException("Table " + tableName + " does not exist in keyspace " + keyspace);
-        }
-
-        // only select SSTables that are unrepaired when repaired is true and vice versa
-        Predicate<SSTableReader> predicate = sst -> repaired != sst.isRepaired();
-
-        // mutate SSTables
-        long repairedAt = !repaired ? 0 : currentTimeMillis();
-        List<String> sstablesTouched = new ArrayList<>();
-        for (String tableName : tableNames) {
-            ColumnFamilyStore table = tables.get(tableName);
-            Set<SSTableReader> result = table.runWithCompactionsDisabled(() -> {
-                Set<SSTableReader> sstables = table.getLiveSSTables().stream().filter(predicate).collect(Collectors.toSet());
-                if (!preview)
-                    table.getCompactionStrategyManager().mutateRepaired(sstables, repairedAt, null, false);
-                return sstables;
-            }, predicate, true, false, true);
-            sstablesTouched.addAll(result.stream().map(sst -> sst.descriptor.baseFilename()).collect(Collectors.toList()));
-        }
-        return sstablesTouched;
-    }
 }

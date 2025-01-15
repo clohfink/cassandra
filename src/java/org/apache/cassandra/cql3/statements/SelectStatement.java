@@ -83,6 +83,7 @@ import org.apache.cassandra.utils.NoSpamLogger;
 import org.apache.commons.lang3.builder.ToStringBuilder;
 import org.apache.commons.lang3.builder.ToStringStyle;
 
+import static org.apache.cassandra.cql3.restrictions.StatementRestrictions.requiresAllowFilteringIfNotSpecified;
 import static org.apache.cassandra.cql3.statements.RequestValidations.checkFalse;
 import static org.apache.cassandra.cql3.statements.RequestValidations.checkNotNull;
 import static org.apache.cassandra.cql3.statements.RequestValidations.checkNull;
@@ -1254,7 +1255,7 @@ public class SelectStatement implements CQLStatement.SingleKeyspaceCqlStatement
                                              whereClause,
                                              boundNames,
                                              selectsOnlyStaticColumns,
-                                             parameters.allowFiltering,
+                                             parameters.allowFiltering|| !requiresAllowFilteringIfNotSpecified(metadata),
                                              forView);
         }
 

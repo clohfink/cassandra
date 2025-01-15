@@ -97,6 +97,7 @@ public class DatabaseDescriptorRefTest
     "org.apache.cassandra.repair.autorepair.IncrementalRepairState",
     "org.apache.cassandra.repair.autorepair.AutoRepairConfig$RepairType",
     "org.apache.cassandra.repair.autorepair.AutoRepairState",
+    "org.apache.cassandra.config.Config$BatchlogEndpointStrategy",
     "org.apache.cassandra.config.DatabaseDescriptor$ByteUnit",
     "org.apache.cassandra.config.DataRateSpec",
     "org.apache.cassandra.config.DataRateSpec$DataRateUnit",

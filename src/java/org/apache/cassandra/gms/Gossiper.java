@@ -1187,6 +1187,12 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
         return endpointStateMap.get(ep);
     }
 
+    @VisibleForTesting
+    public boolean inJustRemovedEndpoints(InetAddressAndPort ep)
+    {
+        return justRemovedEndpoints.containsKey(ep);
+    }
+
     public EndpointState copyEndpointStateForEndpoint(InetAddressAndPort ep)
     {
         EndpointState epState = endpointStateMap.get(ep);
@@ -1823,7 +1829,7 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
                     /* we request everything from the gossiper */
                     requestAll(gDigest, deltaGossipDigestList, remoteGeneration);
                 }
-                else if (remoteGeneration < localGeneration)
+                else if (remoteGeneration < localGeneration || FBUtilities.getBroadcastAddressAndPort().equals(gDigest.getEndpoint()))
                 {
                     /* send all data with generation = localgeneration and version > -1 */
                     sendAll(gDigest, deltaEpStateMap, HeartBeatState.EMPTY_VERSION);
@@ -2628,5 +2634,35 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
         GossipDigestAck2 digestAck2Message = new GossipDigestAck2(Collections.singletonMap(getBroadcastAddressAndPort(), epState));
         Message<GossipDigestAck2> message = Message.out(Verb.GOSSIP_DIGEST_ACK2, digestAck2Message);
         MessagingService.instance().send(message, ep);
+    }
+
+    public Map<String,List<String>> compareGossipAndTokenMetadata()
+    {
+        // local epstate will be part of endpointStateMap
+        Map<String,List<String>> mismatches = new HashMap<>();
+        for (InetAddressAndPort endpoint : endpointStateMap.keySet())
+        {
+            EndpointState ep = endpointStateMap.get(endpoint);
+            // check the status only for NORMAL nodes
+            if (ep.isNormalState())
+            {
+                List<Token> tokensFromMetadata;
+                try
+                {
+                    tokensFromMetadata = new ArrayList<>(StorageService.instance.getTokenMetadata().getTokens(endpoint));
+                    Collections.sort(tokensFromMetadata);
+                }
+                catch(AssertionError e)
+                {
+                    tokensFromMetadata = Collections.EMPTY_LIST;
+                }
+                List<Token> tokensFromGossip = new ArrayList<>(StorageService.instance.getTokensFor(endpoint));
+                Collections.sort(tokensFromGossip);
+
+                if (!tokensFromMetadata.equals(tokensFromGossip))
+                    mismatches.put(endpoint.toString(), ImmutableList.of(tokensFromGossip.toString(), tokensFromMetadata.toString()));
+            }
+        }
+        return mismatches;
     }
 }

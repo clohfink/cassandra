@@ -29,6 +29,8 @@ import org.apache.cassandra.cql3.statements.StatementType;
 import org.apache.cassandra.db.*;
 import org.apache.cassandra.db.filter.RowFilter;
 import org.apache.cassandra.db.marshal.AbstractType;
+import org.apache.cassandra.db.virtual.VirtualKeyspaceRegistry;
+import org.apache.cassandra.db.virtual.VirtualTable;
 import org.apache.cassandra.dht.*;
 import org.apache.cassandra.exceptions.InvalidRequestException;
 import org.apache.cassandra.index.Index;
@@ -266,7 +268,7 @@ public final class StatementRestrictions
             }
             if (hasQueriableIndex)
                 usesSecondaryIndexing = true;
-            else if (!allowFiltering)
+            else if (!allowFiltering && requiresAllowFilteringIfNotSpecified(table))
                 throw invalidRequest(StatementRestrictions.REQUIRES_ALLOW_FILTERING_MESSAGE);
 
             filterRestrictions.add(nonPrimaryKeyRestrictions);
@@ -285,6 +287,16 @@ public final class StatementRestrictions
             clusteringColumnsRestrictions = clusteringColumnsRestrictions.mergeWith(restriction);
         else
             nonPrimaryKeyRestrictions = nonPrimaryKeyRestrictions.addRestriction((SingleRestriction) restriction);
+    }
+
+    public static boolean requiresAllowFilteringIfNotSpecified(TableMetadata metadata)
+    {
+        if (!metadata.isVirtual())
+            return true;
+
+        VirtualTable tableNullable = VirtualKeyspaceRegistry.instance.getTableNullable(metadata.id);
+        assert tableNullable != null;
+        return !tableNullable.allowFilteringImplicitly();
     }
 
     public void addFunctionsTo(List<Function> functions)
@@ -444,7 +456,7 @@ public final class StatementRestrictions
             // components must have a EQ. Only the last partition key component can be in IN relation.
             if (partitionKeyRestrictions.needFiltering(table))
             {
-                if (!allowFiltering && !forView && !hasQueriableIndex)
+                if (!allowFiltering && !forView && !hasQueriableIndex && requiresAllowFilteringIfNotSpecified(table))
                     throw new InvalidRequestException(REQUIRES_ALLOW_FILTERING_MESSAGE);
 
                 isKeyRange = true;
@@ -524,7 +536,7 @@ public final class StatementRestrictions
         }
         else
         {
-            checkFalse(clusteringColumnsRestrictions.hasContains() && !hasQueriableIndex && !allowFiltering,
+            checkFalse(clusteringColumnsRestrictions.hasContains() && !hasQueriableIndex && !allowFiltering && requiresAllowFilteringIfNotSpecified(table),
                        "Clustering columns can only be restricted with CONTAINS with a secondary index or filtering");
 
             if (hasClusteringColumnsRestrictions() && clusteringColumnsRestrictions.needFiltering())
@@ -533,7 +545,7 @@ public final class StatementRestrictions
                 {
                     usesSecondaryIndexing = true;
                 }
-                else if (!allowFiltering)
+                else if (!allowFiltering && requiresAllowFilteringIfNotSpecified(table))
                 {
                     List<ColumnMetadata> clusteringColumns = table.clusteringColumns();
                     List<ColumnMetadata> restrictedColumns = new LinkedList<>(clusteringColumnsRestrictions.getColumnDefs());

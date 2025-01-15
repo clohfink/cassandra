@@ -357,6 +357,10 @@ public enum CassandraRelevantProperties
      */
     STREAMING_REQUIRES_CDC_REPLAY("cassandra.streaming.requires_cdc_replay", "true"),
 
+    /**
+     * Number of replicas required to store batchlog for atomicity, only accepts values of 1 or 2.
+     */
+    REQUIRED_BATCHLOG_REPLICA_COUNT("cassandra.batchlog.required_replica_count", "2")
     ;
 
     CassandraRelevantProperties(String key, String defaultVal)

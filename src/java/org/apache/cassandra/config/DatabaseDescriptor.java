@@ -154,6 +154,9 @@ public class DatabaseDescriptor
     private static long counterCacheSizeInMiB;
     private static long indexSummaryCapacityInMiB;
 
+    private static volatile long nativeTransportMaxMessageSizeInBytes;
+    private static volatile boolean nativeTransportMaxMessageSizeConfiguredExplicitly;
+
     private static volatile long scheduledCompactionCycleTimeSeconds;
 
     private static String localDC;
@@ -815,6 +818,23 @@ public class DatabaseDescriptor
             conf.max_mutation_size = new DataStorageSpec.IntKibibytesBound(conf.commitlog_segment_size.toKibibytes() / 2);
         else if (conf.commitlog_segment_size.toKibibytes() < 2 * conf.max_mutation_size.toKibibytes())
             throw new ConfigurationException("commitlog_segment_size must be at least twice the size of max_mutation_size / 1024", false);
+
+        if (conf.native_transport_max_message_size == null)
+        {
+            conf.native_transport_max_message_size = new DataStorageSpec.LongBytesBound(calculateDefaultNativeTransportMaxMessageSizeInBytes());
+        }
+        else
+        {
+            nativeTransportMaxMessageSizeConfiguredExplicitly = true;
+            long maxCqlMessageSize = conf.native_transport_max_message_size.toBytes();
+            if (maxCqlMessageSize > conf.native_transport_max_request_data_in_flight.toBytes())
+                throw new ConfigurationException("native_transport_max_message_size must not exceed native_transport_max_request_data_in_flight", false);
+
+            if (maxCqlMessageSize > conf.native_transport_max_request_data_in_flight_per_ip.toBytes())
+                throw new ConfigurationException("native_transport_max_message_size must not exceed native_transport_max_request_data_in_flight_per_ip", false);
+
+        }
+        nativeTransportMaxMessageSizeInBytes = conf.native_transport_max_message_size.toBytes();
 
         // native transport encryption options
         if (conf.client_encryption_options != null)
@@ -2682,6 +2702,22 @@ public class DatabaseDescriptor
         conf.native_transport_max_threads = max_threads;
     }
 
+    public static Integer getNativeTransportMaxAuthThreads()
+    {
+        return conf.native_transport_max_auth_threads;
+    }
+
+    /**
+     * If this value is set to <= 0 it will move auth requests to the standard request pool regardless of the current
+     * size of the authExecutor in {@link org.apache.cassandra.transport.Dispatcher}'s active size.
+     *
+     * see {@link org.apache.cassandra.transport.Dispatcher#dispatch} for executor selection
+     */
+    public static void setNativeTransportMaxAuthThreads(int threads)
+    {
+        conf.native_transport_max_auth_threads = threads;
+    }
+
     public static int getNativeTransportMaxFrameSize()
     {
         return conf.native_transport_max_frame_size.toBytes();
@@ -2750,6 +2786,30 @@ public class DatabaseDescriptor
     public static long getNativeTransportMaxRequestDataInFlightPerIpInBytes()
     {
         return conf.native_transport_max_request_data_in_flight_per_ip.toBytes();
+    }
+
+    public static long getNativeTransportMaxMessageSizeInBytes()
+    {
+        // the value of native_transport_max_message_size in bytes is cached
+        // to avoid conversion overhead during a parsing of each incoming CQL message
+        return nativeTransportMaxMessageSizeInBytes;
+    }
+
+    @VisibleForTesting
+    public static void setNativeTransportMaxMessageSizeInBytes(long maxMessageSizeInBytes)
+    {
+        conf.native_transport_max_message_size = new DataStorageSpec.LongBytesBound(maxMessageSizeInBytes);
+        nativeTransportMaxMessageSizeInBytes = conf.native_transport_max_message_size.toBytes();
+    }
+
+    private static long calculateDefaultNativeTransportMaxMessageSizeInBytes()
+    {
+        return Math.min(conf.max_mutation_size.toBytes(),
+                   Math.min(
+                   conf.native_transport_max_request_data_in_flight.toBytes(),
+                   conf.native_transport_max_request_data_in_flight_per_ip.toBytes()
+                   )
+        );
     }
 
     public static Config.PaxosVariant getPaxosVariant()
@@ -2878,6 +2938,10 @@ public class DatabaseDescriptor
             maxRequestDataInFlightInBytes = Runtime.getRuntime().maxMemory() / 40;
 
         conf.native_transport_max_request_data_in_flight_per_ip = new DataStorageSpec.LongBytesBound(maxRequestDataInFlightInBytes);
+        long newNativeTransportMaxMessageSizeInBytes = nativeTransportMaxMessageSizeConfiguredExplicitly
+                                                       ? Math.min(maxRequestDataInFlightInBytes, getNativeTransportMaxMessageSizeInBytes())
+                                                       : calculateDefaultNativeTransportMaxMessageSizeInBytes();
+        setNativeTransportMaxMessageSizeInBytes(newNativeTransportMaxMessageSizeInBytes);
     }
 
     public static long getNativeTransportMaxRequestDataInFlightInBytes()
@@ -2891,6 +2955,10 @@ public class DatabaseDescriptor
             maxRequestDataInFlightInBytes = Runtime.getRuntime().maxMemory() / 10;
 
         conf.native_transport_max_request_data_in_flight = new DataStorageSpec.LongBytesBound(maxRequestDataInFlightInBytes);
+        long newNativeTransportMaxMessageSizeInBytes = nativeTransportMaxMessageSizeConfiguredExplicitly
+                                                       ? Math.min(maxRequestDataInFlightInBytes, getNativeTransportMaxMessageSizeInBytes())
+                                                       : calculateDefaultNativeTransportMaxMessageSizeInBytes();
+        setNativeTransportMaxMessageSizeInBytes(newNativeTransportMaxMessageSizeInBytes);
     }
 
     public static int getNativeTransportMaxRequestsPerSecond()
@@ -3199,6 +3267,22 @@ public class DatabaseDescriptor
     public static void setBatchlogReplayThrottleInKiB(int throttleInKiB)
     {
         conf.batchlog_replay_throttle = new DataStorageSpec.IntKibibytesBound(throttleInKiB);
+    }
+
+    public static boolean isDynamicEndpointSnitch()
+    {
+        // not using config.dynamic_snitch because snitch can be changed via JMX
+        return snitch instanceof DynamicEndpointSnitch;
+    }
+
+    public static Config.BatchlogEndpointStrategy getBatchlogEndpointStrategy()
+    {
+        return conf.batchlog_endpoint_strategy;
+    }
+
+    public static void setBatchlogEndpointStrategy(Config.BatchlogEndpointStrategy batchlogEndpointStrategy)
+    {
+        conf.batchlog_endpoint_strategy = batchlogEndpointStrategy;
     }
 
     public static int getMaxHintsDeliveryThreads()
@@ -4694,5 +4778,25 @@ public class DatabaseDescriptor
     public static void setIncrementalRepairDiskHeadroomRejectRatio(double value)
     {
         conf.incremental_repair_disk_headroom_reject_ratio = value;
+    }
+
+    public static boolean getLogOutOfTokenRangeRequests()
+    {
+        return conf.log_out_of_token_range_requests;
+    }
+
+    public static void setLogOutOfTokenRangeRequests(boolean enabled)
+    {
+        conf.log_out_of_token_range_requests = enabled;
+    }
+
+    public static boolean getRejectOutOfTokenRangeRequests()
+    {
+        return conf.reject_out_of_token_range_requests;
+    }
+
+    public static void setRejectOutOfTokenRangeRequests(boolean enabled)
+    {
+        conf.reject_out_of_token_range_requests = enabled;
     }
 }

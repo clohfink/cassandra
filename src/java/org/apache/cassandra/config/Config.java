@@ -281,6 +281,9 @@ public class Config
     public int native_transport_max_threads = 128;
     @Replaces(oldName = "native_transport_max_frame_size_in_mb", converter = Converters.MEBIBYTES_DATA_STORAGE_INT, deprecated = true)
     public DataStorageSpec.IntMebibytesBound native_transport_max_frame_size = new DataStorageSpec.IntMebibytesBound("16MiB");
+    public volatile DataStorageSpec.LongBytesBound native_transport_max_message_size = null;
+    /** do bcrypt hashing in a limited pool to prevent cpu load spikes; 0 means that all requests will go to default request executor**/
+    public int native_transport_max_auth_threads = 0;
     public volatile long native_transport_max_concurrent_connections = -1L;
     public volatile long native_transport_max_concurrent_connections_per_ip = -1L;
     public boolean native_transport_flush_in_batches_legacy = false;
@@ -427,6 +430,7 @@ public class Config
     public DataStorageSpec.IntKibibytesBound hinted_handoff_throttle = new DataStorageSpec.IntKibibytesBound("1024KiB");
     @Replaces(oldName = "batchlog_replay_throttle_in_kb", converter = Converters.KIBIBYTES_DATASTORAGE, deprecated = true)
     public DataStorageSpec.IntKibibytesBound batchlog_replay_throttle = new DataStorageSpec.IntKibibytesBound("1024KiB");
+    public BatchlogEndpointStrategy batchlog_endpoint_strategy = BatchlogEndpointStrategy.random_remote;
     public int max_hints_delivery_threads = 2;
     @Replaces(oldName = "hints_flush_period_in_ms", converter = Converters.MILLIS_DURATION_INT, deprecated = true)
     public DurationSpec.IntMillisecondsBound hints_flush_period = new DurationSpec.IntMillisecondsBound("10s");
@@ -764,6 +768,13 @@ public class Config
      * ensure that these safeguards are in place. That said, we allow users to configure this if they're so inclined.
      */
     public ConsistencyLevel denylist_consistency_level = ConsistencyLevel.QUORUM;
+
+    /*
+     * Toggles to turn on the logging or rejection of operations for token ranges that the node does not own,
+     * or is not about to acquire.
+     */
+    public volatile boolean log_out_of_token_range_requests = true;
+    public volatile boolean reject_out_of_token_range_requests = true;
 
     /**
      * The intial capacity for creating RangeTombstoneList.
@@ -1167,6 +1178,68 @@ public class Config
         disabled,
         warn,
         exception
+    }
+
+    public enum BatchlogEndpointStrategy
+    {
+        /**
+         * Old, conventional strategy to select batchlog storage endpoints.
+         * Purely random, prevents the local rack, if possible.
+         */
+        random_remote(false, false),
+
+        /**
+         * Random, except that one of the replications will go to the local rack.
+         * Which means this strategy offers lower availability guarantees than
+         * {@link #random_remote} or {@link #dynamic_remote}.
+         */
+        prefer_local(false, true),
+
+        /**
+         * Strategy using {@link Config#dynamic_snitch} ({@link org.apache.cassandra.locator.DynamicEndpointSnitch})
+         * to select batchlog storage endpoints. Prevents the local rack, if possible.
+         *
+         * This strategy offers the same availability guarantees as {@link #random_remote} but selects the
+         * fastest endpoints according to the {@link org.apache.cassandra.locator.DynamicEndpointSnitch}.
+         *
+         * Hint: {@link org.apache.cassandra.locator.DynamicEndpointSnitch} tracks reads and not writes - i.e.
+         * write-only (or mostly-write) workloads might not benefit from this strategy.
+         *
+         * Note: this strategy will fall back to {@link #random_remote}, if {@link #dynamic_snitch} is not enabled.
+         */
+        dynamic_remote(true, false),
+
+        /**
+         * Strategy using {@link Config#dynamic_snitch} ({@link org.apache.cassandra.locator.DynamicEndpointSnitch})
+         * to select batchlog storage endpoints. Does not prevent the local rack.
+         *
+         * Since the local rack is not excluded, this strategy offers lower availability guarantees than
+         * {@link #random_remote} or {@link #dynamic_remote}.
+         *
+         * Hint: {@link org.apache.cassandra.locator.DynamicEndpointSnitch} tracks reads and not writes - i.e.
+         * write-only (or mostly-write) workloads might not benefit from this strategy.
+         *
+         * Note: this strategy will fall back to {@link #random_remote}, if {@link #dynamic_snitch} is not enabled.
+         */
+        dynamic(true, true);
+
+        /**
+         * If true, dynamic snitch response times will be used to select more responsive nodes to write the batchlog to.
+         * If false, nodes will be randomly selected.
+         */
+        public final boolean useDynamicSnitchScores;
+
+        /**
+         * If true, one of the selected nodes will come from the local rack.
+         * If false, the local rack will not be used except as a last resort with no other racks available.
+         */
+        public final boolean preferLocalRack;
+
+        BatchlogEndpointStrategy(boolean useDynamicSnitchScores, boolean preferLocalRack)
+        {
+            this.useDynamicSnitchScores = useDynamicSnitchScores;
+            this.preferLocalRack = preferLocalRack;
+        }
     }
 
     private static final Set<String> SENSITIVE_KEYS = new HashSet<String>() {{

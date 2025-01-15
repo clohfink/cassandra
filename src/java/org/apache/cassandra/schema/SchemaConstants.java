@@ -70,6 +70,7 @@ public final class SchemaConstants
     public static final UUID emptyVersion;
 
     public static final List<String> LEGACY_AUTH_TABLES = Arrays.asList("credentials", "users", "permissions");
+    public static final String DUMMY_KEYSPACE_OR_TABLE_NAME = "--dummy--";
 
     public static boolean isValidName(String name)
     {

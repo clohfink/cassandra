@@ -41,6 +41,8 @@ import org.apache.cassandra.io.sstable.format.SSTableReadsListener;
 import org.apache.cassandra.io.sstable.format.SSTableReadsListener.SelectionReason;
 import org.apache.cassandra.io.sstable.format.SSTableReadsListener.SkippingReason;
 import org.apache.cassandra.io.util.FileDataInput;
+import org.apache.cassandra.io.util.FileHandle;
+import org.apache.cassandra.io.util.RandomAccessReader;
 import org.apache.cassandra.tracing.Tracing;
 import org.apache.cassandra.utils.ByteBufferUtil;
 
@@ -81,6 +83,27 @@ public class BigTableReader extends SSTableReader
     public ISSTableScanner partitionIterator(ColumnFilter columns, DataRange dataRange, SSTableReadsListener listener)
     {
         return BigTableScanner.getScanner(this, columns, dataRange, listener);
+    }
+
+    public KeyReader keyReader(PartitionPosition key) throws IOException
+    {
+        FileHandle iFile = ifile.sharedCopy();
+        RandomAccessReader reader = iFile.createReader();
+        reader.seek(getIndexScanPosition(key));
+        KeyReader keys = BigTableKeyReader.create(iFile, reader, rowIndexEntrySerializer);
+
+        boolean hasMoreKeys = true;
+        while (hasMoreKeys)
+        {
+            ByteBuffer indexKey = keys.key();
+            DecoratedKey indexDecoratedKey = decorateKey(indexKey);
+            if (indexDecoratedKey.compareTo(key) >= 0)
+                break;
+
+            // Advance the iterator and check if more keys are available
+            hasMoreKeys = keys.advance();
+        }
+        return keys;
     }
 
     /**
