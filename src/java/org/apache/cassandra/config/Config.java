@@ -545,7 +545,7 @@ public class Config
      * Maintain statistics on whether writes achieve the ideal consistency level
      * before expiring and becoming hints
      */
-    public volatile ConsistencyLevel ideal_consistency_level = null;
+    public volatile ConsistencyLevel ideal_consistency_level = ConsistencyLevel.EACH_QUORUM;
 
     @Deprecated
     public int windows_timer_interval = 0;
