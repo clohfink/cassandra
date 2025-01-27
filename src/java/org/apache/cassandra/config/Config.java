@@ -71,6 +71,35 @@ public class Config
      */
     public static final String PROPERTY_PREFIX = "cassandra.";
 
+    /**
+     * Netflix specific configuration options
+     */
+    public boolean die_on_unknown_gossip_state = false;
+    public volatile boolean enable_create_secondary_index = true; // default to true to avoid breaking tests
+    public boolean upgrade_from_30_possible = false;
+    public volatile DurationSpec.IntMinutesBound defaultMemtableFlushPeriod = new DurationSpec.IntMinutesBound("60m");
+    public volatile DurationSpec.IntMinutesBound partition_count_cache_expiry_min = new DurationSpec.IntMinutesBound("10m");
+    public volatile boolean enable_dropped_columns = false;
+
+    public volatile boolean enable_scheduled_compactions = false;
+    public volatile int scheduled_compaction_range_splits = 100;
+    public volatile String scheduled_compaction_cycle_time = "60d";
+    public volatile boolean skip_single_sstable_scheduled_compactions = true;
+    public volatile long max_scheduled_compaction_sstable_size_bytes = 10240 * 1024L * 1024L;
+    public volatile int max_scheduled_compaction_sstable_count = 40;
+
+    public volatile boolean enable_select_partition_range = true;
+    public volatile boolean alter_table_enabled = true;
+
+    /** The configuration of timestamp bounds */
+    public volatile DurationSpec.LongMicrosecondsBound maximum_timestamp_warn_threshold = null;
+    public volatile DurationSpec.LongMicrosecondsBound maximum_timestamp_fail_threshold = null;
+    public volatile DurationSpec.LongMicrosecondsBound minimum_timestamp_warn_threshold = null;
+    public volatile DurationSpec.LongMicrosecondsBound minimum_timestamp_fail_threshold = null;
+    /**
+     * end Netflix specific configuration options
+     */
+
     public String cluster_name = "Test Cluster";
     public String authenticator;
     public String authorizer;
@@ -113,15 +142,8 @@ public class Config
 
     public DiskFailurePolicy disk_failure_policy = DiskFailurePolicy.stop_paranoid;
     public CommitFailurePolicy commit_failure_policy = CommitFailurePolicy.stop;
-    public boolean die_on_unknown_gossip_state = false;
 
     public volatile boolean use_deterministic_table_id = false;
-
-    /**
-     * Set the default value as True here to avoid breaking all the existing tests with
-     * the "CREATE INDEX" statement.
-     */
-    public volatile boolean enable_create_secondary_index = true;
 
     /* initial token in the ring */
     public String initial_token;
@@ -175,7 +197,6 @@ public class Config
     public int concurrent_counter_writes = 32;
     public int concurrent_materialized_view_writes = 32;
     public int available_processors = -1;
-    public boolean upgrade_from_30_possible = false;
 
     @Deprecated
     public Integer concurrent_replicates = null;
@@ -186,7 +207,6 @@ public class Config
     @Replaces(oldName = "memtable_offheap_space_in_mb", converter = Converters.MEBIBYTES_DATA_STORAGE_INT, deprecated = true)
     public DataStorageSpec.IntMebibytesBound memtable_offheap_space;
     public Float memtable_cleanup_threshold = null;
-    public volatile DurationSpec.IntMinutesBound defaultMemtableFlushPeriod = new DurationSpec.IntMinutesBound("60m");
 
     public static class MemtableOptions
     {
@@ -219,8 +239,6 @@ public class Config
     public String internode_authenticator;
 
     public boolean traverse_auth_from_root = false;
-
-    public volatile DurationSpec.IntMinutesBound partition_count_cache_expiry_min = new DurationSpec.IntMinutesBound("10m");
 
     /*
      * RPC address and interface refer to the address/interface used for the native protocol used to communicate with
@@ -587,7 +605,6 @@ public class Config
 
     @Replaces(oldName = "enable_drop_compact_storage", converter = Converters.IDENTITY, deprecated = true)
     public volatile boolean drop_compact_storage_enabled = false;
-    public volatile boolean enable_dropped_columns = false;
 
     public volatile boolean use_statements_enabled = true;
 
@@ -681,13 +698,6 @@ public class Config
     public CorruptedTombstoneStrategy corrupted_tombstone_strategy = CorruptedTombstoneStrategy.disabled;
 
     public volatile boolean diagnostic_events_enabled = false;
-    public volatile boolean enable_scheduled_compactions = false;
-    public volatile int scheduled_compaction_range_splits = 100;
-    public volatile String scheduled_compaction_cycle_time = "60d";
-    public volatile boolean skip_single_sstable_scheduled_compactions = true;
-    public volatile long max_scheduled_compaction_sstable_size_bytes = 10240 * 1024L * 1024L;
-    public volatile int max_scheduled_compaction_sstable_count = 40;
-
 
     // Default keyspace replication factors allow validation of newly created keyspaces
     // and good defaults if no replication factor is provided by the user
@@ -734,8 +744,6 @@ public class Config
     // threads during tool usage mode. See CASSANDRA-12988 and DatabaseDescriptorRefTest for details
     public volatile String auth_read_consistency_level = "LOCAL_QUORUM";
     public volatile String auth_write_consistency_level = "EACH_QUORUM";
-
-    public volatile boolean enable_select_partition_range = true;
 
     /** This feature allows denying access to operations on certain key partitions, intended for use by operators to
      * provide another tool to manage cluster health vs application access. See CASSANDRA-12106 and CEP-13 for more details.
@@ -868,7 +876,6 @@ public class Config
     public volatile Set<ConsistencyLevel> write_consistency_levels_warned = Collections.emptySet();
     public volatile Set<ConsistencyLevel> write_consistency_levels_disallowed = Collections.emptySet();
     public volatile boolean user_timestamps_enabled = true;
-    public volatile boolean alter_table_enabled = true;
     public volatile boolean group_by_enabled = true;
     public volatile boolean drop_truncate_table_enabled = true;
     public volatile boolean secondary_indexes_enabled = true;
@@ -901,11 +908,6 @@ public class Config
     public volatile int repair_state_size = 100_000;
 
     public volatile AutoRepairConfig auto_repair = new AutoRepairConfig();
-    /** The configuration of timestamp bounds */
-    public volatile DurationSpec.LongMicrosecondsBound maximum_timestamp_warn_threshold = null;
-    public volatile DurationSpec.LongMicrosecondsBound maximum_timestamp_fail_threshold = null;
-    public volatile DurationSpec.LongMicrosecondsBound minimum_timestamp_warn_threshold = null;
-    public volatile DurationSpec.LongMicrosecondsBound minimum_timestamp_fail_threshold = null;
 
     /**
      * The variants of paxos implementation and semantics supported by Cassandra.
