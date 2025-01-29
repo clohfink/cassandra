@@ -529,10 +529,10 @@ public class Config
 
     public MemtableAllocationType memtable_allocation_type = MemtableAllocationType.heap_buffers;
 
-    public volatile boolean read_thresholds_enabled = false;
-    public volatile DataStorageSpec.LongBytesBound coordinator_read_size_warn_threshold = null;
+    public volatile boolean read_thresholds_enabled = true;
+    public volatile DataStorageSpec.LongBytesBound coordinator_read_size_warn_threshold = new DataStorageSpec.LongBytesBound("10MiB");
     public volatile DataStorageSpec.LongBytesBound coordinator_read_size_fail_threshold = null;
-    public volatile DataStorageSpec.LongBytesBound local_read_size_warn_threshold = new DataStorageSpec.LongBytesBound("1GiB");;
+    public volatile DataStorageSpec.LongBytesBound local_read_size_warn_threshold = new DataStorageSpec.LongBytesBound("10MiB");
     public volatile DataStorageSpec.LongBytesBound local_read_size_fail_threshold = null;
     public volatile DataStorageSpec.LongBytesBound row_index_read_size_warn_threshold = null;
     public volatile DataStorageSpec.LongBytesBound row_index_read_size_fail_threshold = null;

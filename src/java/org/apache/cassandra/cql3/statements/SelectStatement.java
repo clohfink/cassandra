@@ -104,6 +104,7 @@ public class SelectStatement implements CQLStatement.SingleKeyspaceCqlStatement
 {
     private static final Logger logger = LoggerFactory.getLogger(SelectStatement.class);
     private static final NoSpamLogger noSpamLogger = NoSpamLogger.getLogger(SelectStatement.logger, 1, TimeUnit.MINUTES);
+    private static final NoSpamLogger largeReadLogger = NoSpamLogger.getLogger(SelectStatement.logger, 15, TimeUnit.SECONDS);
 
     public static final int DEFAULT_PAGE_SIZE = 10000;
 
@@ -936,7 +937,9 @@ public class SelectStatement implements CQLStatement.SingleKeyspaceCqlStatement
             String msg = String.format("Read on table %s has exceeded the size warning threshold of %,d bytes", table, options.getCoordinatorReadSizeWarnThresholdBytes());
             ClientState state = ClientState.forInternalCalls();
             ClientWarn.instance.warn(msg + " with " + loggableTokens(options, state));
-            logger.warn("{} with query {}", msg, asCQL(options, state));
+
+            NoSpamLogger.log(logger, NoSpamLogger.Level.WARN, 15, TimeUnit.SECONDS, "{} with query {}",
+                             () -> new Object[] { msg, asCQL(options, state) });
             if (store != null)
                 store.metric.coordinatorReadSizeWarnings.mark();
         }

@@ -68,6 +68,7 @@ import org.apache.cassandra.service.ClientWarn;
 import org.apache.cassandra.tracing.Tracing;
 import org.apache.cassandra.transport.Dispatcher;
 import org.apache.cassandra.utils.FBUtilities;
+import org.apache.cassandra.utils.NoSpamLogger;
 import org.apache.cassandra.utils.ObjectSizes;
 import org.apache.cassandra.utils.TimeUUID;
 
@@ -750,6 +751,8 @@ public abstract class ReadCommand extends AbstractReadQuery
                 }
                 else if (warnBytes != -1 && this.sizeInBytes >= warnBytes)
                 {
+                    NoSpamLogger.log(logger, NoSpamLogger.Level.WARN, 15, TimeUnit.SECONDS, "Query {} attempted to read {} bytes but max allowed is {}",
+                                     () -> new Object[] { ReadCommand.this.toCQLString(), warnThreshold, this.sizeInBytes });
                     MessageParams.add(ParamType.LOCAL_READ_SIZE_WARN, this.sizeInBytes);
                 }
             }
