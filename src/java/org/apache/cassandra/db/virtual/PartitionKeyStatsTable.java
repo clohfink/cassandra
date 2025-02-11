@@ -74,19 +74,19 @@ import org.apache.cassandra.schema.ColumnMetadata;
 import org.apache.cassandra.schema.KeyspaceMetadata;
 import org.apache.cassandra.schema.Schema;
 import org.apache.cassandra.schema.TableMetadata;
-import org.apache.cassandra.transport.ProtocolVersion;
+import org.apache.cassandra.serializers.MarshalException;
 
 import static org.apache.cassandra.cql3.statements.RequestValidations.invalidRequest;
 
 /**
- * A virtual table for querying primary IDs of SSTables in a specific keyspace.
+ * A virtual table for querying partition keys of SSTables in a specific keyspace.
  *
  * <p>This table is implemented as a virtual table in Cassandra, meaning it does not
  * store data persistently on disk but instead derives its data from live metadata.
  *
  * <p>The CQL equivalent of this virtual table is:
  * <pre>
- * CREATE TABLE system_views.primary_ids (
+ * CREATE TABLE system_views.partition_key_statistics (
  *     keyspace_name TEXT,
  *     table_name TEXT,
  *     token_value INT,
@@ -103,10 +103,10 @@ import static org.apache.cassandra.cql3.statements.RequestValidations.invalidReq
  *     <li>Range queries across multiple tables and updates are not supported as this is a read-only table.</li>
  * </ul>
  */
-public class PrimaryIdTable implements VirtualTable
+public class PartitionKeyStatsTable implements VirtualTable
 {
-    private static final Logger logger = LoggerFactory.getLogger(PrimaryIdTable.class);
-    public static final String NAME = "primary_ids";
+    private static final Logger logger = LoggerFactory.getLogger(PartitionKeyStatsTable.class);
+    public static final String NAME = "partition_key_statistics";
 
     private static final String TABLE_READ_ONLY_ERROR = "The specified table is read-only.";
     private static final String UNSUPPORTED_RANGE_QUERY_ERROR = "Range queries are not supported. Please provide both a keyspace and a table name.";
@@ -115,6 +115,7 @@ public class PrimaryIdTable implements VirtualTable
     private static final String TABLE_NOT_EXIST_ERROR = "The table '%s' does not exist in the keyspace '%s'.";
     private static final String KEY_ONLY_EQUALS_ERROR = "The 'key' column can only be used in an equality query for this virtual table.";
     private static final String KEY_NOT_WITHIN_BOUNDS_ERROR = "The specified 'key' is not within the provided token value bounds.";
+    private static final String PARTITIONER_NOT_SUPPORTED = "Partitioner '%s' for table '%s' in keyspace '%s' is not supported.";
 
     private static final String COLUMN_KEYSPACE_NAME = "keyspace_name";
     private static final String COLUMN_TABLE_NAME = "table_name";
@@ -130,7 +131,7 @@ public class PrimaryIdTable implements VirtualTable
     @VisibleForTesting
     final CopyOnWriteArrayList<Consumer<DecoratedKey>> readListener = new CopyOnWriteArrayList<>();
 
-    public PrimaryIdTable(String keyspace)
+    public PartitionKeyStatsTable(String keyspace)
     {
         this.metadata = TableMetadata.builder(keyspace, NAME)
                                      .kind(TableMetadata.Kind.VIRTUAL)
@@ -163,6 +164,9 @@ public class PrimaryIdTable implements VirtualTable
         TableMetadata metadata = ksm.getTableOrViewNullable(table);
         if (metadata == null)
             throw invalidRequest(TABLE_NOT_EXIST_ERROR, table, keyspace);
+
+        if (!metadata.partitioner.supportsSplitting())
+            throw invalidRequest(PARTITIONER_NOT_SUPPORTED, metadata.partitioner.getClass().getName(), table, keyspace);
 
         AbstractBounds<PartitionPosition> range = getBounds(metadata, clusteringIndexFilter, rowFilter);
         return new SingletonUnfilteredPartitionIterator(select(partitionKey, metadata, clusteringIndexFilter, range));
@@ -252,7 +256,7 @@ public class PrimaryIdTable implements VirtualTable
                     long current = reader.dataPosition() == -1 ? sstable.uncompressedLength() : reader.dataPosition();
                     long size = current - lastPosition;
 
-                    String keyString = target.partitionKeyType.asCQL3Type().toCQLLiteral(key.getKey(), ProtocolVersion.CURRENT);
+                    String keyString = target.partitionKeyType.getString(key.getKey());
 
                     // Check if the current key is outside the queried range; if so, stop
                     if (range.right.compareTo(key) < 0)
@@ -261,8 +265,8 @@ public class PrimaryIdTable implements VirtualTable
                     // Convert the token to a string and create a clustering object
                     String tokenString = key.getToken().toString();
                     Clustering<?> clustering = Clustering.make(
-                    IntegerType.instance.decompose(new BigInteger(tokenString)),
-                    UTF8Type.instance.decompose(keyString)
+                        IntegerType.instance.decompose(new BigInteger(tokenString)),
+                        UTF8Type.instance.decompose(keyString)
                     );
 
                     // Check if the current clustering matches the filter; if so, return the row
@@ -280,7 +284,7 @@ public class PrimaryIdTable implements VirtualTable
      */
     private AbstractBounds<PartitionPosition> getBounds(TableMetadata target, ClusteringIndexFilter clusteringIndexFilter, RowFilter rowFilter)
     {
-        Slices s = clusteringIndexFilter.getSlices(metadata);
+        Slices s = clusteringIndexFilter.getSlices(target);
         Token startToken = target.partitioner.getMinimumToken();
         Token endToken = target.partitioner.getMaximumToken();
         BigInteger startTokenValue = new BigInteger(endToken.getTokenValue().toString(), 10);
@@ -311,13 +315,21 @@ public class PrimaryIdTable implements VirtualTable
                     throw new InvalidRequestException(KEY_ONLY_EQUALS_ERROR);
 
                 String keyString = UTF8Type.instance.compose(expression.getIndexValue());
-                ByteBuffer keyAsBB = target.partitionKeyType.asCQL3Type().fromCQLLiteral(keyString);
-                Token keyToken = target.partitioner.decorateKey(keyAsBB).getToken();
+                ByteBuffer keyAsBB;
+                try
+                {
+                    keyAsBB = target.partitionKeyType.fromString(keyString);
+                }
+                catch (MarshalException ex)
+                {
+                    throw new InvalidRequestException(ex.getMessage());
+                }
+                DecoratedKey decoratedKey = target.partitioner.decorateKey(keyAsBB);
 
-                if (!DataRange.forKeyRange(new Range<>(startToken.minKeyBound(), endToken.maxKeyBound())).contains(keyToken.minKeyBound()))
+                if (!DataRange.forKeyRange(new Range<>(startToken.minKeyBound(), endToken.maxKeyBound())).contains(decoratedKey.getToken().minKeyBound()))
                     throw new InvalidRequestException(KEY_NOT_WITHIN_BOUNDS_ERROR);
 
-                return Bounds.bounds(target.partitioner.decorateKey(keyAsBB), true, target.partitioner.decorateKey(keyAsBB), true);
+                return Bounds.bounds(decoratedKey, true, decoratedKey, true);
             }
         }
         return Bounds.bounds(startToken.minKeyBound(), true, endToken.maxKeyBound(), true);
