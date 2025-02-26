@@ -1,0 +1,118 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package com.netflix.cassandra.db.virtual;
+
+import java.lang.management.ManagementFactory;
+import java.lang.management.OperatingSystemMXBean;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import com.codahale.metrics.Histogram;
+import com.codahale.metrics.SlidingWindowReservoir;
+import org.apache.cassandra.concurrent.ExecutorFactory;
+import org.apache.cassandra.db.marshal.DoubleType;
+import org.apache.cassandra.db.marshal.UTF8Type;
+import org.apache.cassandra.db.virtual.AbstractVirtualTable;
+import org.apache.cassandra.db.virtual.SimpleDataSet;
+import org.apache.cassandra.dht.LocalPartitioner;
+import org.apache.cassandra.schema.TableMetadata;
+import org.apache.cassandra.service.disk.usage.DiskUsageMonitor;
+
+public class ResoucesTable extends AbstractVirtualTable
+{
+    private static final Logger logger = LoggerFactory.getLogger(ResoucesTable.class);
+    private static final String NAME = "type";
+    private static final String VALUE = "value";
+
+    private static final ScheduledExecutorService scheduler = ExecutorFactory.Global.executorFactory().scheduled("ResourceUtilMonitor");
+
+    public static final String TABLE_NAME = "resource_util";
+
+    ResoucesTable(String keyspace)
+    {
+        super(TableMetadata.builder(keyspace, TABLE_NAME)
+                           .comment("current system utilization")
+                           .kind(TableMetadata.Kind.VIRTUAL)
+                           .partitioner(new LocalPartitioner(UTF8Type.instance))
+                           .addPartitionKeyColumn(NAME, UTF8Type.instance)
+                           .addRegularColumn(VALUE, DoubleType.instance)
+                           .build());
+        CpuUsageMonitor monitor = new CpuUsageMonitor();
+        monitor.startMonitoring();
+    }
+
+    public static double clampAndRound(double value) {
+        // Clamp the value to the range [0, 1]
+        value = Math.max(0.0, Math.min(1.0, value));
+        // Multiply by 100, round up, then divide by 100 to get 100ths precision
+        return Math.ceil(value * 100.0) / 100.0;
+    }
+
+    @Override
+    public DataSet data()
+    {
+        SimpleDataSet result = new SimpleDataSet(metadata());
+        double cpu = clampAndRound(new CpuUsageMonitor().getAverageCpuUsage() / 100.0);
+        double disk = clampAndRound(DiskUsageMonitor.instance.getDiskUsage());
+        result.row("compute").column(VALUE, cpu);
+        result.row("disk").column(VALUE, disk);
+        return result;
+    }
+
+    public static class CpuUsageMonitor {
+        // Number of samples in the sliding window (one per second for 60 seconds)
+        private static final int WINDOW_SIZE = 60;
+
+        private final OperatingSystemMXBean osBean;
+        private final Histogram cpuUsageHistogram;
+        private volatile double averageCpuUsage;
+
+        public CpuUsageMonitor() {
+            osBean = (OperatingSystemMXBean) ManagementFactory.getOperatingSystemMXBean();
+            cpuUsageHistogram = new Histogram(new SlidingWindowReservoir(WINDOW_SIZE));
+            averageCpuUsage = 0.0;
+        }
+
+        public void startMonitoring() {
+            // Every second, sample the system load average, update the histogram, and update the average.
+            scheduler.scheduleWithFixedDelay(() -> {
+                double cpuLoad = osBean.getSystemLoadAverage();
+                int cores = Runtime.getRuntime().availableProcessors();
+                // Normalize the load average by dividing by the number of CPU cores.
+                double normalizedLoad = cpuLoad / cores;
+                // Clamp the normalized load to [0, 1].
+                normalizedLoad = Math.min(Math.max(normalizedLoad, 0.0), 1.0);
+                cpuUsageHistogram.update((long) (normalizedLoad * 100));
+                averageCpuUsage = cpuUsageHistogram.getSnapshot().getMean();
+            }, 0, 1, TimeUnit.SECONDS);
+        }
+
+        public double getAverageCpuUsage() {
+            return averageCpuUsage;
+        }
+
+        public void stopMonitoring() {
+            scheduler.shutdown();
+        }
+
+    }
+}

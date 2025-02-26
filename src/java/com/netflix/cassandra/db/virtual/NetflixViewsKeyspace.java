@@ -34,6 +34,7 @@ public final class NetflixViewsKeyspace extends VirtualKeyspace
                 .add(new ExcessSSTablesTable(NAME))
                 .add(new TableHLL(NAME))
                 .add(new ClusterPartitionCount(NAME))
+                .add(new ResoucesTable(NAME))
                 .add(new PriamConfigTable(NAME))
                 .build());
     }
