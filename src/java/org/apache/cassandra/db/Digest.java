@@ -19,10 +19,10 @@
 package org.apache.cassandra.db;
 
 import java.nio.ByteBuffer;
-
 import com.google.common.hash.Hasher;
 import com.google.common.hash.Hashing;
 
+import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.db.context.CounterContext;
 import org.apache.cassandra.db.marshal.ValueAccessor;
 import org.apache.cassandra.utils.FastByteOperations;
@@ -42,7 +42,14 @@ public class Digest
 
     public static Digest forReadResponse()
     {
-        return new Digest(md5());
+        switch(DatabaseDescriptor.getReadHasher())
+        {
+            case murmur3:
+                return new Digest(Hashing.murmur3_128().newHasher());
+            case md5:
+            default:
+                return new Digest(md5());
+        }
     }
 
     public static Digest forSchema()

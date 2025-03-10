@@ -4597,6 +4597,18 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
         SystemKeyspace.clearAllEstimates();
     }
 
+    @Override
+    public void setReadHashing(String algorithm)
+    {
+        DatabaseDescriptor.setReadHasher(algorithm);
+    }
+
+    @Override
+    public String getReadHashing()
+    {
+        return DatabaseDescriptor.getReadHasher().toString();
+    }
+
     /**
      * @param allowIndexes Allow index CF names to be passed in
      * @param autoAddIndexes Automatically add secondary indexes if a CF has them

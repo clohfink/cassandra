@@ -2944,6 +2944,16 @@ public class DatabaseDescriptor
         setNativeTransportMaxMessageSizeInBytes(newNativeTransportMaxMessageSizeInBytes);
     }
 
+    public static Config.ReadHashingFunction getReadHasher()
+    {
+        return conf.read_hashing;
+    }
+
+    public static void setReadHasher(String hash)
+    {
+        conf.read_hashing = Config.ReadHashingFunction.valueOf(hash);
+    }
+
     public static long getNativeTransportMaxRequestDataInFlightInBytes()
     {
         return conf.native_transport_max_request_data_in_flight.toBytes();

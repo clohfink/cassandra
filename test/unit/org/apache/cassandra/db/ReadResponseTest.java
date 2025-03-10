@@ -25,6 +25,7 @@ import java.util.Random;
 import org.junit.Before;
 import org.junit.Test;
 
+import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.db.filter.ColumnFilter;
 import org.apache.cassandra.db.filter.DataLimits;
 import org.apache.cassandra.db.filter.RowFilter;
@@ -51,6 +52,7 @@ public class ReadResponseTest
     @Before
     public void setup()
     {
+        DatabaseDescriptor.toolInitialization();
         metadata = TableMetadata.builder("ks", "t1")
                                 .addPartitionKeyColumn("p", Int32Type.instance)
                                 .addRegularColumn("v", Int32Type.instance)

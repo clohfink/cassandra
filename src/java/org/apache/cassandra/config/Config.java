@@ -96,6 +96,14 @@ public class Config
     public volatile DurationSpec.LongMicrosecondsBound maximum_timestamp_fail_threshold = null;
     public volatile DurationSpec.LongMicrosecondsBound minimum_timestamp_warn_threshold = null;
     public volatile DurationSpec.LongMicrosecondsBound minimum_timestamp_fail_threshold = null;
+
+    public volatile ReadHashingFunction read_hashing = ReadHashingFunction.md5;
+    public enum ReadHashingFunction
+    {
+        md5,
+        murmur3;
+    }
+
     /**
      * end Netflix specific configuration options
      */

@@ -322,6 +322,9 @@ public interface StorageServiceMBean extends NotificationEmitter
      */
     public void cleanupSizeEstimates();
 
+    void setReadHashing(String algorithm);
+    String getReadHashing();
+
     /**
      * Forces major compaction of a single keyspace
      */

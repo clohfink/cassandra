@@ -23,10 +23,12 @@ import java.util.Arrays;
 
 import com.google.common.hash.Hashing;
 import org.junit.Assert;
+import org.junit.BeforeClass;
 import org.junit.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.Hex;
 
@@ -37,6 +39,12 @@ import static org.junit.Assert.assertEquals;
 public class DigestTest
 {
     private static final Logger logger = LoggerFactory.getLogger(DigestTest.class);
+
+    @BeforeClass
+    public static void setUp() throws Exception
+    {
+        DatabaseDescriptor.toolInitialization();
+    }
 
     @Test
     public void hashEmptyBytes() throws Exception {
