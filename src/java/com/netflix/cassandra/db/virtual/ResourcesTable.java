@@ -28,6 +28,7 @@ import org.slf4j.LoggerFactory;
 
 import com.codahale.metrics.Histogram;
 import com.codahale.metrics.SlidingWindowReservoir;
+import com.netflix.cassandra.metrics.ResourcesMetrics;
 import org.apache.cassandra.concurrent.ExecutorFactory;
 import org.apache.cassandra.db.marshal.DoubleType;
 import org.apache.cassandra.db.marshal.UTF8Type;
@@ -37,17 +38,18 @@ import org.apache.cassandra.dht.LocalPartitioner;
 import org.apache.cassandra.schema.TableMetadata;
 import org.apache.cassandra.service.disk.usage.DiskUsageMonitor;
 
-public class ResoucesTable extends AbstractVirtualTable
+public class ResourcesTable extends AbstractVirtualTable
 {
-    private static final Logger logger = LoggerFactory.getLogger(ResoucesTable.class);
+    private static final Logger logger = LoggerFactory.getLogger(ResourcesTable.class);
     private static final String NAME = "type";
     private static final String VALUE = "value";
 
     private static final ScheduledExecutorService scheduler = ExecutorFactory.Global.executorFactory().scheduled("ResourceUtilMonitor");
 
     public static final String TABLE_NAME = "resource_util";
+    private final CpuUsageMonitor monitor;
 
-    ResoucesTable(String keyspace)
+    ResourcesTable(String keyspace)
     {
         super(TableMetadata.builder(keyspace, TABLE_NAME)
                            .comment("current system utilization")
@@ -56,7 +58,7 @@ public class ResoucesTable extends AbstractVirtualTable
                            .addPartitionKeyColumn(NAME, UTF8Type.instance)
                            .addRegularColumn(VALUE, DoubleType.instance)
                            .build());
-        CpuUsageMonitor monitor = new CpuUsageMonitor();
+        monitor = new CpuUsageMonitor();
         monitor.startMonitoring();
     }
 
@@ -71,10 +73,14 @@ public class ResoucesTable extends AbstractVirtualTable
     public DataSet data()
     {
         SimpleDataSet result = new SimpleDataSet(metadata());
-        double cpu = clampAndRound(new CpuUsageMonitor().getAverageCpuUsage() / 100.0);
+        double cpu = clampAndRound(monitor.getAverageCpuUsage() / 100.0);
         double disk = clampAndRound(DiskUsageMonitor.instance.getDiskUsage());
+        double threadsWaiting = ResourcesMetrics.schedulingDelay.getValue();
+
         result.row("compute").column(VALUE, cpu);
         result.row("disk").column(VALUE, disk);
+        result.row("threadsWaiting").column(VALUE, threadsWaiting);
+
         return result;
     }
 

@@ -77,6 +77,7 @@ import com.google.common.util.concurrent.*;
 
 import com.netflix.cassandra.db.virtual.ClusterPartitionCount;
 import com.netflix.cassandra.db.virtual.NetflixViewsKeyspace;
+import com.netflix.cassandra.metrics.ResourcesMetrics;
 import org.apache.cassandra.auth.AuthenticatedUser;
 import org.apache.cassandra.auth.IAuthenticator;
 import org.apache.cassandra.auth.IAuthorizer;
@@ -261,7 +262,11 @@ import static org.apache.cassandra.utils.FBUtilities.now;
 public class StorageService extends NotificationBroadcasterSupport implements IEndpointStateChangeSubscriber, StorageServiceMBean
 {
     private static final Logger logger = LoggerFactory.getLogger(StorageService.class);
-
+    static
+    {
+        // This is just to force the class to init so it gets registered in JMX
+        ResourcesMetrics.schedulingDelay.getValue();
+    }
     public static final int INDEFINITE = -1;
     public static final int RING_DELAY_MILLIS = getRingDelay(); // delay after which we assume ring has stablized
     public static final int SCHEMA_DELAY_MILLIS = getSchemaDelay();
