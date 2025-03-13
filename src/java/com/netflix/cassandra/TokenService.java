@@ -25,6 +25,7 @@ import com.netflix.metatron.ipc.security.MetatronSslContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import javax.annotation.Nullable;
 import javax.net.ssl.HttpsURLConnection;
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -33,6 +34,7 @@ import java.net.URL;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
@@ -54,24 +56,22 @@ public class TokenService
     private static final int TIMEOUT_SECONDS = Integer.parseInt(System.getProperty("netflix.tokenservice.timeout", "10"));
     private static final String BASE_URL_TEMPLATE = System.getProperty(
     "netflix.tokenservice.url",
-    "https://nfcassandratokens.cluster.{region}.{environment}.cloud.netflix.net:7004"
+    "https://odscasstokens.cluster.{region}.{environment}.cloud.netflix.net:7004"
     );
-    private static final String TOKEN_SERVICE_APP_NAME = System.getProperty("netflix.tokenservice.name", "nfcassandratokens");
+    private static final String TOKEN_SERVICE_APP_NAME = System.getProperty("netflix.tokenservice.name", "odscasstokens");
 
     public final String app;
     public final String region;
     public final String env;
-    public final String instanceId;
+    @Nullable public final String instanceId;
 
     public TokenService()
     {
-        this.region = System.getenv("NETFLIX_REGION");
-        this.env = System.getenv("NETFLIX_ENVIRONMENT");
-        this.app = System.getenv("NETFLIX_APP");
-        this.instanceId = System.getenv("NETFLIX_INSTANCE_ID");
-
-        if (region == null || env == null || app == null || instanceId == null)
-            throw new IllegalStateException("Missing environment variables: NETFLIX_*");
+        Map<String, String> envVars = System.getenv();
+        this.region = envVars.getOrDefault("NETFLIX_REGION", "us-east-1");
+        this.env = envVars.getOrDefault("NETFLIX_ENVIRONMENT", "test");
+        this.app = envVars.getOrDefault("NETFLIX_APP", "cass_local");
+        this.instanceId = envVars.get("NETFLIX_INSTANCE_ID");
     }
 
     public TokenService(String app, String region, String env, String instanceId)

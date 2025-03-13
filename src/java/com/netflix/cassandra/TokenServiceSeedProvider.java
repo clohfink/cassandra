@@ -28,6 +28,8 @@ import java.util.List;
 import java.util.Set;
 import java.util.regex.Pattern;
 
+import javax.annotation.Nullable;
+
 import com.google.common.annotations.VisibleForTesting;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -89,7 +91,9 @@ public class TokenServiceSeedProvider implements SeedProvider
     }
 
     @VisibleForTesting
-    public static List<InetAddressAndPort> filterSeeds(List<NetflixInstance> instances, String currentInstanceId, boolean isAutoBootstrap)
+    public static List<InetAddressAndPort> filterSeeds(List<NetflixInstance> instances,
+                                                       @Nullable String currentInstanceId,
+                                                       boolean isAutoBootstrap)
     throws UnknownHostException
     {
         List<InetAddressAndPort> seeds = new ArrayList<>();
@@ -99,7 +103,7 @@ public class TokenServiceSeedProvider implements SeedProvider
         {
             // Skip if the instance ID is "new_slot" or matches the current instance ID (unless autoBootstrap is false)
             if ("new_slot".equals(node.getInstanceId()) ||
-                (isAutoBootstrap && currentInstanceId.equals(node.getInstanceId())))
+                (isAutoBootstrap && node.getInstanceId().equals(currentInstanceId)))
                 continue;
 
             // 1 seed per availability zone (AZ)

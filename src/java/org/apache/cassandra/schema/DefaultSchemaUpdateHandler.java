@@ -21,6 +21,8 @@ package org.apache.cassandra.schema;
 import java.time.Duration;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -31,6 +33,8 @@ import com.google.common.annotations.VisibleForTesting;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.netflix.cassandra.NetflixInstance;
+import com.netflix.cassandra.TokenService;
 import org.apache.cassandra.concurrent.ScheduledExecutors;
 import org.apache.cassandra.concurrent.Stage;
 import org.apache.cassandra.config.CassandraRelevantProperties;
@@ -58,6 +62,8 @@ public class DefaultSchemaUpdateHandler implements SchemaUpdateHandler, IEndpoin
 
     @VisibleForTesting
     final MigrationCoordinator migrationCoordinator;
+    @VisibleForTesting
+    TokenService tokenService = new TokenService();
 
     private final boolean requireSchemas;
     private final BiConsumer<SchemaTransformationResult, Boolean> updateCallback;
@@ -127,6 +133,36 @@ public class DefaultSchemaUpdateHandler implements SchemaUpdateHandler, IEndpoin
 
         if (schemasReceived)
             return true;
+
+        try
+        {
+            // Retrieve outstanding versions waiting on schema requests.
+            Map<UUID, Set<InetAddressAndPort>> outstanding = migrationCoordinator.outstandingVersions();
+            if (outstanding.isEmpty())
+                return true;
+
+            // Build a set of active IP addresses from our current Netflix instances.
+            List<NetflixInstance> instances = tokenService.getInstances();
+            Set<String> activeIPs = new HashSet<>();
+            for (NetflixInstance instance : instances)
+            {
+                activeIPs.add(instance.getHostIP());
+            }
+
+            // Filter outstanding versions: only retain endpoints whose IP address is in the activeIPs set.
+            boolean activeEndpointFound = outstanding.values().stream()
+                 .flatMap(Set::stream)
+                 .map(endpoint -> InetAddressAndPort.hostAddress(endpoint, false))
+                 .anyMatch(activeIPs::contains);
+
+            // If there are no outstanding versions with active endpoints, consider the schema ready.
+            if (!activeEndpointFound)
+                return true;
+        }
+        catch (Exception e)
+        {
+            logger.error("Error while doing Netflix schema readiness wait, ignoring and reverting to normal logic: ", e);
+        }
 
         logger.warn("There are nodes in the cluster with a different schema version than us, from which we did not merge schemas: " +
                     "our version: ({}), outstanding versions -> endpoints: {}. Use -D{}}=true to ignore this, " +

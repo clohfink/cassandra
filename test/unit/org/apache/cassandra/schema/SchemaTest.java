@@ -22,6 +22,9 @@ import java.io.IOException;
 import java.time.Duration;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.CyclicBarrier;
@@ -31,14 +34,18 @@ import java.util.concurrent.ForkJoinTask;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
+import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
+import com.netflix.cassandra.NetflixInstance;
+import com.netflix.cassandra.TokenService;
 import org.apache.cassandra.ServerTestUtils;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.db.Keyspace;
 import org.apache.cassandra.db.Mutation;
 import org.apache.cassandra.gms.Gossiper;
+import org.apache.cassandra.locator.InetAddressAndPort;
 import org.apache.cassandra.utils.FBUtilities;
 import org.awaitility.Awaitility;
 
@@ -46,6 +53,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 public class SchemaTest
 {
@@ -105,6 +114,68 @@ public class SchemaTest
             assertEquals(SchemaKeyspace.calculateSchemaDigest(), Schema.instance.getVersion());
         }
         Schema.instance.transform(current -> current.without(ksm.name));
+    }
+
+    @Test
+    public void testNetflixWaitForSync() throws Exception {
+        MigrationCoordinator coordinator = mock(MigrationCoordinator.class);
+        DefaultSchemaUpdateHandler handler = new DefaultSchemaUpdateHandler(
+            coordinator,
+            null, true,
+            (result, dropData) ->{}
+        );
+        Map<UUID, Set<InetAddressAndPort>> outstanding = Map.of(UUID.randomUUID(), Set.of(InetAddressAndPort.getByName("127.0.0.127")));
+        when(coordinator.outstandingVersions()).thenReturn(outstanding);
+        handler.tokenService = new TokenService(){
+            @Override
+            public List<NetflixInstance> getInstances() throws IOException
+            {
+                return List.of();
+            }
+        };
+        Assert.assertTrue(handler.waitUntilReady(Duration.ofSeconds(2)));
+    }
+
+    @Test
+    public void testNetflixWaitForSyncExists() throws Exception {
+        MigrationCoordinator coordinator = mock(MigrationCoordinator.class);
+        DefaultSchemaUpdateHandler handler = new DefaultSchemaUpdateHandler(
+        coordinator,
+        null, true,
+        (result, dropData) ->{}
+        );
+        Map<UUID, Set<InetAddressAndPort>> outstanding = Map.of(UUID.randomUUID(), Set.of(InetAddressAndPort.getByName("127.0.0.127")));
+        when(coordinator.outstandingVersions()).thenReturn(outstanding);
+        handler.tokenService = new TokenService(){
+            @Override
+            public List<NetflixInstance> getInstances() throws IOException
+            {
+                NetflixInstance i = new NetflixInstance();
+                i.setHostIP("127.0.0.127");
+                return List.of(i);
+            }
+        };
+        Assert.assertFalse(handler.waitUntilReady(Duration.ofSeconds(2)));
+    }
+
+    @Test
+    public void testNetflixWaitForSyncException() throws Exception {
+        MigrationCoordinator coordinator = mock(MigrationCoordinator.class);
+        DefaultSchemaUpdateHandler handler = new DefaultSchemaUpdateHandler(
+        coordinator,
+        null, true,
+        (result, dropData) ->{}
+        );
+        Map<UUID, Set<InetAddressAndPort>> outstanding = Map.of(UUID.randomUUID(), Set.of(InetAddressAndPort.getByName("127.0.0.127")));
+        when(coordinator.outstandingVersions()).thenReturn(outstanding);
+        handler.tokenService = new TokenService(){
+            @Override
+            public List<NetflixInstance> getInstances() throws IOException
+            {
+                throw new IOException("test");
+            }
+        };
+        Assert.assertFalse(handler.waitUntilReady(Duration.ofSeconds(2)));
     }
 
     @Test
