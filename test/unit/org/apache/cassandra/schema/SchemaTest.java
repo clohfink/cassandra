@@ -22,6 +22,7 @@ import java.io.IOException;
 import java.time.Duration;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -34,6 +35,9 @@ import java.util.concurrent.ForkJoinTask;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
+import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.Lists;
+import com.google.common.collect.Sets;
 import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -124,13 +128,13 @@ public class SchemaTest
             null, true,
             (result, dropData) ->{}
         );
-        Map<UUID, Set<InetAddressAndPort>> outstanding = Map.of(UUID.randomUUID(), Set.of(InetAddressAndPort.getByName("127.0.0.127")));
+        Map<UUID, Set<InetAddressAndPort>> outstanding = ImmutableMap.of(UUID.randomUUID(), Sets.newHashSet(InetAddressAndPort.getByName("127.0.0.127")));
         when(coordinator.outstandingVersions()).thenReturn(outstanding);
         handler.tokenService = new TokenService(){
             @Override
             public List<NetflixInstance> getInstances() throws IOException
             {
-                return List.of();
+                return Collections.emptyList();
             }
         };
         Assert.assertTrue(handler.waitUntilReady(Duration.ofSeconds(2)));
@@ -144,7 +148,7 @@ public class SchemaTest
         null, true,
         (result, dropData) ->{}
         );
-        Map<UUID, Set<InetAddressAndPort>> outstanding = Map.of(UUID.randomUUID(), Set.of(InetAddressAndPort.getByName("127.0.0.127")));
+        Map<UUID, Set<InetAddressAndPort>> outstanding = ImmutableMap.of(UUID.randomUUID(), Sets.newHashSet(InetAddressAndPort.getByName("127.0.0.127")));
         when(coordinator.outstandingVersions()).thenReturn(outstanding);
         handler.tokenService = new TokenService(){
             @Override
@@ -152,7 +156,7 @@ public class SchemaTest
             {
                 NetflixInstance i = new NetflixInstance();
                 i.setHostIP("127.0.0.127");
-                return List.of(i);
+                return Lists.newArrayList(i);
             }
         };
         Assert.assertFalse(handler.waitUntilReady(Duration.ofSeconds(2)));
@@ -166,7 +170,7 @@ public class SchemaTest
         null, true,
         (result, dropData) ->{}
         );
-        Map<UUID, Set<InetAddressAndPort>> outstanding = Map.of(UUID.randomUUID(), Set.of(InetAddressAndPort.getByName("127.0.0.127")));
+        Map<UUID, Set<InetAddressAndPort>> outstanding = ImmutableMap.of(UUID.randomUUID(), Sets.newHashSet(InetAddressAndPort.getByName("127.0.0.127")));
         when(coordinator.outstandingVersions()).thenReturn(outstanding);
         handler.tokenService = new TokenService(){
             @Override
