@@ -19,11 +19,14 @@
 package org.apache.cassandra;
 
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 import static org.mockito.Mockito.*;
+
 import org.junit.Before;
 import org.junit.After;
 import org.junit.Test;
+
 import static org.junit.Assert.assertEquals;
 
 import java.net.HttpURLConnection;
@@ -33,15 +36,18 @@ import java.io.ByteArrayInputStream;
 import com.netflix.cassandra.LocateService;
 import org.apache.cassandra.locator.InetAddressAndPort;
 
-public class LocateServiceTest {
+public class LocateServiceTest
+{
 
     private HttpURLConnection mockConnection;
     private LocateService service;
 
     @Before
-    public void setUp() throws Exception {
+    public void setUp() throws Exception
+    {
         mockConnection = mock(HttpURLConnection.class);
-        service = new LocateService() {
+        service = new LocateService()
+        {
             protected HttpURLConnection getConnection(String host)
             {
                 return mockConnection;
@@ -52,7 +58,8 @@ public class LocateServiceTest {
     }
 
     @Test
-    public void testGetDatacenterWithRegionEndingIn2() throws Exception {
+    public void testGetDatacenterWithRegionEndingIn2() throws Exception
+    {
         mockResponse("[{\"attrs\": {\"region\": \"us-east-2\"}}]");
 
         InetAddressAndPort endpoint = InetAddressAndPort.getByName("100.91.199.247");
@@ -60,7 +67,8 @@ public class LocateServiceTest {
     }
 
     @Test
-    public void testGetDatacenterWithRegionEndingIn1() throws Exception {
+    public void testGetDatacenterWithRegionEndingIn1() throws Exception
+    {
         mockResponse("[{\"attrs\": {\"region\": \"us-east-1\"}}]");
 
         InetAddressAndPort endpoint = InetAddressAndPort.getByName("100.91.199.247");
@@ -68,36 +76,103 @@ public class LocateServiceTest {
     }
 
     @Test
-    public void testGetRack() throws Exception {
+    public void testGetRack() throws Exception
+    {
         mockResponse("[{\"attrs\": {\"zone\": \"us-west-2b\"}}]");
 
         InetAddressAndPort endpoint = InetAddressAndPort.getByName("100.91.199.247");
         assertEquals("2b", service.getRack(endpoint));
     }
 
-    private void mockResponse(String json) throws Exception {
+    private void mockResponse(String json) throws Exception
+    {
         when(mockConnection.getInputStream()).thenReturn(new ByteArrayInputStream(json.getBytes()));
     }
 
     @Test
-    public void testTimeoutDuringHttpRequest() throws Exception {
+    public void testTimeoutDuringHttpRequest() throws Exception
+    {
         // Simulate a timeout exception when attempting to get the HTTP response code
         when(mockConnection.getResponseCode()).thenThrow(new SocketTimeoutException("Connection timed out"));
 
         InetAddressAndPort endpoint = InetAddressAndPort.getByName("100.91.199.247");
 
         // Execute the test
-        try {
+        try
+        {
             String datacenter = service.getDatacenter(endpoint);
             assertNull("Datacenter should be null on timeout", datacenter);
-        } catch (Exception e) {
+        }
+        catch (Exception e)
+        {
             e.printStackTrace();
             fail("The method should handle timeouts gracefully without throwing exceptions");
         }
     }
 
+    @Test
+    public void testGetId() throws Exception
+    {
+        // Mock the response for the getId method
+        mockResponse("[{\"attrs\": {\"eddaUri\": \"http://some-host/api/v2/view/instances/i-0693202c7eab828e6\"}}]");
+
+        InetAddressAndPort endpoint = InetAddressAndPort.getByName("100.91.199.247");
+        assertEquals("i-0693202c7eab828e6", service.getId(endpoint));
+    }
+
+    @Test
+    public void testGetIdBadString() throws Exception
+    {
+        // Simulate a response where eddaUri does not match the expected pattern
+        mockResponse("[{\"attrs\": {\"eddaUri\": \"http://some-host/api/v2/view/instances/invalid-id\"}}]");
+
+        InetAddressAndPort endpoint = InetAddressAndPort.getByName("100.91.199.247");
+        // Expect null because the instance id format is invalid
+        assertNull("Should return null for a bad eddaUri format", service.getId(endpoint));
+    }
+
+    @Test
+    public void testGetIdWithLongDelay() throws Exception
+    {
+        // Simulate a long delay in the HTTP response for getId
+        doAnswer(invocation -> {
+            Thread.sleep(3000); // simulate a 3-second delay
+            return new ByteArrayInputStream(
+            "[{\"attrs\": {\"eddaUri\": \"http://some-host/api/v2/view/instances/i-0693202c7eab828e6\"}}]".getBytes()
+            );
+        }).when(mockConnection).getInputStream();
+
+        InetAddressAndPort endpoint = InetAddressAndPort.getByName("100.91.199.247");
+        long start = System.currentTimeMillis();
+        String instanceId = service.getId(endpoint);
+        long elapsed = System.currentTimeMillis() - start;
+        assertTrue("Should delay at least 3 seconds", elapsed >= 3000);
+        assertEquals("i-0693202c7eab828e6", instanceId);
+    }
+
+    @Test
+    public void testGetIdIOException() throws Exception
+    {
+        // Simulate an I/O exception during the HTTP request for getId
+        when(mockConnection.getInputStream()).thenThrow(new SocketTimeoutException("Connection timed out"));
+
+        InetAddressAndPort endpoint = InetAddressAndPort.getByName("100.91.199.247");
+        try
+        {
+            String instanceId = service.getId(endpoint);
+            // Expecting null when an exception occurs
+            assertNull("Should return null if an exception occurs while reading the response", instanceId);
+        }
+        catch (Exception e)
+        {
+            e.printStackTrace();
+            fail("getId should handle IO exceptions gracefully and not propagate the exception");
+        }
+    }
+
     @After
-    public void tearDown() throws Exception {
+    public void tearDown() throws Exception
+    {
         // Clean up code if necessary
     }
 }

@@ -61,6 +61,21 @@ public class RingTest extends CQLTester
         validateRingOutput(hostResolved.ipOrDns(true), "-pp", "ring", "-r");
     }
 
+    /**
+     * Verify that the netflix only --ids option causes the InstanceId column to be printed.
+     */
+    @Test
+    public void testRingIdsOption()
+    {
+        ToolRunner.ToolResult tool = ToolRunner.invokeNodetool("ring", "--ids");
+        tool.assertOnCleanExit();
+        String[] lines = tool.getStdout().split("\\R");
+        // The header line is expected to be printed on the fourth line.
+        // When --ids is provided the header should include "InstanceId" before "Token".
+        assertThat(lines[3]).contains("InstanceId");
+        assertThat(lines[3]).containsPattern("InstanceId\\s+Address\\s+Rack\\s+Status\\s+State\\s+Load\\s+Owns\\s+Token");
+    }
+
     @SuppressWarnings("DynamicRegexReplaceableByCompiledPattern")
     private void validateRingOutput(String hostForm, String... args)
     {
@@ -106,18 +121,22 @@ public class RingTest extends CQLTester
         ToolRunner.ToolResult tool = ToolRunner.invokeNodetool("help", "ring");
         tool.assertOnCleanExit();
 
-        String help = "NAME\n" + "        nodetool ring - Print information about the token ring\n"
+        String help = "NAME\n"
+                      + "        nodetool ring - Print information about the token ring\n"
                       + "\n"
                       + "SYNOPSIS\n"
                       + "        nodetool [(-h <host> | --host <host>)] [(-p <port> | --port <port>)]\n"
                       + "                [(-pp | --print-port)] [(-pw <password> | --password <password>)]\n"
                       + "                [(-pwf <passwordFilePath> | --password-file <passwordFilePath>)]\n"
-                      + "                [(-u <username> | --username <username>)] ring [(-r | --resolve-ip)]\n"
-                      + "                [--] [<keyspace>]\n"
+                      + "                [(-u <username> | --username <username>)] ring [--ids]\n"
+                      + "                [(-r | --resolve-ip)] [--] [<keyspace>]\n"
                       + "\n"
                       + "OPTIONS\n"
                       + "        -h <host>, --host <host>\n"
                       + "            Node hostname or ip address\n"
+                      + "\n"
+                      + "        --ids\n"
+                      + "            Show instance id column in output\n"
                       + "\n"
                       + "        -p <port>, --port <port>\n"
                       + "            Remote jmx agent port number\n"

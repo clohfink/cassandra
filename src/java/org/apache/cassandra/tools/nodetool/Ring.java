@@ -18,6 +18,8 @@
 package org.apache.cassandra.tools.nodetool;
 
 import static java.lang.String.format;
+
+import com.netflix.cassandra.LocateService;
 import io.airlift.airline.Arguments;
 import io.airlift.airline.Command;
 import io.airlift.airline.Option;
@@ -34,6 +36,7 @@ import java.util.Map;
 import java.util.Map.Entry;
 
 import org.apache.cassandra.locator.EndpointSnitchInfoMBean;
+import org.apache.cassandra.locator.InetAddressAndPort;
 import org.apache.cassandra.tools.NodeProbe;
 import org.apache.cassandra.tools.NodeTool;
 import org.apache.cassandra.tools.NodeTool.NodeToolCmd;
@@ -48,6 +51,10 @@ public class Ring extends NodeToolCmd
 
     @Option(title = "resolve_ip", name = {"-r", "--resolve-ip"}, description = "Show node domain names instead of IPs")
     private boolean resolveIp = false;
+
+    // Netflix flag: only show the instanceId from locate service if this flag is provided
+    @Option(title = "instance_id", name = {"--ids"}, description = "Show instance id column in output")
+    private boolean showInstanceId = false;
 
     private PrintStream out;
     private EndpointSnitchInfoMBean epSnitchInfo;
@@ -78,8 +85,19 @@ public class Ring extends NodeToolCmd
         int maxAddressLength = Collections.max(endpointsToTokens.keys(),
                                                Comparator.comparingInt(String::length)).length();
 
-        String formatPlaceholder = "%%-%ds  %%-12s%%-7s%%-8s%%-16s%%-20s%%-44s%%n";
-        String format = format(formatPlaceholder, maxAddressLength);
+        final String format;
+        String formatPlaceholder;
+        if (showInstanceId)
+        {
+            // Eight columns: Address, Rack, Status, State, Load, Owns, InstanceId, Token
+            formatPlaceholder = "%%-%ds  %%-12s%%-7s%%-8s%%-16s%%-20s%%-15s%%-44s%%n";
+        }
+        else
+        {
+            // Seven columns: Address, Rack, Status, State, Load, Owns, Token
+            formatPlaceholder = "%%-%ds  %%-12s%%-7s%%-8s%%-16s%%-20s%%-44s%%n";
+        }
+        format = format(formatPlaceholder, maxAddressLength);
 
         StringBuilder errors = new StringBuilder();
         boolean showEffectiveOwnership = true;
@@ -132,12 +150,24 @@ public class Ring extends NodeToolCmd
             lastToken = tokens.get(tokens.size() - 1);
         }
 
-        out.printf(format, "Address", "Rack", "Status", "State", "Load", "Owns", "Token");
+        if (showInstanceId)
+            out.printf(format, "InstanceId", "Address", "Rack", "Status", "State", "Load", "Owns", "Token");
+        else
+            out.printf(format, "Address", "Rack", "Status", "State", "Load", "Owns", "Token");
+
+
 
         if (hoststats.size() > 1)
-            out.printf(format, "", "", "", "", "", "", lastToken);
+        {
+            if (showInstanceId)
+                out.printf(format, "", "", "", "", "", "", "", lastToken);
+            else
+                out.printf(format, "", "", "", "", "", "", lastToken);
+        }
         else
+        {
             out.println();
+        }
 
         for (HostStatWithPort stat : hoststats)
         {
@@ -171,7 +201,26 @@ public class Ring extends NodeToolCmd
                           ? loadMap.get(endpoint)
                           : "?";
             String owns = stat.owns != null && showEffectiveOwnership? new DecimalFormat("##0.00%").format(stat.owns) : "?";
-            out.printf(format, stat.ipOrDns(printPort), rack, status, state, load, owns, stat.token);
+            String ip = stat.ipOrDns(printPort);
+
+            if (showInstanceId)
+            {
+                String instanceId;
+                try
+                {
+                    instanceId = LocateService.instance.getId(InetAddressAndPort.getByName(ip));
+                }
+                catch (Exception e)
+                {
+                    instanceId = "Unknown";
+                }
+                instanceId = instanceId == null ? "Unknown" : instanceId;
+                out.printf(format, instanceId, ip, rack, status, state, load, owns, stat.token);
+            }
+            else
+            {
+                out.printf(format, ip, rack, status, state, load, owns, stat.token);
+            }
         }
         out.println();
     }

@@ -6,6 +6,8 @@ import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.util.Optional;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -19,6 +21,7 @@ import org.apache.cassandra.locator.InetAddressAndPort;
 
 public class LocateService
 {
+    public static final Pattern ID_PATTERN = Pattern.compile(".*(i-[0-9a-zA-Z]+)$");
     public static final int TIMEOUT =  Integer.parseInt(System.getProperty("netflix.locate.timeout", "2000"));
     public static final int MAX_CACHE_SIZE =  Integer.parseInt(System.getProperty("netflix.locate.cache", "2000"));
     private static final Logger logger = LoggerFactory.getLogger(LocateService.class);
@@ -28,8 +31,10 @@ public class LocateService
 
     public static final LocateService instance = new LocateService();
 
-    private final LoadingCache<InetAddressAndPort, String> datacenterCache;
-    private final LoadingCache<InetAddressAndPort, String> rackCache;
+    // keyed off host address, netflix locate service does not have ip based endpoints so dont use InetAddressAndPort
+    private final LoadingCache<String, String> datacenterCache;
+    private final LoadingCache<String, String> rackCache;
+    private final LoadingCache<String, String> idCache;
 
     public LocateService()
     {
@@ -48,23 +53,40 @@ public class LocateService
                            return parts.length > 0 ? parts[parts.length - 1] : null;
                        })
                        .orElse(null));
+
+        idCache = Caffeine.newBuilder().maximumSize(MAX_CACHE_SIZE)
+                          .build(endpoint -> {
+                              Optional<String> optionalUrl = getAttribute(endpoint, "eddaUri");
+                              if (optionalUrl.isPresent()) {
+                                  String url = optionalUrl.get();
+                                  Matcher matcher = ID_PATTERN.matcher(url);
+                                  if (matcher.find()) {
+                                      return matcher.group(1);
+                                  }
+                              }
+                              return null;
+                          });
     }
 
     public String getDatacenter(InetAddressAndPort endpoint)
     {
-        return datacenterCache.get(endpoint);
+        return datacenterCache.get(endpoint.getHostAddress(false));
     }
 
     public String getRack(InetAddressAndPort endpoint)
     {
-        return rackCache.get(endpoint);
+        return rackCache.get(endpoint.getHostAddress(false));
     }
 
-    private Optional<String> getAttribute(InetAddressAndPort endpoint, String attributeName)
+    public String getId(InetAddressAndPort endpoint)
+    {
+        return idCache.get(endpoint.getHostAddress(false));
+    }
+
+    private Optional<String> getAttribute(String host, String attributeName)
     {
         try
         {
-            String host = endpoint.getHostAddress(false);
             String jsonString = locateCall(host);
             if (jsonString == null)
             {
@@ -83,7 +105,7 @@ public class LocateService
         }
         catch (IOException e)
         {
-            logger.debug("Failed to get attribute for endpoint {}", endpoint, e);
+            logger.debug("Failed to get attribute for endpoint {}", host, e);
         }
         return Optional.empty();
     }
@@ -139,11 +161,5 @@ public class LocateService
             }
         }
         return null;
-    }
-
-    public void main(String[] args) throws Exception
-    {
-        LocateService locateService = new LocateService();
-        System.out.println(locateService.getRack(InetAddressAndPort.getByName("100.91.199.247")));
     }
 }
