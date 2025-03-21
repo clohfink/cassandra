@@ -27,6 +27,7 @@ import org.slf4j.LoggerFactory;
 import io.netty.buffer.ByteBuf;
 import org.apache.cassandra.cql3.QueryEvents;
 import org.apache.cassandra.cql3.QueryHandler;
+import org.apache.cassandra.metrics.ClientMetrics;
 import org.apache.cassandra.service.ClientState;
 import org.apache.cassandra.service.QueryState;
 import org.apache.cassandra.tracing.Tracing;
@@ -122,6 +123,7 @@ public class PrepareMessage extends Message.Request
             if (traceRequest)
                 Tracing.instance.begin("Preparing CQL3 query", state.getClientAddress(), ImmutableMap.of("query", query));
 
+            ClientMetrics.instance.markPrepareRequest();
             ClientState clientState = state.getClientState().cloneWithKeyspaceIfSet(keyspace);
             QueryHandler queryHandler = ClientState.getCQLQueryHandler();
             long queryTime = currentTimeMillis();

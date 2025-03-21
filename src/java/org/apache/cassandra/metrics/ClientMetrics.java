@@ -62,6 +62,7 @@ public final class ClientMetrics
     private Meter protocolException;
     private Meter unknownException;
     private Timer queueTime;
+    private Meter prepareRequests;
 
     private ClientMetrics()
     {
@@ -152,6 +153,7 @@ public final class ClientMetrics
         protocolException = registerMeter("ProtocolException");
         unknownException = registerMeter("UnknownException");
         queueTime = registerTimer("Queued");
+        prepareRequests = registerMeter("PrepareRequests");
 
         initialized = true;
     }
@@ -227,5 +229,10 @@ public final class ClientMetrics
     public void queueTime(long value, TimeUnit unit)
     {
         queueTime.update(value, unit);
+    }
+
+    public void markPrepareRequest()
+    {
+        prepareRequests.mark();
     }
 }
