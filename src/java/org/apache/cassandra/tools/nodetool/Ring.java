@@ -89,8 +89,8 @@ public class Ring extends NodeToolCmd
         String formatPlaceholder;
         if (showInstanceId)
         {
-            // Eight columns: Address, Rack, Status, State, Load, Owns, InstanceId, Token
-            formatPlaceholder = "%%-%ds  %%-12s%%-7s%%-8s%%-16s%%-20s%%-15s%%-44s%%n";
+            // Eight columns: InstanceId Address, Rack, Status, State, Load, Owns, Token
+            formatPlaceholder = "%%-20s  %%-%ds %%-6s %%-7s %%-8s %%-14s %%-12s %%-44s%%n";
         }
         else
         {
