@@ -131,7 +131,11 @@ case $(uname) in
 esac
 
 # figure out resource limits, scripts, and mounts for the test type
-docker_flags="-m 5g --memory-swap 5g"
+if [[ "${target}" == *"dtest"* ]]; then
+    docker_flags="-m 10g --memory-swap 5g"
+else
+    docker_flags="-m 5g --memory-swap 5g"
+fi
 
 docker_flags="${docker_flags} -d --rm"
 

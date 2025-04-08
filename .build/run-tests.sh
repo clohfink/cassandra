@@ -260,15 +260,7 @@ _main() {
       ant test-simulator-dtest ${ANT_TEST_OPTS} || echo "failed ${target}"
       ;;
     "jvm-dtest" | "jvm-dtest-novnode")
-      [ "jvm-dtest-novnode" == "${target}" ] || ANT_TEST_OPTS="${ANT_TEST_OPTS} -Dcassandra.dtest.num_tokens=16"
-      testlist=$( _list_tests "distributed" | grep -v "upgrade" | _split_tests "${split_chunk}")
-      if [[ -z "$testlist" ]]; then
-          [[ "${split_chunk}" =~ ^[0-9]+/[0-9]+$ ]] || { echo "No tests match ${split_chunk}"; exit 1; }
-          # something has to run in the split to generate a junit xml result
-          echo "Hacking jvm-dtest to run only first test found as no tests in split ${split_chunk} were found"
-          testlist="$( _list_tests "distributed"  | grep -v "upgrade" | head -n1)"
-      fi
-      ant testclasslist -Dtest.classlistprefix=distributed -Dtest.timeout=$(_timeout_for "test.distributed.timeout") -Dtest.classlistfile=<(echo "${testlist}") ${ANT_TEST_OPTS} || echo "failed ${target} ${split_chunk}"
+      _run_testlist "distributed" "testclasslist" "${split_chunk}" "$(_timeout_for 'test.distributed.timeout')"
       ;;
     "build_dtest_jars")
       _build_all_dtest_jars
