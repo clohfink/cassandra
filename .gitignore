@@ -112,5 +112,6 @@ pylib/venv*/
 pylib/.venv*/
 pylib/cqlshlib/cqlshbin.py
 pylib/.setupmeta.version
+cqlshvenv
 
 conf/triggers/trigger-example.jar
