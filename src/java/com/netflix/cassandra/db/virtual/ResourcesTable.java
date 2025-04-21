@@ -62,9 +62,19 @@ public class ResourcesTable extends AbstractVirtualTable
         monitor.startMonitoring();
     }
 
-    public static double clampAndRound(double value) {
+    public static double clampAndRound(double value)
+    {
+        return round(clamp(value));
+    }
+
+    private static double clamp(double value)
+    {
         // Clamp the value to the range [0, 1]
-        value = Math.max(0.0, Math.min(1.0, value));
+        return Math.max(0.0, Math.min(1.0, value));
+    }
+
+    private static double round(double value)
+    {
         // Multiply by 100, round up, then divide by 100 to get 100ths precision
         return Math.ceil(value * 100.0) / 100.0;
     }
@@ -75,7 +85,11 @@ public class ResourcesTable extends AbstractVirtualTable
         SimpleDataSet result = new SimpleDataSet(metadata());
         double cpu = clampAndRound(monitor.getAverageCpuUsage() / 100.0);
         double disk = clampAndRound(DiskUsageMonitor.instance.getDiskUsage());
-        double threadsWaiting = ResourcesMetrics.schedulingDelay.getValue();
+
+        ResourcesMetrics.SchedStatMetrics schedStatMetrics = ResourcesMetrics.schedStatReader.getMetrics();
+        double threadsWaiting = schedStatMetrics.coreAveragedtotalRunningTime() == 0 ? 0 :
+        round(((double) TimeUnit.NANOSECONDS.toSeconds(schedStatMetrics.coreAveragedtotalDelay())
+                                       / TimeUnit.NANOSECONDS.toSeconds(schedStatMetrics.coreAveragedtotalRunningTime()) * 100.0));
 
         result.row("compute").column(VALUE, cpu);
         result.row("disk").column(VALUE, disk);
@@ -92,13 +106,15 @@ public class ResourcesTable extends AbstractVirtualTable
         private final Histogram cpuUsageHistogram;
         private volatile double averageCpuUsage;
 
-        public CpuUsageMonitor() {
+        public CpuUsageMonitor()
+        {
             osBean = (OperatingSystemMXBean) ManagementFactory.getOperatingSystemMXBean();
             cpuUsageHistogram = new Histogram(new SlidingWindowReservoir(WINDOW_SIZE));
             averageCpuUsage = 0.0;
         }
 
-        public void startMonitoring() {
+        public void startMonitoring()
+        {
             // Every second, sample the system load average, update the histogram, and update the average.
             scheduler.scheduleWithFixedDelay(() -> {
                 double cpuLoad = osBean.getSystemLoadAverage();
@@ -112,11 +128,13 @@ public class ResourcesTable extends AbstractVirtualTable
             }, 0, 1, TimeUnit.SECONDS);
         }
 
-        public double getAverageCpuUsage() {
+        public double getAverageCpuUsage()
+        {
             return averageCpuUsage;
         }
 
-        public void stopMonitoring() {
+        public void stopMonitoring()
+        {
             scheduler.shutdown();
         }
 

@@ -31,8 +31,9 @@ public class ResourcesMetricsTest
     @Test
     public void test_CanBuildWithNonExistentPath_SchedulingDelayGauge()
     {
-        ResourcesMetrics.SchedulingDelayGauge schedulingDelayGauge = new ResourcesMetrics.SchedulingDelayGauge("nonexistent_path");
-        assertEquals(0.0, schedulingDelayGauge.getValue(), 0.001);
+        ResourcesMetrics.SchedStatReader reader = new ResourcesMetrics.SchedStatReader("nonexistent_path");
+        assertEquals(0, reader.getMetrics().coreAveragedtotalDelay());
+        assertEquals(0, reader.getMetrics().coreAveragedtotalRunningTime());
     }
 
     @Test
@@ -41,11 +42,13 @@ public class ResourcesMetricsTest
         URL resource = getClass().getClassLoader().getResource("netflix/metrics/mock_schedstat_simple.txt");
         String testFilePath = Paths.get(resource.getPath()).toString();
 
-        ResourcesMetrics.SchedulingDelayGauge schedulingDelayGauge = new ResourcesMetrics.SchedulingDelayGauge(testFilePath);
+        ResourcesMetrics.SchedStatReader reader = new ResourcesMetrics.SchedStatReader(testFilePath);
 
-        double expectedAverageDelay = (10 + 20 + 30) / 3.0;
+        long expectedAverageDelay = (10 + 20 + 30) / 3;
+        long expectedAverageRunningTime = (100 + 200 + 300) / 3;
 
-        assertEquals(expectedAverageDelay, schedulingDelayGauge.getValue(), 0.001);
+        assertEquals(expectedAverageDelay, reader.getMetrics().coreAveragedtotalDelay());
+        assertEquals(expectedAverageRunningTime, reader.getMetrics().coreAveragedtotalRunningTime());
     }
 
     @Test
@@ -54,11 +57,13 @@ public class ResourcesMetricsTest
         URL resource = getClass().getClassLoader().getResource("netflix/metrics/mock_schedstat_full.txt");
         String testFilePath = Paths.get(resource.getPath()).toString();
 
-        ResourcesMetrics.SchedulingDelayGauge schedulingDelayGauge = new ResourcesMetrics.SchedulingDelayGauge(testFilePath);
+        ResourcesMetrics.SchedStatReader reader = new ResourcesMetrics.SchedStatReader(testFilePath);
 
-        double expectedAverageDelay = (533361260685D + 549142505865D + 522588242761D + 517028496925D) / 4.0;
+        long expectedAverageDelay = (533361260685L + 549142505865L + 522588242761L + 517028496925L) / 4;
+        long expectedAverageRunningTime = (12278208226386L + 12388964511605L + 12457177189225L + 12427090126794L) / 4;
 
-        assertEquals(expectedAverageDelay, schedulingDelayGauge.getValue(), 0.001);
+        assertEquals(expectedAverageDelay, reader.getMetrics().coreAveragedtotalDelay());
+        assertEquals(expectedAverageRunningTime, reader.getMetrics().coreAveragedtotalRunningTime());
     }
 
     @Test
@@ -67,11 +72,13 @@ public class ResourcesMetricsTest
         URL resource = getClass().getClassLoader().getResource("netflix/metrics/mock_schedstat_zeros.txt");
         String testFilePath = Paths.get(resource.getPath()).toString();
 
-        ResourcesMetrics.SchedulingDelayGauge schedulingDelayGauge = new ResourcesMetrics.SchedulingDelayGauge(testFilePath);
+        ResourcesMetrics.SchedStatReader reader = new ResourcesMetrics.SchedStatReader(testFilePath);
 
-        double expectedAverageDelay = 0.0;
+        long expectedAverageDelay = 0;
+        long expectedAverageRunningTime = 0;
 
-        assertEquals(expectedAverageDelay, schedulingDelayGauge.getValue(), 0.001);
+        assertEquals(expectedAverageDelay, reader.getMetrics().coreAveragedtotalDelay());
+        assertEquals(expectedAverageRunningTime, reader.getMetrics().coreAveragedtotalRunningTime());
     }
 
     @Test
@@ -80,10 +87,13 @@ public class ResourcesMetricsTest
         URL resource = getClass().getClassLoader().getResource("netflix/metrics/mock_schedstat_large.txt");
         String testFilePath = Paths.get(resource.getPath()).toString();
 
-        ResourcesMetrics.SchedulingDelayGauge schedulingDelayGauge = new ResourcesMetrics.SchedulingDelayGauge(testFilePath);
+        ResourcesMetrics.SchedStatReader reader = new ResourcesMetrics.SchedStatReader(testFilePath);
 
-        double expectedAverageDelay = Long.MAX_VALUE;
+        // This is the limit of how high these stats can go— long.MAX_VALUE / num cores
+        long expectedAverageDelay = Long.MAX_VALUE / 3;
+        long expectedAverageRunningTime = Long.MAX_VALUE / 3;
 
-        assertEquals(expectedAverageDelay, schedulingDelayGauge.getValue(), 0.001);
+        assertEquals(expectedAverageDelay, reader.getMetrics().coreAveragedtotalDelay());
+        assertEquals(expectedAverageRunningTime, reader.getMetrics().coreAveragedtotalRunningTime());
     }
 }

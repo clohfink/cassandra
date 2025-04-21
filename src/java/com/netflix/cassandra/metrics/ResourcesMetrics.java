@@ -20,8 +20,10 @@ package com.netflix.cassandra.metrics;
 
 import java.io.BufferedReader;
 import java.io.IOException;
+import java.util.List;
 import java.util.regex.Pattern;
 
+import com.google.common.collect.ImmutableList;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -38,22 +40,79 @@ public class ResourcesMetrics
 {
     private static final Logger logger = LoggerFactory.getLogger(ResourcesMetrics.class);
     private static final MetricNameFactory factory = new DefaultNameFactory("Resources");
-    private static final String PATH = System.getProperty("cassandra.schedstat_file", "/proc/schedstat");
-    public static final Gauge<Double> schedulingDelay = Metrics.register(
+    private static final String SCHEDSTAT = System.getProperty("cassandra.schedstat_file", "/proc/schedstat");
+    public static final SchedStatReader schedStatReader = new SchedStatReader(SCHEDSTAT);
+    public static final Gauge<Long> schedulingDelay = Metrics.register(
     factory.createMetricName("CpuDelay"),
-    new SchedulingDelayGauge(PATH)
+    new SchedulingDelayGauge(schedStatReader)
+    );
+    public static final Gauge<Long> runningTime = Metrics.register(
+    factory.createMetricName("CpuRunningTime"),
+    new RunningTimeGauge(schedStatReader)
     );
     public static final Gauge<Double> disk = Metrics.register(
     factory.createMetricName("DiskUtil"),
     () -> DiskUsageMonitor.instance.getDiskUsage()
     );
 
-    public static class SchedulingDelayGauge implements Gauge<Double>
+    public static class SchedulingDelayGauge implements Gauge<Long>
     {
-        private static final Pattern PATTERN = Pattern.compile("\\s+");
-        private final String path;
+        private final SchedStatReader reader;
 
-        public SchedulingDelayGauge(String path)
+        public SchedulingDelayGauge(SchedStatReader reader)
+        {
+            this.reader = reader;
+        }
+
+        @Override
+        public Long getValue()
+        {
+            return reader.getMetrics().coreAveragedtotalDelay();
+        }
+    }
+
+    public static class RunningTimeGauge implements Gauge<Long>
+    {
+        private final SchedStatReader reader;
+
+        public RunningTimeGauge(SchedStatReader reader)
+        {
+            this.reader = reader;
+        }
+
+        @Override
+        public Long getValue()
+        {
+            return reader.getMetrics().coreAveragedtotalRunningTime();
+        }
+    }
+
+
+    /**
+     * Returns a metric, by index, from scheduling latency statistics.
+     * <p>
+     * Excerpt from kernel documentation:
+     * <pre>
+     * CPU statistics
+     * --------------
+     * cpu<N> 1 2 3 4 5 6 7 8 9
+     * ...
+     * Next three are statistics describing scheduling latency:
+     *      7) sum of all time spent running by tasks on this processor (in nanoseconds)
+     *      8) sum of all time spent waiting to run by tasks on this processor (in
+     *         nanoseconds)
+     *      9) # of timeslices run on this cpu
+     * </pre>
+     * <p>
+     * We are reading the 7th and 8th statistics from the file.
+     */
+    public static class SchedStatReader
+    {
+        private final Pattern PATTERN = Pattern.compile("\\s+");
+        private final String path;
+        private static final List<Integer> targetIndicies = ImmutableList.of(7, 8);
+
+        public SchedStatReader(String path)
         {
             File file = new File(path);
             if (file.exists())
@@ -63,35 +122,15 @@ public class ResourcesMetrics
                 this.path = null;
                 logger.warn("Scheduling delay metrics file {} does not exist", path);
             }
-
         }
 
-        /**
-         * Returns the average scheduling delay in nanoseconds.
-         * <p>
-         * Excerpt from kernel documentation:
-         * <pre>
-         * CPU statistics
-         * --------------
-         * cpu<N> 1 2 3 4 5 6 7 8 9
-         * ...
-         * Next three are statistics describing scheduling latency:
-         *      7) sum of all time spent running by tasks on this processor (in jiffies)
-         *      8) sum of all time spent waiting to run by tasks on this processor (in
-         *         jiffies)
-         *      9) # of timeslices run on this cpu
-         * </pre>
-         *
-         * We are reading the 8th statistic from the file.
-         */
-        @Override
-        public Double getValue()
+        public SchedStatMetrics getMetrics()
         {
             if (path == null)
-                return 0.0;
+                return new SchedStatMetrics(0, 0);
 
-            double sum = 0;
-            int count = 0;
+            long[] sums = new long[targetIndicies.size()];
+            long[] counts = new long[targetIndicies.size()];
 
             try (BufferedReader reader = new BufferedReader(new FileReader(path)))
             {
@@ -101,17 +140,20 @@ public class ResourcesMetrics
                     if (line.startsWith("cpu"))
                     {
                         String[] parts = PATTERN.split(line.trim());
-                        if (parts.length > 8)
+                        for (int i = 0; i < targetIndicies.size(); i++)
                         {
-                            try
+                            int index = targetIndicies.get(i);
+                            if (parts.length > index)
                             {
-                                long delay = Long.parseLong(parts[8]);
-                                sum += delay;
-                                count++;
-                            }
-                            catch (NumberFormatException e)
-                            {
-                                // Ignore lines with an invalid number
+                                try
+                                {
+                                    sums[i] += Long.parseLong(parts[index]);
+                                    counts[i]++;
+                                }
+                                catch (NumberFormatException e)
+                                {
+                                    // Ignore lines with an invalid number
+                                }
                             }
                         }
                     }
@@ -121,8 +163,36 @@ public class ResourcesMetrics
             {
                 logger.error("Error reading scheduling delay from {}", path, e);
             }
+            long coreAveragedTotalRunningTime = safeDivide(sums[0], counts[0]);
+            long coreAveragedTotalDelay = safeDivide(sums[1], counts[1]);
+            return new SchedStatMetrics(coreAveragedTotalRunningTime, coreAveragedTotalDelay);
+        }
 
-            return (count == 0) ? 0.0 : sum / count;
+        private long safeDivide(long dividend, long divisor)
+        {
+            return divisor == 0 ? 0 : dividend / divisor;
+        }
+    }
+
+    public static class SchedStatMetrics
+    {
+        private final long coreAveragedtotalDelay;
+        private final long coreAveragedtotalRunningTime;
+
+        public SchedStatMetrics(long coreAveragedTotalRunningTime, long coreAveragedtotalDelay)
+        {
+            this.coreAveragedtotalRunningTime = coreAveragedTotalRunningTime;
+            this.coreAveragedtotalDelay = coreAveragedtotalDelay;
+        }
+
+        public long coreAveragedtotalRunningTime()
+        {
+            return coreAveragedtotalRunningTime;
+        }
+
+        public long coreAveragedtotalDelay()
+        {
+            return coreAveragedtotalDelay;
         }
     }
 }
