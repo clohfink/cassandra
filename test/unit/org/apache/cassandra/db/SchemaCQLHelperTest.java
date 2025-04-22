@@ -352,8 +352,7 @@ public class SchemaCQLHelperTest extends CQLTester
                             "    AND min_index_interval = 6\n" +
                             "    AND read_repair = 'BLOCKING'\n" +
                             "    AND speculative_retry = 'ALWAYS'\n" +
-                            "    AND automated_repair_full = {'enabled': 'true'}\n" +
-                            "    AND automated_repair_incremental = {'enabled': 'true'};"
+                            "    AND auto_repair = {'full_enabled': 'false', 'incremental_enabled': 'false', 'preview_repaired_enabled': 'false', 'priority': '0'};"
                    ));
     }
 

@@ -24,27 +24,40 @@ import org.apache.cassandra.repair.autorepair.AutoRepairConfig.RepairType;
 
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
 
+/**
+ * Unit tests for {@link org.apache.cassandra.repair.autorepair.AutoRepairConfig.RepairType}
+ */
 public class AutoRepairStateFactoryTest
 {
     @Test
-    public void testGetRepairState() {
-        AutoRepairState state = RepairType.getAutoRepairState(RepairType.full);
+    public void testGetRepairState()
+    {
+        AutoRepairState state = RepairType.getAutoRepairState(RepairType.FULL);
 
-        assert state instanceof FullRepairState;
+        assertTrue(state instanceof AutoRepairState.FullRepairState);
 
-        state = RepairType.getAutoRepairState(RepairType.incremental);
+        state = RepairType.getAutoRepairState(RepairType.INCREMENTAL);
 
-        assert state instanceof IncrementalRepairState;
+        assertTrue(state instanceof AutoRepairState.IncrementalRepairState);
+
+        state = RepairType.getAutoRepairState(RepairType.PREVIEW_REPAIRED);
+
+        assertTrue(state instanceof AutoRepairState.PreviewRepairedState);
     }
 
     @Test
-    public void testGetRepairStateSupportsAllRepairTypes() {
-        for (RepairType repairType : RepairType.values()) {
-            try {
+    public void testGetRepairStateSupportsAllRepairTypes()
+    {
+        for (RepairType repairType : RepairType.values())
+        {
+            try
+            {
                 AutoRepairState state = RepairType.getAutoRepairState(repairType);
                 assertNotNull(state);
-            } catch (IllegalArgumentException e) {
+            } catch (IllegalArgumentException e)
+            {
                 assertNull(e);
             }
         }

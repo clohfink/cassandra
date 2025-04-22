@@ -101,6 +101,7 @@ public abstract class AlteredHints
                     hintNum++;
                 }
             }
+
             Assert.assertThat(descriptor.hintsFileSize(dir), Matchers.greaterThan(0L));
         }
 

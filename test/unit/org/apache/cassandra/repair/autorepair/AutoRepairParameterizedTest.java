@@ -18,29 +18,31 @@
 
 package org.apache.cassandra.repair.autorepair;
 
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Sets;
 
 import org.apache.cassandra.config.DurationSpec;
 import org.apache.cassandra.cql3.statements.schema.TableAttributes;
-import org.apache.cassandra.dht.Range;
-import org.apache.cassandra.dht.Token;
 import org.apache.cassandra.exceptions.ConfigurationException;
+import org.apache.cassandra.locator.LocalStrategy;
+import org.apache.cassandra.repair.RepairParallelism;
 import org.apache.cassandra.repair.RepairRunnable;
+import org.apache.cassandra.repair.messages.RepairOption;
 import org.apache.cassandra.schema.AutoRepairParams;
+import org.apache.cassandra.schema.SystemDistributedKeyspace;
 import org.apache.cassandra.schema.TableParams;
-import org.apache.cassandra.service.StorageService;
-import org.apache.cassandra.utils.Pair;
 
 import org.junit.After;
 import org.junit.Assert;
@@ -68,10 +70,14 @@ import org.apache.cassandra.schema.Schema;
 import org.apache.cassandra.schema.SchemaConstants;
 import org.apache.cassandra.schema.TableMetadata;
 import org.apache.cassandra.service.AutoRepairService;
+import org.apache.cassandra.streaming.PreviewKind;
 import org.apache.cassandra.utils.FBUtilities;
+import org.apache.cassandra.utils.progress.ProgressEvent;
+import org.apache.cassandra.utils.progress.ProgressEventType;
+import org.apache.cassandra.utils.progress.ProgressListener;
 import org.mockito.Mock;
-import org.mockito.Mockito;
 import org.mockito.MockitoAnnotations;
+import org.mockito.invocation.InvocationOnMock;
 
 import static org.apache.cassandra.Util.setAutoRepairEnabled;
 import static org.apache.cassandra.config.CassandraRelevantProperties.SYSTEM_DISTRIBUTED_DEFAULT_RF;
@@ -79,14 +85,20 @@ import static org.apache.cassandra.metrics.CassandraMetricsRegistry.Metrics;
 import static org.apache.cassandra.repair.autorepair.AutoRepairUtils.RepairTurn.NOT_MY_TURN;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+/**
+ * Unit tests for {@link org.apache.cassandra.repair.autorepair.AutoRepair}
+ */
 @RunWith(Parameterized.class)
 public class AutoRepairParameterizedTest extends CQLTester
 {
@@ -104,8 +116,9 @@ public class AutoRepairParameterizedTest extends CQLTester
     AutoRepairState autoRepairState;
     @Mock
     RepairRunnable repairRunnable;
-    private static AutoRepairConfig defaultConfig;
 
+    // Expected number of repairs to be executed.
+    private static int expectedRepairAssignments;
 
     @Parameterized.Parameter()
     public AutoRepairConfig.RepairType repairType;
@@ -125,14 +138,17 @@ public class AutoRepairParameterizedTest extends CQLTester
         requireNetwork();
         AutoRepairUtils.setup();
 
-
         cfm = TableMetadata.builder(KEYSPACE, TABLE)
                            .addPartitionKeyColumn("k", UTF8Type.instance)
                            .addStaticColumn("s", UTF8Type.instance)
                            .addClusteringColumn("i", IntegerType.instance)
                            .addRegularColumn("v", UTF8Type.instance)
-                           .params(TableParams.builder().automatedRepairFull(AutoRepairParams.create(AutoRepairConfig.RepairType.full, ImmutableMap.of(AutoRepairParams.Option.ENABLED.toString(), Boolean.toString(true)))).
-                                              automatedRepairIncremental(AutoRepairParams.create(AutoRepairConfig.RepairType.incremental, ImmutableMap.of(AutoRepairParams.Option.ENABLED.toString(), Boolean.toString(true)))).build())
+                           .params(TableParams.builder()
+                                              .automatedRepair(AutoRepairParams.create(ImmutableMap.of(AutoRepairParams.Option.FULL_ENABLED.name().toLowerCase(), Boolean.toString(true),
+                                                                                                       AutoRepairParams.Option.INCREMENTAL_ENABLED.name().toLowerCase(), Boolean.toString(true),
+                                                                                                       AutoRepairParams.Option.PREVIEW_REPAIRED_ENABLED.name().toLowerCase(), Boolean.toString(true),
+                                                                                                       AutoRepairParams.Option.PRIORITY.name().toString(), Integer.toString(0))))
+                                              .build())
                            .build();
 
         cfmDisabledAutoRepair = TableMetadata.builder(KEYSPACE, TABLE_DISABLED_AUTO_REPAIR)
@@ -140,8 +156,12 @@ public class AutoRepairParameterizedTest extends CQLTester
                                              .addStaticColumn("s", UTF8Type.instance)
                                              .addClusteringColumn("i", IntegerType.instance)
                                              .addRegularColumn("v", UTF8Type.instance)
-                                             .params(TableParams.builder().automatedRepairFull(AutoRepairParams.create(AutoRepairConfig.RepairType.full, ImmutableMap.of(AutoRepairParams.Option.ENABLED.toString(), Boolean.toString(false)))).
-                                                                automatedRepairIncremental(AutoRepairParams.create(AutoRepairConfig.RepairType.incremental, ImmutableMap.of(AutoRepairParams.Option.ENABLED.toString(), Boolean.toString(false)))).build())
+                                             .params(TableParams.builder()
+                                                                .automatedRepair(AutoRepairParams.create(ImmutableMap.of(AutoRepairParams.Option.FULL_ENABLED.name().toLowerCase(), Boolean.toString(false),
+                                                                                                                         AutoRepairParams.Option.INCREMENTAL_ENABLED.name().toLowerCase(), Boolean.toString(false),
+                                                                                                                         AutoRepairParams.Option.PREVIEW_REPAIRED_ENABLED.name().toLowerCase(), Boolean.toString(false),
+                                                                                                                         AutoRepairParams.Option.PRIORITY.name().toString(), Integer.toString(0))))
+                                                                .build())
                                              .build();
 
         SchemaLoader.prepareServer();
@@ -155,13 +175,34 @@ public class AutoRepairParameterizedTest extends CQLTester
 
         DatabaseDescriptor.setMaterializedViewsEnabled(false);
         DatabaseDescriptor.setCDCEnabled(false);
+
+        // Calculate the expected number of keyspaces to be repaired, this should be all system keyspaces that are
+        // distributed, plus 1 for the table we created (ks.tbl).
+        int expectedKeyspacesGoingThroughRepair = 0;
+        for (Keyspace keyspace : Keyspace.all())
+        {
+            // skip LocalStrategy keyspaces as these aren't repaired.
+            if (keyspace.getReplicationStrategy() instanceof LocalStrategy)
+            {
+                continue;
+            }
+            // skip system_traces keyspaces
+            if (keyspace.getName().equalsIgnoreCase(SchemaConstants.TRACE_KEYSPACE_NAME))
+            {
+                continue;
+            }
+            expectedKeyspacesGoingThroughRepair += 1;
+        }
+        // Since the splitter will unwrap a full token range, we expect twice as many repairs.
+        expectedRepairAssignments = expectedKeyspacesGoingThroughRepair * 2;
     }
 
     @Before
     public void setup()
     {
-        System.setProperty("cassandra.streaming.requires_cdc_replay", "false");
-        System.setProperty("cassandra.streaming.requires_view_build_during_repair", "false");
+        DatabaseDescriptor.setCDCOnRepairEnabled(false);
+        DatabaseDescriptor.setMaterializedViewsOnRepairEnabled(false);
+        //noinspection resource
         MockitoAnnotations.initMocks(this);
 
         Keyspace.open(KEYSPACE).getColumnFamilyStore(TABLE).truncateBlocking();
@@ -170,8 +211,8 @@ public class AutoRepairParameterizedTest extends CQLTester
         Keyspace.open(KEYSPACE).getColumnFamilyStore(MV).truncateBlocking();
         Keyspace.open(KEYSPACE).getColumnFamilyStore(MV).disableAutoCompaction();
 
-        Keyspace.open(SchemaConstants.DISTRIBUTED_KEYSPACE_NAME).getColumnFamilyStore(AutoRepairKeyspace.AUTO_REPAIR_PRIORITY).truncateBlocking();
-        Keyspace.open(SchemaConstants.DISTRIBUTED_KEYSPACE_NAME).getColumnFamilyStore(AutoRepairKeyspace.AUTO_REPAIR_HISTORY).truncateBlocking();
+        Keyspace.open(SchemaConstants.DISTRIBUTED_KEYSPACE_NAME).getColumnFamilyStore(SystemDistributedKeyspace.AUTO_REPAIR_PRIORITY).truncateBlocking();
+        Keyspace.open(SchemaConstants.DISTRIBUTED_KEYSPACE_NAME).getColumnFamilyStore(SystemDistributedKeyspace.AUTO_REPAIR_HISTORY).truncateBlocking();
 
 
         AutoRepair.instance = new AutoRepair();
@@ -179,6 +220,7 @@ public class AutoRepairParameterizedTest extends CQLTester
 
         timeFuncCalls = 0;
         AutoRepair.timeFunc = System::currentTimeMillis;
+        AutoRepair.sleepFunc = (Long startTime, TimeUnit unit) -> {};
         resetCounters();
         resetConfig();
 
@@ -204,11 +246,11 @@ public class AutoRepairParameterizedTest extends CQLTester
     private void resetConfig()
     {
         // prepare a fresh default config
-        defaultConfig = new AutoRepairConfig(true);
+        AutoRepairConfig defaultConfig = new AutoRepairConfig(true);
         for (AutoRepairConfig.RepairType repairType : AutoRepairConfig.RepairType.values())
         {
             defaultConfig.setAutoRepairEnabled(repairType, true);
-            defaultConfig.setMVRepairEnabled(repairType, false);
+            defaultConfig.setMaterializedViewRepairEnabled(repairType, false);
         }
 
         // reset the AutoRepairService config to default
@@ -216,7 +258,7 @@ public class AutoRepairParameterizedTest extends CQLTester
         config.repair_type_overrides = defaultConfig.repair_type_overrides;
         config.global_settings = defaultConfig.global_settings;
         config.history_clear_delete_hosts_buffer_interval = defaultConfig.history_clear_delete_hosts_buffer_interval;
-        config.setRepairSubRangeNum(repairType, 1);
+        config.repair_task_min_duration = new DurationSpec.LongSecondsBound("0s");
     }
 
     private void executeCQL()
@@ -224,7 +266,7 @@ public class AutoRepairParameterizedTest extends CQLTester
         QueryProcessor.executeInternal("INSERT INTO ks.tbl (k, s) VALUES ('k', 's')");
         QueryProcessor.executeInternal("SELECT s FROM ks.tbl WHERE k='k'");
         Keyspace.open(SchemaConstants.DISTRIBUTED_KEYSPACE_NAME)
-                .getColumnFamilyStore(AutoRepairKeyspace.AUTO_REPAIR_PRIORITY)
+                .getColumnFamilyStore(SystemDistributedKeyspace.AUTO_REPAIR_PRIORITY)
                 .forceBlockingFlush(ColumnFamilyStore.FlushReason.UNIT_TESTS);
     }
 
@@ -243,14 +285,14 @@ public class AutoRepairParameterizedTest extends CQLTester
 
         AutoRepair.instance.repairAsync(repairType);
 
-        verify(mockExecutor, Mockito.times(1)).submit(any(Runnable.class));
+        verify(mockExecutor, times(1)).submit(any(Runnable.class));
     }
 
     @Test
     public void testRepairTurn()
     {
         UUID myId = Gossiper.instance.getHostId(FBUtilities.getBroadcastAddressAndPort());
-        Assert.assertTrue("Expected my turn for the repair", AutoRepairUtils.myTurnToRunRepair(repairType, myId) != NOT_MY_TURN);
+        Assert.assertNotEquals("Expected my turn for the repair", NOT_MY_TURN, AutoRepairUtils.myTurnToRunRepair(repairType, myId));
     }
 
     @Test
@@ -264,6 +306,8 @@ public class AutoRepairParameterizedTest extends CQLTester
         //if repair was done then lastRepairTime should be non-zero
         Assert.assertTrue(String.format("Expected lastRepairTime > 0, actual value lastRepairTime %d",
                                         lastRepairTime), lastRepairTime > 0);
+        // repair start lag sec should be reset  on a successful repair
+        assertEquals(0, AutoRepairMetricsManager.getMetrics(repairType).repairStartLagSec.getValue().intValue());
     }
 
     @Test
@@ -275,8 +319,8 @@ public class AutoRepairParameterizedTest extends CQLTester
         AutoRepair.instance.repair(repairType);
         long lastRepairTime1 = AutoRepair.instance.repairStates.get(repairType).getLastRepairTime();
         int consideredTables = AutoRepair.instance.repairStates.get(repairType).getTotalTablesConsideredForRepair();
-        Assert.assertNotSame(String.format("Expected total repaired tables > 0, actual value %s ", consideredTables),
-                             consideredTables, 0);
+        Assert.assertNotEquals(String.format("Expected total repaired tables > 0, actual value %s ", consideredTables),
+                               0, consideredTables);
 
         //if repair was done in last 24 hours then it should not trigger another repair
         config.setRepairMinInterval(repairType, "24h");
@@ -300,12 +344,12 @@ public class AutoRepairParameterizedTest extends CQLTester
         Assert.assertTrue(String.format("Expected lastRepairTime1 > 0, actual value lastRepairTime1 %d",
                                         lastRepairTime1), lastRepairTime1 > 0);
         UUID myId = Gossiper.instance.getHostId(FBUtilities.getBroadcastAddressAndPort());
-        Assert.assertTrue("Expected my turn for the repair",
-                          AutoRepairUtils.myTurnToRunRepair(repairType, myId) != NOT_MY_TURN);
+        Assert.assertNotEquals("Expected my turn for the repair",
+                               NOT_MY_TURN, AutoRepairUtils.myTurnToRunRepair(repairType, myId));
         AutoRepair.instance.repair(repairType);
         long lastRepairTime2 = AutoRepair.instance.repairStates.get(repairType).getLastRepairTime();
         Assert.assertNotSame(String.format("Expected repair time to be same, actual value lastRepairTime1 %d, " +
-                                           "lastRepairTime2 ", lastRepairTime1, lastRepairTime2), lastRepairTime1, lastRepairTime2);
+                                           "lastRepairTime2 %d", lastRepairTime1, lastRepairTime2), lastRepairTime1, lastRepairTime2);
         assertEquals(prevCount, state.getTotalMVTablesConsideredForRepair());
         assertEquals(prevMetricsCount, AutoRepairMetricsManager.getMetrics(repairType).totalMVTablesConsideredForRepair.getValue());
     }
@@ -317,16 +361,15 @@ public class AutoRepairParameterizedTest extends CQLTester
         AutoRepairState state = AutoRepair.instance.repairStates.get(repairType);
         long prevCount = state.getTotalMVTablesConsideredForRepair();
         AutoRepairService.instance.getAutoRepairConfig().setRepairMinInterval(repairType, "0s");
-        Assert.assertSame(String.format("Priority host count is not same, actual value %d, expected value %d",
-                                        AutoRepairUtils.getPriorityHosts(repairType).size(), 0), AutoRepairUtils.getPriorityHosts(repairType).size(), 0);
+        Assert.assertEquals(String.format("Priority host count is not same, actual value %d, expected value %d",
+                                          AutoRepairUtils.getPriorityHosts(repairType).size(), 0), 0, AutoRepairUtils.getPriorityHosts(repairType).size());
         UUID myId = Gossiper.instance.getHostId(FBUtilities.getBroadcastAddressAndPort());
-        Assert.assertTrue("Expected my turn for the repair", AutoRepairUtils.myTurnToRunRepair(repairType, myId) !=
-                                                             NOT_MY_TURN);
+        Assert.assertNotEquals("Expected my turn for the repair", NOT_MY_TURN, AutoRepairUtils.myTurnToRunRepair(repairType, myId));
         AutoRepair.instance.repair(repairType);
         AutoRepairUtils.addPriorityHosts(repairType, Sets.newHashSet(FBUtilities.getBroadcastAddressAndPort()));
         AutoRepair.instance.repair(repairType);
-        Assert.assertSame(String.format("Priority host count is not same actual value %d, expected value %d",
-                                        AutoRepairUtils.getPriorityHosts(repairType).size(), 0), AutoRepairUtils.getPriorityHosts(repairType).size(), 0);
+        Assert.assertEquals(String.format("Priority host count is not same actual value %d, expected value %d",
+                                          AutoRepairUtils.getPriorityHosts(repairType).size(), 0), 0, AutoRepairUtils.getPriorityHosts(repairType).size());
         assertEquals(prevCount, state.getTotalMVTablesConsideredForRepair());
         assertEquals(prevMetricsCount, AutoRepairMetricsManager.getMetrics(repairType).totalMVTablesConsideredForRepair.getValue());
     }
@@ -368,15 +411,15 @@ public class AutoRepairParameterizedTest extends CQLTester
     public void testGetAllMVs()
     {
         AutoRepairConfig config = AutoRepairService.instance.getAutoRepairConfig();
-        config.setMVRepairEnabled(repairType, false);
-        assertFalse(config.getMVRepairEnabled(repairType));
+        config.setMaterializedViewRepairEnabled(repairType, false);
+        assertFalse(config.getMaterializedViewRepairEnabled(repairType));
         assertEquals(0, AutoRepairUtils.getAllMVs(repairType, keyspace, cfm).size());
 
-        config.setMVRepairEnabled(repairType, true);
+        config.setMaterializedViewRepairEnabled(repairType, true);
 
-        assertTrue(config.getMVRepairEnabled(repairType));
-        assertEquals(Arrays.asList(MV), AutoRepairUtils.getAllMVs(repairType, keyspace, cfm));
-        config.setMVRepairEnabled(repairType, false);
+        assertTrue(config.getMaterializedViewRepairEnabled(repairType));
+        assertEquals(Collections.singletonList(MV), AutoRepairUtils.getAllMVs(repairType, keyspace, cfm));
+        config.setMaterializedViewRepairEnabled(repairType, false);
     }
 
 
@@ -384,20 +427,20 @@ public class AutoRepairParameterizedTest extends CQLTester
     public void testMVRepair()
     {
         AutoRepairConfig config = AutoRepairService.instance.getAutoRepairConfig();
-        config.setMVRepairEnabled(repairType, true);
+        config.setMaterializedViewRepairEnabled(repairType, true);
         config.setRepairMinInterval(repairType, "0s");
         AutoRepair.instance.repairStates.get(repairType).setLastRepairTime(System.currentTimeMillis());
         AutoRepair.instance.repair(repairType);
         assertEquals(1, AutoRepair.instance.repairStates.get(repairType).getTotalMVTablesConsideredForRepair());
         assertEquals(1, AutoRepairMetricsManager.getMetrics(repairType).totalMVTablesConsideredForRepair.getValue().intValue());
 
-        config.setMVRepairEnabled(repairType, false);
+        config.setMaterializedViewRepairEnabled(repairType, false);
         AutoRepair.instance.repairStates.get(repairType).setLastRepairTime(System.currentTimeMillis());
         AutoRepair.instance.repair(repairType);
         assertEquals(0, AutoRepair.instance.repairStates.get(repairType).getTotalMVTablesConsideredForRepair());
         assertEquals(0, AutoRepairMetricsManager.getMetrics(repairType).totalMVTablesConsideredForRepair.getValue().intValue());
 
-        config.setMVRepairEnabled(repairType, true);
+        config.setMaterializedViewRepairEnabled(repairType, true);
         AutoRepair.instance.repairStates.get(repairType).setLastRepairTime(System.currentTimeMillis());
         AutoRepair.instance.repair(repairType);
         assertEquals(1, AutoRepair.instance.repairStates.get(repairType).getTotalMVTablesConsideredForRepair());
@@ -433,27 +476,34 @@ public class AutoRepairParameterizedTest extends CQLTester
         assert diffMVTable.size() == 10;
 
         int beforeCount = config.getRepairSSTableCountHigherThreshold(repairType);
-        config.setMVRepairEnabled(repairType, true);
+        config.setMaterializedViewRepairEnabled(repairType, true);
         config.setRepairSSTableCountHigherThreshold(repairType, 9);
         assertEquals(0, state.getSkippedTokenRangesCount());
         assertEquals(0, AutoRepairMetricsManager.getMetrics(repairType).skippedTokenRangesCount.getValue().intValue());
         state.setLastRepairTime(0);
         AutoRepair.instance.repair(repairType);
-        assertEquals(1, state.getTotalMVTablesConsideredForRepair());
-        assertEquals(1, AutoRepairMetricsManager.getMetrics(repairType).totalMVTablesConsideredForRepair.getValue().intValue());
-        // skipping one time for the base table and another time for MV table
-        assertEquals(2, state.getSkippedTokenRangesCount());
-        assertEquals(2, AutoRepairMetricsManager.getMetrics(repairType).skippedTokenRangesCount.getValue().intValue());
+        assertEquals(0, state.getTotalMVTablesConsideredForRepair());
+        assertEquals(0, AutoRepairMetricsManager.getMetrics(repairType).totalMVTablesConsideredForRepair.getValue().intValue());
+        // skipping both the tables - one table is due to its repair has been disabled, and another one due to high sstable count
+        assertEquals(0, state.getSkippedTokenRangesCount());
+        assertEquals(0, AutoRepairMetricsManager.getMetrics(repairType).skippedTokenRangesCount.getValue().intValue());
+
+        // TODO: flip to 2 once we make the repairs running by default
+        assertEquals(14, state.getSkippedTablesCount());
+        assertEquals(14, AutoRepairMetricsManager.getMetrics(repairType).skippedTablesCount.getValue().intValue());
 
         // set it to higher value, and this time, the tables should not be skipped
-        config.setRepairSSTableCountHigherThreshold(repairType, 11);
         config.setRepairSSTableCountHigherThreshold(repairType, beforeCount);
         state.setLastRepairTime(0);
+        state.setSkippedTablesCount(0);
+        state.setTotalMVTablesConsideredForRepair(0);
         AutoRepair.instance.repair(repairType);
         assertEquals(1, state.getTotalMVTablesConsideredForRepair());
-        assertEquals(0, state.getSkippedTokenRangesCount());
         assertEquals(1, AutoRepairMetricsManager.getMetrics(repairType).totalMVTablesConsideredForRepair.getValue().intValue());
+        assertEquals(0, state.getSkippedTokenRangesCount());
         assertEquals(0, AutoRepairMetricsManager.getMetrics(repairType).skippedTokenRangesCount.getValue().intValue());
+        assertEquals(13, state.getSkippedTablesCount());
+        assertEquals(13, AutoRepairMetricsManager.getMetrics(repairType).skippedTablesCount.getValue().intValue());
     }
 
     @Test
@@ -471,8 +521,9 @@ public class AutoRepairParameterizedTest extends CQLTester
     public void testMetrics()
     {
         AutoRepairConfig config = AutoRepairService.instance.getAutoRepairConfig();
-        config.setMVRepairEnabled(repairType, true);
+        config.setMaterializedViewRepairEnabled(repairType, true);
         config.setRepairMinInterval(repairType, "0s");
+        config.setRepairRetryBackoff(repairType, "0s");
         config.setAutoRepairTableMaxRepairTime(repairType, "0s");
         AutoRepair.timeFunc = () -> {
             timeFuncCalls++;
@@ -493,6 +544,10 @@ public class AutoRepairParameterizedTest extends CQLTester
         AutoRepair.instance.repairStates.put(repairType, autoRepairState);
         when(autoRepairState.getRepairRunnable(any(), any(), any(), anyBoolean()))
         .thenReturn(repairRunnable);
+        doAnswer(invocation -> {
+            invocation.getArgument(0, ProgressListener.class).progress("test", new ProgressEvent(ProgressEventType.COMPLETE, 0, 0));
+            return null;
+        }).when(repairRunnable).addProgressListener(any());
         when(autoRepairState.getFailedTokenRangesCount()).thenReturn(10);
         when(autoRepairState.getSucceededTokenRangesCount()).thenReturn(11);
         when(autoRepairState.getLongestUnrepairedSec()).thenReturn(10);
@@ -505,29 +560,29 @@ public class AutoRepairParameterizedTest extends CQLTester
     }
 
     @Test
-    public void testRepairWaitsForRepairToFinishBeforeSchedullingNewSession() throws Exception
+    public void testRepairWaitsForRepairToFinishBeforeSchedullingNewSession()
     {
         AutoRepairConfig config = AutoRepairService.instance.getAutoRepairConfig();
-        config.setMVRepairEnabled(repairType, false);
-        config.setRepairRetryBackoff("0s");
-        when(autoRepairState.getRepairRunnable(any(), any(), any(), anyBoolean()))
-        .thenReturn(repairRunnable);
         AutoRepair.instance.repairStates.put(repairType, autoRepairState);
         when(autoRepairState.getLastRepairTime()).thenReturn((long) 0);
-        AtomicInteger resetWaitConditionCalls = new AtomicInteger();
-        AtomicInteger waitForRepairCompletedCalls = new AtomicInteger();
+        AtomicInteger getRepairRunnableCalls = new AtomicInteger();
+        AtomicReference<AutoRepair.RepairProgressListener> prevListener = new AtomicReference<>();
         doAnswer(invocation -> {
-            resetWaitConditionCalls.getAndIncrement();
-            assertEquals("waitForRepairToComplete was called before resetWaitCondition",
-                         resetWaitConditionCalls.get(), waitForRepairCompletedCalls.get() + 1);
-            return null;
-        }).when(autoRepairState).resetWaitCondition();
+            if (getRepairRunnableCalls.getAndIncrement() > 0)
+            {
+                // progress listener from previous repair should be signalled before starting new repair
+                assertTrue(prevListener.get().condition.isSignalled());
+            }
+            getRepairRunnableCalls.incrementAndGet();
+            return repairRunnable;
+        }).when(autoRepairState).getRepairRunnable(any(), any(), any(), anyBoolean());
         doAnswer(invocation -> {
-            waitForRepairCompletedCalls.getAndIncrement();
-            assertEquals("resetWaitCondition was not called before waitForRepairToComplete",
-                         resetWaitConditionCalls.get(), waitForRepairCompletedCalls.get());
+            // sending out a COMPLETE event with a 10ms delay
+            Executors.newScheduledThreadPool(1).schedule(() -> {
+                invocation.getArgument(0, AutoRepair.RepairProgressListener.class).progress("test", new ProgressEvent(ProgressEventType.COMPLETE, 0, 0));
+            }, 10, TimeUnit.MILLISECONDS);
             return null;
-        }).when(autoRepairState).waitForRepairToComplete(config.getRepairSessionTimeout(repairType));
+        }).when(repairRunnable).addProgressListener(any());
 
         AutoRepair.instance.repair(repairType);
         AutoRepair.instance.repair(repairType);
@@ -537,10 +592,10 @@ public class AutoRepairParameterizedTest extends CQLTester
     @Test
     public void testDisabledAutoRepairForATableThroughTableLevelConfiguration()
     {
-        Assert.assertTrue(cfm.params.automatedRepair.get(AutoRepairConfig.RepairType.full).repairEnabled());
-        Assert.assertTrue(cfm.params.automatedRepair.get(AutoRepairConfig.RepairType.incremental).repairEnabled());
-        Assert.assertFalse(cfmDisabledAutoRepair.params.automatedRepair.get(AutoRepairConfig.RepairType.full).repairEnabled());
-        Assert.assertFalse(cfmDisabledAutoRepair.params.automatedRepair.get(AutoRepairConfig.RepairType.incremental).repairEnabled());
+        Assert.assertTrue(cfm.params.autoRepair.repairEnabled(AutoRepairConfig.RepairType.FULL));
+        Assert.assertTrue(cfm.params.autoRepair.repairEnabled(AutoRepairConfig.RepairType.INCREMENTAL));
+        Assert.assertFalse(cfmDisabledAutoRepair.params.autoRepair.repairEnabled(AutoRepairConfig.RepairType.FULL));
+        Assert.assertFalse(cfmDisabledAutoRepair.params.autoRepair.repairEnabled(AutoRepairConfig.RepairType.INCREMENTAL));
 
         AutoRepairConfig config = AutoRepairService.instance.getAutoRepairConfig();
         config.setRepairMinInterval(repairType, "0s");
@@ -548,54 +603,28 @@ public class AutoRepairParameterizedTest extends CQLTester
         AutoRepair.instance.repair(repairType);
         int consideredTables = AutoRepair.instance.repairStates.get(repairType).getTotalTablesConsideredForRepair();
         Assert.assertNotSame(String.format("Expected total repaired tables > 0, actual value %s ", consideredTables),
-                             consideredTables, 0);
+                             0, consideredTables);
         int disabledTablesRepairCountAfter = AutoRepair.instance.repairStates.get(repairType).getTotalDisabledTablesRepairCount();
         Assert.assertTrue(String.format("A table %s should be skipped from auto repair, expected value: %d, actual value %d ", TABLE_DISABLED_AUTO_REPAIR, disabledTablesRepairCountBefore + 1, disabledTablesRepairCountAfter),
                             disabledTablesRepairCountBefore < disabledTablesRepairCountAfter);
     }
 
     @Test
-    public void testTokenRangesNoSplit()
-    {
-        Collection<Range<Token>> tokens = StorageService.instance.getPrimaryRanges(KEYSPACE);
-        assertEquals(1, tokens.size());
-        List<Range<Token>> expectedToken = new ArrayList<>();
-        expectedToken.addAll(tokens);
-
-        List<Pair<Token, Token>> ranges = new DefaultAutoRepairTokenSplitter().getRange(repairType, true, KEYSPACE, TABLE);
-        assertEquals(1, ranges.size());
-        assertEquals(expectedToken.get(0).left, ranges.get(0).left);
-        assertEquals(expectedToken.get(0).right, ranges.get(0).right);
-    }
-
-    @Test
-    public void testTokenRangesSplit()
-    {
-        Collection<Range<Token>> tokens = StorageService.instance.getPrimaryRanges(KEYSPACE);
-        assertEquals(1, tokens.size());
-        List<Range<Token>> expectedToken = new ArrayList<>();
-        expectedToken.addAll(tokens);
-
-        AutoRepairConfig config = AutoRepairService.instance.getAutoRepairConfig();
-        config.setRepairSubRangeNum(repairType, 4);
-        List<Pair<Token, Token>> ranges = new DefaultAutoRepairTokenSplitter().getRange(repairType, true, KEYSPACE, TABLE);
-        assertEquals(4, ranges.size());
-    }
-
-    @Test
     public void testTableAttribute()
     {
-        assertTrue(TableAttributes.validKeywords().contains("automated_repair_full"));
-        assertTrue(TableAttributes.validKeywords().contains("automated_repair_incremental"));
+        assertTrue(TableAttributes.validKeywords().contains("auto_repair"));
     }
 
     @Test
     public void testDefaultAutomatedRepair()
     {
-        Assert.assertTrue(cfm.params.automatedRepair.get(AutoRepairConfig.RepairType.full).repairEnabled());
-        Assert.assertTrue(cfm.params.automatedRepair.get(AutoRepairConfig.RepairType.incremental).repairEnabled());
-        Assert.assertFalse(cfmDisabledAutoRepair.params.automatedRepair.get(AutoRepairConfig.RepairType.full).repairEnabled());
-        Assert.assertFalse(cfmDisabledAutoRepair.params.automatedRepair.get(AutoRepairConfig.RepairType.incremental).repairEnabled());
+        for (AutoRepairConfig.RepairType repairType : AutoRepairConfig.RepairType.values())
+        {
+            Assert.assertTrue(String.format("expected repair type %s to be enabled on table %s", repairType, cfm.name),
+                              cfm.params.autoRepair.repairEnabled(repairType));
+            Assert.assertFalse(String.format("expected repair type %s to be disabled on table %s", repairType, cfmDisabledAutoRepair.name),
+                               cfmDisabledAutoRepair.params.autoRepair.repairEnabled(repairType));
+        }
     }
 
     @Test
@@ -603,32 +632,35 @@ public class AutoRepairParameterizedTest extends CQLTester
     {
         AtomicInteger shuffleKeyspacesCall = new AtomicInteger();
         AtomicInteger shuffleTablesCall = new AtomicInteger();
-        AutoRepair.shuffleFunc = (List<?> list) -> {
-            assertTrue(list.get(0) instanceof Keyspace || list.get(0) instanceof String);
-            if (list.get(0) instanceof Keyspace)
+        AtomicInteger keyspaceCount = new AtomicInteger();
+        AutoRepair.shuffleFunc = (List<String> list) -> {
+            // check whether was invoked for keyspaces or tables
+            if (list.contains(KEYSPACE))
             {
                 shuffleKeyspacesCall.getAndIncrement();
-                assertFalse(list.isEmpty());
+                keyspaceCount.set(list.size());
             }
-            else if (list.get(0) instanceof String)
-            {
+            else
+                // presume list not containing a keyspace is for tables.
                 shuffleTablesCall.getAndIncrement();
-            }
         };
 
         AutoRepairConfig config = AutoRepairService.instance.getAutoRepairConfig();
         config.setRepairMinInterval(repairType, "0s");
         AutoRepair.instance.repair(repairType);
 
+        // Expect a single invocation for keyspaces
         assertEquals(1, shuffleKeyspacesCall.get());
-        assertEquals(4, shuffleTablesCall.get());
+        // Expect an invocation for tables for each keyspace
+        assertNotEquals(0, keyspaceCount.get());
+        assertEquals(keyspaceCount.get(), shuffleTablesCall.get());
     }
 
     @Test
     public void testRepairTakesLastRepairTimeFromDB()
     {
         AutoRepairConfig config = AutoRepairService.instance.getAutoRepairConfig();
-        config.setMVRepairEnabled(repairType, true);
+        config.setMaterializedViewRepairEnabled(repairType, true);
         long lastRepairTime = System.currentTimeMillis() - 1000;
         AutoRepairUtils.insertNewRepairHistory(repairType, 0, lastRepairTime);
         AutoRepair.instance.repairStates.get(repairType).setLastRepairTime(0);
@@ -646,28 +678,28 @@ public class AutoRepairParameterizedTest extends CQLTester
     public void testRepairMaxRetries()
     {
         when(autoRepairState.getRepairRunnable(any(), any(), any(), anyBoolean())).thenReturn(repairRunnable);
-        when(autoRepairState.isSuccess()).thenReturn(false);
+        doAnswer(invocation -> {
+            invocation.getArgument(0, ProgressListener.class).progress("test", new ProgressEvent(ProgressEventType.ERROR, 0, 0));
+            return null;
+        }).when(repairRunnable).addProgressListener(any());
         AutoRepairConfig config = AutoRepairService.instance.getAutoRepairConfig();
         AtomicInteger sleepCalls = new AtomicInteger();
         AutoRepair.sleepFunc = (Long duration, TimeUnit unit) -> {
             sleepCalls.getAndIncrement();
             assertEquals(TimeUnit.SECONDS, unit);
-            assertEquals(config.getRepairRetryBackoff().toSeconds(), (long) duration);
+            assertEquals(config.getRepairRetryBackoff(repairType).toSeconds(), (long) duration);
         };
         config.setRepairMinInterval(repairType, "0s");
         AutoRepair.instance.repairStates.put(repairType, autoRepairState);
 
         AutoRepair.instance.repair(repairType);
 
-        //system_auth.role_permissions,system_auth.network_permissions,system_auth.role_members,system_auth.roles,
-        // system_auth.resource_role_permissons_index,system_traces.sessions,system_traces.events,ks.tbl,
-        // system_distributed.auto_repair_priority,system_distributed.repair_history,system_distributed.auto_repair_history,
-        // system_distributed.view_build_status,system_distributed.parent_repair_history,system_distributed.partition_denylist
-        int exptedTablesGoingThroughRepair = 15;
-        assertEquals(config.getRepairMaxRetries()*exptedTablesGoingThroughRepair, sleepCalls.get());
-        verify(autoRepairState, Mockito.times(1)).setSucceededTokenRangesCount(0);
-        verify(autoRepairState, Mockito.times(1)).setSkippedTokenRangesCount(0);
-        verify(autoRepairState, Mockito.times(1)).setFailedTokenRangesCount(exptedTablesGoingThroughRepair);
+        // Expect configured retries for each table expected to be repaired
+        //assertEquals(config.getRepairMaxRetries()*expectedRepairAssignments, sleepCalls.get());
+        // TODO: flip once we make the repairs running by default
+        verify(autoRepairState, times(1)).setSucceededTokenRangesCount(0);
+        verify(autoRepairState, times(1)).setSkippedTokenRangesCount(0);
+        verify(autoRepairState, times(0)).setFailedTokenRangesCount(expectedRepairAssignments);
     }
 
     @Test
@@ -680,31 +712,65 @@ public class AutoRepairParameterizedTest extends CQLTester
         AutoRepair.sleepFunc = (Long duration, TimeUnit unit) -> {
             sleepCalls.getAndIncrement();
             assertEquals(TimeUnit.SECONDS, unit);
-            assertEquals(config.getRepairRetryBackoff().toSeconds(), (long) duration);
+            assertEquals(config.getRepairRetryBackoff(repairType).toSeconds(), (long) duration);
         };
-        when(autoRepairState.isSuccess()).then((invocationOnMock) -> {
-            if (sleepCalls.get() == 0) {
-                return false;
+        doAnswer(invocation -> {
+            if (sleepCalls.get() == 0)
+            {
+                invocation.getArgument(0, ProgressListener.class).progress("test", new ProgressEvent(ProgressEventType.ERROR, 0, 0));
             }
-            return true;
-        });
+            else
+            {
+                invocation.getArgument(0, ProgressListener.class).progress("test", new ProgressEvent(ProgressEventType.COMPLETE, 0, 0));
+            }
+
+            return null;
+        }).when(repairRunnable).addProgressListener(any());
         config.setRepairMinInterval(repairType, "0s");
+        config.setRepairMaxRetries(repairType, 1);
         AutoRepair.instance.repairStates.put(repairType, autoRepairState);
         AutoRepair.instance.repair(repairType);
 
         assertEquals(1, sleepCalls.get());
-        verify(autoRepairState, Mockito.times(1)).setSucceededTokenRangesCount(15);
-        verify(autoRepairState, Mockito.times(1)).setSkippedTokenRangesCount(0);
-        verify(autoRepairState, Mockito.times(1)).setFailedTokenRangesCount(0);
+        // TODO: flip to 1 once we make the repairs running by default
+        verify(autoRepairState, times(0)).setSucceededTokenRangesCount(expectedRepairAssignments);
+        //verify(autoRepairState, times(1)).setSucceededTokenRangesCount(expectedRepairAssignments);
+        verify(autoRepairState, times(1)).setSkippedTokenRangesCount(0);
+        verify(autoRepairState, times(1)).setFailedTokenRangesCount(0);
+    }
+
+    @Test
+    public void testRepairDoesNotThrowsForIRWithMVReplayButMVRepairDisabled()
+    {
+        AutoRepair.instance.setup();
+        DatabaseDescriptor.setMaterializedViewsOnRepairEnabled(true);
+        AutoRepairService.instance.getAutoRepairConfig().setMaterializedViewRepairEnabled(repairType, false);
+
+        if (repairType == AutoRepairConfig.RepairType.INCREMENTAL)
+        {
+            try
+            {
+                AutoRepair.instance.repair(repairType);
+            }
+            catch (ConfigurationException ignored)
+            {
+                fail("ConfigurationException not expected");
+            }
+        }
+        else
+        {
+            AutoRepair.instance.repair(repairType);
+        }
     }
 
     @Test
     public void testRepairThrowsForIRWithMVReplay()
     {
         AutoRepair.instance.setup();
-        System.setProperty("cassandra.streaming.requires_view_build_during_repair", "true");
+        DatabaseDescriptor.setMaterializedViewsOnRepairEnabled(true);
+        AutoRepairService.instance.getAutoRepairConfig().setMaterializedViewRepairEnabled(repairType, true);
 
-        if (repairType == AutoRepairConfig.RepairType.incremental)
+        if (repairType == AutoRepairConfig.RepairType.INCREMENTAL)
         {
             try
             {
@@ -721,14 +787,14 @@ public class AutoRepairParameterizedTest extends CQLTester
         }
     }
 
-
     @Test
     public void testRepairThrowsForIRWithCDCReplay()
     {
         AutoRepair.instance.setup();
-        System.setProperty("cassandra.streaming.requires_cdc_replay", "true");
+        DatabaseDescriptor.setCDCEnabled(true);
+        DatabaseDescriptor.setCDCOnRepairEnabled(true);
 
-        if (repairType == AutoRepairConfig.RepairType.incremental)
+        if (repairType == AutoRepairConfig.RepairType.INCREMENTAL)
         {
             try
             {
@@ -743,5 +809,151 @@ public class AutoRepairParameterizedTest extends CQLTester
         {
             AutoRepair.instance.repair(repairType);
         }
+    }
+
+    @Test
+    public void testSoakAfterImmediateRepair()
+    {
+        when(autoRepairState.getRepairRunnable(any(), any(), any(), anyBoolean())).thenReturn(repairRunnable);
+        doAnswer(invocation -> {
+            invocation.getArgument(0, ProgressListener.class).progress("test", new ProgressEvent(ProgressEventType.COMPLETE, 0, 0));
+            return null;
+        }).when(repairRunnable).addProgressListener(any());
+        AutoRepairConfig config = AutoRepairService.instance.getAutoRepairConfig();
+        config.repair_task_min_duration = new DurationSpec.LongSecondsBound("10s");
+        AtomicInteger sleepCalls = new AtomicInteger();
+        AutoRepair.sleepFunc = (Long duration, TimeUnit unit) -> {
+            sleepCalls.getAndIncrement();
+            assertEquals(TimeUnit.MILLISECONDS, unit);
+            assertTrue(config.getRepairTaskMinDuration().toMilliseconds() >= duration);
+            config.repair_task_min_duration = new DurationSpec.LongSecondsBound("0s");
+        };
+        config.setRepairMinInterval(repairType, "0s");
+        AutoRepair.instance.repairStates.put(repairType, autoRepairState);
+
+        AutoRepair.instance.repair(repairType);
+
+        assertEquals(1, sleepCalls.get());
+        // TODO: flip to 1 once we make the repairs running by default
+        verify(autoRepairState, times(0)).setSucceededTokenRangesCount(expectedRepairAssignments);
+        verify(autoRepairState, times(1)).setSkippedTokenRangesCount(0);
+        verify(autoRepairState, times(1)).setFailedTokenRangesCount(0);
+    }
+
+    @Test
+    public void testNoSoakAfterRepair()
+    {
+        when(autoRepairState.getRepairRunnable(any(), any(), any(), anyBoolean())).thenReturn(repairRunnable);
+        doAnswer(invocation -> {
+            invocation.getArgument(0, ProgressListener.class).progress("test", new ProgressEvent(ProgressEventType.COMPLETE, 0, 0));
+            return null;
+        }).when(repairRunnable).addProgressListener(any());
+        AutoRepairConfig config = AutoRepairService.instance.getAutoRepairConfig();
+        config.repair_task_min_duration = new DurationSpec.LongSecondsBound("0s");
+        AutoRepair.sleepFunc = (Long duration, TimeUnit unit) -> {
+            fail("Should not sleep after repair");
+        };
+        config.setRepairMinInterval(repairType, "0s");
+        AutoRepair.instance.repairStates.put(repairType, autoRepairState);
+
+        AutoRepair.instance.repair(repairType);
+
+        // TODO: flip to 1 once we make the repairs running by default
+        verify(autoRepairState, times(0)).setSucceededTokenRangesCount(expectedRepairAssignments);
+        verify(autoRepairState, times(1)).setSkippedTokenRangesCount(0);
+        verify(autoRepairState, times(1)).setFailedTokenRangesCount(0);
+    }
+
+    @Test
+    public void testSchedulerIgnoresErrorsFromUnrelatedRepairRunables()
+    {
+        RepairOption options = new RepairOption(RepairParallelism.PARALLEL, true, repairType == AutoRepairConfig.RepairType.INCREMENTAL, false,
+                                                AutoRepairService.instance.getAutoRepairConfig().getRepairThreads(repairType), Collections.emptySet(),
+                                                false, false, false, PreviewKind.NONE, false, true, false, false);
+        AutoRepairState repairState = AutoRepair.instance.repairStates.get(repairType);
+        AutoRepairState spyState = spy(repairState);
+        AtomicReference<AutoRepair.RepairProgressListener> failingListener = new AtomicReference<>();
+        AtomicInteger repairRunableCalls = new AtomicInteger();
+        doAnswer((InvocationOnMock inv ) -> {
+            RepairRunnable runnable = spy(repairState.getRepairRunnable(inv.getArgument(0), inv.getArgument(1), inv.getArgument(2),
+                                                                        inv.getArgument(3)));
+            if (repairRunableCalls.getAndIncrement() == 0)
+            {
+                // this will be used for first repair job
+                doAnswer(invocation -> {
+                    // repair runnable for the first repair job will immediately fail
+                    failingListener.set(invocation.getArgument(0, AutoRepair.RepairProgressListener.class));
+                    invocation.getArgument(0, ProgressListener.class).progress("test", new ProgressEvent(ProgressEventType.ERROR, 0, 0));
+                    return null;
+                }).when(runnable).addProgressListener(any());
+            }
+            else
+            {
+                // this will be used for subsequent repair jobs
+                doAnswer(invocation -> {
+                    if (repairRunableCalls.get() > 0)
+                    {
+                        // repair runnable for the subsequent repair jobs will immediately complete
+                        invocation.getArgument(0, ProgressListener.class).progress("test", new ProgressEvent(ProgressEventType.COMPLETE, 0, 0));
+
+                    }
+                    // repair runnable for the first repair job will continue firing ERROR events
+                    failingListener.get().progress("test", new ProgressEvent(ProgressEventType.ERROR, 0, 0));
+                    return null;
+                }).when(runnable).addProgressListener(any());
+            }
+            return runnable;
+        }).when(spyState).getRepairRunnable(any(), any(), any(), anyBoolean());
+        when(spyState.getLastRepairTime()).thenReturn((long) 0);
+        AutoRepairService.instance.getAutoRepairConfig().setRepairMaxRetries(repairType, 0);
+        AutoRepair.instance.repairStates.put(repairType, spyState);
+
+        AutoRepair.instance.repair(repairType);
+
+        assertEquals(1, (int) AutoRepairMetricsManager.getMetrics(repairType).failedTokenRangesCount.getValue());
+        // only the first repair job should have failed despite it continuously firing ERROR events
+        verify(spyState, times(1)).setFailedTokenRangesCount(1);
+    }
+
+    @Test
+    public void testProgressError()
+    {
+        AutoRepair.RepairProgressListener listener = new AutoRepair.RepairProgressListener(repairType);
+
+        listener.progress("test", new ProgressEvent(ProgressEventType.ERROR, 0, 0, "test"));
+
+        assertFalse(listener.success);
+        assertTrue(listener.condition.isSignalled());
+    }
+
+    @Test
+    public void testProgressProgress()
+    {
+        AutoRepair.RepairProgressListener listener = new AutoRepair.RepairProgressListener(repairType);
+
+        listener.progress("test", new ProgressEvent(ProgressEventType.PROGRESS, 0, 0, "test"));
+
+        assertFalse(listener.success);
+        assertFalse(listener.condition.isSignalled());
+    }
+
+    @Test
+    public void testProgresComplete()
+    {
+        AutoRepair.RepairProgressListener listener = new AutoRepair.RepairProgressListener(repairType);
+
+        listener.progress("test", new ProgressEvent(ProgressEventType.COMPLETE, 0, 0, "test"));
+
+        assertTrue(listener.success);
+        assertTrue(listener.condition.isSignalled());
+    }
+
+    @Test
+    public void testAwait() throws Exception
+    {
+        AutoRepair.RepairProgressListener listener = new AutoRepair.RepairProgressListener(repairType);
+        listener.progress("test", new ProgressEvent(ProgressEventType.COMPLETE, 0, 0, "test"));
+
+        listener.await(new DurationSpec.IntSecondsBound("12h"));
     }
 }

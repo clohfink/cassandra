@@ -21,8 +21,6 @@ package org.apache.cassandra.repair.autorepair;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.UUID;
-import java.util.concurrent.Callable;
-import java.util.concurrent.TimeUnit;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
@@ -36,19 +34,18 @@ import org.apache.cassandra.cql3.CQLTester;
 import org.apache.cassandra.repair.autorepair.AutoRepairConfig.RepairType;
 import org.apache.cassandra.repair.autorepair.AutoRepairUtils.AutoRepairHistory;
 import org.apache.cassandra.service.AutoRepairService;
-import org.apache.cassandra.utils.concurrent.Condition;
 import org.apache.cassandra.utils.progress.ProgressEvent;
-import org.apache.cassandra.utils.progress.ProgressEventType;
 import org.mockito.Mock;
 
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
-import static org.mockito.Mockito.when;
 import static org.mockito.MockitoAnnotations.initMocks;
 
+/**
+ * Unit tests for {@link org.apache.cassandra.repair.autorepair.AutoRepairState}
+ */
 @RunWith(Parameterized.class)
 public class AutoRepairStateTest extends CQLTester
 {
@@ -67,14 +64,16 @@ public class AutoRepairStateTest extends CQLTester
     }
 
     @Before
-    public void setUp() {
+    public void setUp()
+    {
         AutoRepair.SLEEP_IF_REPAIR_FINISHES_QUICKLY = new DurationSpec.IntSecondsBound("0s");
         initMocks(this);
         createTable(String.format("CREATE TABLE IF NOT EXISTS %s.%s (pk int PRIMARY KEY, v int)", KEYSPACE, testTable));
     }
 
     @Test
-    public void testGetRepairRunnable() {
+    public void testGetRepairRunnable()
+    {
         AutoRepairState state = RepairType.getAutoRepairState(repairType);
         AutoRepairService.setup();
 
@@ -84,61 +83,8 @@ public class AutoRepairStateTest extends CQLTester
     }
 
     @Test
-    public void testProgressError() throws InterruptedException
+    public void testGetLastRepairTime()
     {
-        AutoRepairState state = RepairType.getAutoRepairState(repairType);
-        when(progressEvent.getType()).thenReturn(ProgressEventType.ERROR);
-
-        state.progress("test", progressEvent);
-
-        assertFalse(state.success);
-        assertTrue(state.condition.await(0, TimeUnit.MILLISECONDS));
-    }
-
-    @Test
-    public void testProgress_progress() throws InterruptedException
-    {
-        AutoRepairState state = RepairType.getAutoRepairState(repairType);
-        when(progressEvent.getType()).thenReturn(ProgressEventType.PROGRESS);
-
-        state.progress("test", progressEvent);
-
-        assertTrue(state.success);
-        assertFalse(state.condition.await(0, TimeUnit.MILLISECONDS));
-    }
-
-
-    @Test
-    public void testProgress_complete() throws InterruptedException
-    {
-        AutoRepairState state = RepairType.getAutoRepairState(repairType);
-        when(progressEvent.getType()).thenReturn(ProgressEventType.COMPLETE);
-
-        state.progress("test", progressEvent);
-
-        assertTrue(state.success);
-        assertTrue(state.condition.await(1, TimeUnit.MILLISECONDS));
-    }
-
-    @Test
-    public void testWaitForRepairToComplete() throws Exception
-    {
-        AutoRepairState state = RepairType.getAutoRepairState(repairType);
-        state.condition.signalAll();
-        Condition finishedCondition = Condition.newOneTimeCondition();
-        Callable<Void> waitForRepairToComplete = () -> {
-            state.waitForRepairToComplete(new DurationSpec.IntSecondsBound("12h"));
-            finishedCondition.signalAll();
-            return null;
-        };
-
-        waitForRepairToComplete.call();
-
-        assertTrue(finishedCondition.await(1, TimeUnit.MILLISECONDS));
-    }
-
-    @Test
-    public void testGetLastRepairTime() {
         AutoRepairState state = RepairType.getAutoRepairState(repairType);
         state.lastRepairTimeInMs = 1;
 
@@ -146,7 +92,8 @@ public class AutoRepairStateTest extends CQLTester
     }
 
     @Test
-    public void testSetTotalTablesConsideredForRepair() {
+    public void testSetTotalTablesConsideredForRepair()
+    {
         AutoRepairState state = RepairType.getAutoRepairState(repairType);
 
         state.setTotalTablesConsideredForRepair(1);
@@ -155,7 +102,8 @@ public class AutoRepairStateTest extends CQLTester
     }
 
     @Test
-    public void testGetTotalTablesConsideredForRepair() {
+    public void testGetTotalTablesConsideredForRepair()
+    {
         AutoRepairState state = RepairType.getAutoRepairState(repairType);
         state.totalTablesConsideredForRepair = 1;
 
@@ -163,7 +111,8 @@ public class AutoRepairStateTest extends CQLTester
     }
 
     @Test
-    public void testSetLastRepairTimeInMs() {
+    public void testSetLastRepairTimeInMs()
+    {
         AutoRepairState state = RepairType.getAutoRepairState(repairType);
 
         state.setLastRepairTime(1);
@@ -172,7 +121,8 @@ public class AutoRepairStateTest extends CQLTester
     }
 
     @Test
-    public void testGetClusterRepairTimeInSec() {
+    public void testGetClusterRepairTimeInSec()
+    {
         AutoRepairState state = RepairType.getAutoRepairState(repairType);
         state.clusterRepairTimeInSec = 1;
 
@@ -180,7 +130,8 @@ public class AutoRepairStateTest extends CQLTester
     }
 
     @Test
-    public void testGetNodeRepairTimeInSec() {
+    public void testGetNodeRepairTimeInSec()
+    {
         AutoRepairState state = RepairType.getAutoRepairState(repairType);
         state.nodeRepairTimeInSec = 1;
 
@@ -188,7 +139,8 @@ public class AutoRepairStateTest extends CQLTester
     }
 
     @Test
-    public void testSetRepairInProgress() {
+    public void testSetRepairInProgress()
+    {
         AutoRepairState state = RepairType.getAutoRepairState(repairType);
 
         state.setRepairInProgress(true);
@@ -197,7 +149,8 @@ public class AutoRepairStateTest extends CQLTester
     }
 
     @Test
-    public void testIsRepairInProgress() {
+    public void testIsRepairInProgress()
+    {
         AutoRepairState state = RepairType.getAutoRepairState(repairType);
         state.repairInProgress = true;
 
@@ -205,7 +158,8 @@ public class AutoRepairStateTest extends CQLTester
     }
 
     @Test
-    public void testSetSkippedTokenRangesCount() {
+    public void testSetSkippedTokenRangesCount()
+    {
         AutoRepairState state = RepairType.getAutoRepairState(repairType);
 
         state.setSkippedTokenRangesCount(1);
@@ -214,7 +168,8 @@ public class AutoRepairStateTest extends CQLTester
     }
 
     @Test
-    public void testGetSkippedTokenRangesCount() {
+    public void testGetSkippedTokenRangesCount()
+    {
         AutoRepairState state = RepairType.getAutoRepairState(repairType);
         state.skippedTokenRangesCount = 1;
 
@@ -222,7 +177,8 @@ public class AutoRepairStateTest extends CQLTester
     }
 
     @Test
-    public void testGetLongestUnrepairedSecNull() {
+    public void testGetLongestUnrepairedSecNull()
+    {
         AutoRepairState state = RepairType.getAutoRepairState(repairType);
         state.longestUnrepairedNode = null;
 
@@ -235,7 +191,8 @@ public class AutoRepairStateTest extends CQLTester
     }
 
     @Test
-    public void testGetLongestUnrepairedSec() {
+    public void testGetLongestUnrepairedSec()
+    {
         AutoRepairState state = RepairType.getAutoRepairState(repairType);
         state.longestUnrepairedNode = new AutoRepairHistory(UUID.randomUUID(), "", 0, 1000,
                                                             null, 0, false);
@@ -250,7 +207,8 @@ public class AutoRepairStateTest extends CQLTester
     }
 
     @Test
-    public void testSetTotalMVTablesConsideredForRepair() {
+    public void testSetTotalMVTablesConsideredForRepair()
+    {
         AutoRepairState state = RepairType.getAutoRepairState(repairType);
 
         state.setTotalMVTablesConsideredForRepair(1);
@@ -259,7 +217,8 @@ public class AutoRepairStateTest extends CQLTester
     }
 
     @Test
-    public void testGetTotalMVTablesConsideredForRepair() {
+    public void testGetTotalMVTablesConsideredForRepair()
+    {
         AutoRepairState state = RepairType.getAutoRepairState(repairType);
         state.totalMVTablesConsideredForRepair = 1;
 
@@ -267,7 +226,8 @@ public class AutoRepairStateTest extends CQLTester
     }
 
     @Test
-    public void testSetNodeRepairTimeInSec() {
+    public void testSetNodeRepairTimeInSec()
+    {
         AutoRepairState state = RepairType.getAutoRepairState(repairType);
 
         state.setNodeRepairTimeInSec(1);
@@ -276,7 +236,8 @@ public class AutoRepairStateTest extends CQLTester
     }
 
     @Test
-    public void testSetClusterRepairTimeInSec() {
+    public void testSetClusterRepairTimeInSec()
+    {
         AutoRepairState state = RepairType.getAutoRepairState(repairType);
 
         state.setClusterRepairTimeInSec(1);
@@ -285,15 +246,18 @@ public class AutoRepairStateTest extends CQLTester
     }
 
     @Test
-    public void testSetRepairKeyspaceCount() {
+    public void testSetRepairKeyspaceCount()
+    {
         AutoRepairState state = RepairType.getAutoRepairState(repairType);
 
         state.setRepairKeyspaceCount(1);
 
         assertEquals(1, state.repairKeyspaceCount);
     }
+
     @Test
-    public void testGetRepairKeyspaceCount() {
+    public void testGetRepairKeyspaceCount()
+    {
         AutoRepairState state = RepairType.getAutoRepairState(repairType);
         state.repairKeyspaceCount = 1;
 
@@ -301,7 +265,8 @@ public class AutoRepairStateTest extends CQLTester
     }
 
     @Test
-    public void testSetLongestUnrepairedNode() {
+    public void testSetLongestUnrepairedNode()
+    {
         AutoRepairState state = RepairType.getAutoRepairState(repairType);
         AutoRepairHistory history = new AutoRepairHistory(UUID.randomUUID(), "", 0, 0, null, 0, false);
 
@@ -311,7 +276,8 @@ public class AutoRepairStateTest extends CQLTester
     }
 
     @Test
-    public void testSetSucceededTokenRangesCount() {
+    public void testSetSucceededTokenRangesCount()
+    {
         AutoRepairState state = RepairType.getAutoRepairState(repairType);
 
         state.setSucceededTokenRangesCount(1);
@@ -320,7 +286,8 @@ public class AutoRepairStateTest extends CQLTester
     }
 
     @Test
-    public void testGetSucceededTokenRangesCount() {
+    public void testGetSucceededTokenRangesCount()
+    {
         AutoRepairState state = RepairType.getAutoRepairState(repairType);
         state.succeededTokenRangesCount = 1;
 
@@ -328,7 +295,8 @@ public class AutoRepairStateTest extends CQLTester
     }
 
     @Test
-    public void testSetFailedTokenRangesCount() {
+    public void testSetFailedTokenRangesCount()
+    {
         AutoRepairState state = RepairType.getAutoRepairState(repairType);
 
         state.setFailedTokenRangesCount(1);
@@ -337,47 +305,11 @@ public class AutoRepairStateTest extends CQLTester
     }
 
     @Test
-    public void testGetFailedTokenRangesCount() {
+    public void testGetFailedTokenRangesCount()
+    {
         AutoRepairState state = RepairType.getAutoRepairState(repairType);
         state.failedTokenRangesCount = 1;
 
         assertEquals(1, state.getFailedTokenRangesCount());
-    }
-
-    @Test
-    public void isSuccess() {
-        AutoRepairState state = RepairType.getAutoRepairState(repairType);
-        state.success = true;
-
-        assertTrue(state.isSuccess());
-
-        state.success = false;
-
-        assertFalse(state.isSuccess());
-    }
-
-    @Test
-    public void testWaitForRepairToCompleteDoesNotSetSuccessWhenProgressReceivesError() throws InterruptedException
-    {
-        AutoRepairState state = RepairType.getAutoRepairState(repairType);
-        when(progressEvent.getType()).thenReturn(ProgressEventType.ERROR);
-
-        state.progress("test", progressEvent);
-        assertFalse(state.success);
-
-        state.waitForRepairToComplete(new DurationSpec.IntSecondsBound("12h"));
-        assertFalse(state.success);
-    }
-
-    @Test
-    public void testResetWaitCondition()
-    {
-        AutoRepairState state = RepairType.getAutoRepairState(repairType);
-        state.condition.signalAll();
-        assertTrue(state.condition.isSignalled());
-
-        state.resetWaitCondition();
-
-        assertFalse(state.condition.isSignalled());
     }
 }

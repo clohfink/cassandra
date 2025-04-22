@@ -36,7 +36,6 @@ import javax.management.openmbean.TabularData;
 
 import org.apache.cassandra.db.ColumnFamilyStoreMBean;
 import org.apache.cassandra.exceptions.ConfigurationException;
-import org.apache.cassandra.exceptions.InvalidRequestException;
 import org.apache.cassandra.utils.BreaksJMX;
 
 public interface StorageServiceMBean extends NotificationEmitter
@@ -1107,13 +1106,14 @@ public interface StorageServiceMBean extends NotificationEmitter
 
     boolean getEnforceNativeDeadlineForHints();
     void setEnforceNativeDeadlineForHints(boolean value);
-    void deleteUnusedKeyspaces(boolean dryRun) throws IOException;
-
     /** Gets the names of all tables for the given keyspace */
     public List<String> getTablesForKeyspace(String keyspace);
 
     /** Mutates the repaired state of all SSTables for the given SSTables */
-    public List<String> mutateSSTableRepairedState(boolean repaired, boolean preview, String keyspace, List<String> tables) throws InvalidRequestException;
+    public List<String> mutateSSTableRepairedState(boolean repaired, boolean preview, String keyspace, List<String> tables);
+
+
+    void deleteUnusedKeyspaces(boolean dryRun) throws IOException;
 
     /**
      * Toggles to turn on the logging or rejection of operations for token ranges that the node does not own,

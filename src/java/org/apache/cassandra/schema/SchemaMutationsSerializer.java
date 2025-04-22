@@ -22,6 +22,9 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collection;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import org.apache.cassandra.db.Mutation;
 import org.apache.cassandra.db.TypeSizes;
 import org.apache.cassandra.io.IVersionedSerializer;
@@ -30,6 +33,7 @@ import org.apache.cassandra.io.util.DataOutputPlus;
 
 public class SchemaMutationsSerializer implements IVersionedSerializer<Collection<Mutation>>
 {
+    private static final Logger logger = LoggerFactory.getLogger(SchemaMutationsSerializer.class);
     public static final SchemaMutationsSerializer instance = new SchemaMutationsSerializer();
 
     public void serialize(Collection<Mutation> schema, DataOutputPlus out, int version) throws IOException
@@ -45,8 +49,16 @@ public class SchemaMutationsSerializer implements IVersionedSerializer<Collectio
         Collection<Mutation> schema = new ArrayList<>(count);
 
         for (int i = 0; i < count; i++)
-            schema.add(Mutation.serializer.deserialize(in, version));
-
+        {
+            try
+            {
+                schema.add(Mutation.serializer.deserialize(in, version));
+            }
+            catch (RuntimeException e)
+            {
+                logger.warn("Error reading mutation; some schema changes may not have been applied: {}", e.getMessage());
+            }
+        }
         return schema;
     }
 

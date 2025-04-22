@@ -19,76 +19,117 @@
 package org.apache.cassandra.repair.autorepair;
 
 import java.io.Serializable;
-import java.util.ArrayList;
+import java.util.Collections;
 import java.util.EnumMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.ConcurrentMap;
 import java.util.function.Function;
 
+import javax.annotation.Nonnull;
+
 import com.google.common.annotations.VisibleForTesting;
+import com.google.common.collect.Maps;
 
 import org.apache.cassandra.config.DurationSpec;
+import org.apache.cassandra.config.ParameterizedClass;
+import org.apache.cassandra.exceptions.ConfigurationException;
+import org.apache.cassandra.utils.FBUtilities;
 
+/**
+ * Defines configurations for AutoRepair.
+ */
 public class AutoRepairConfig implements Serializable
 {
-    // enable/disable auto repair globally, overrides all other settings. Cannot be modified dynamically.
-    // if it is set to false, then no repair will be scheduled, including full and incremental repairs by this framework.
-    // if it is set to true, then this repair scheduler will consult another config available for each RepairType, and based on that config, it will schedule repairs.
-    public final Boolean enabled;
-    // the interval between successive checks for repair scheduler to check if either the ongoing repair is completed or if
-    // none is going, then check if it's time to schedule or wait
+    // Enable/Disable the auto-repair scheduler.
+    // If set to false, the scheduler thread will not be started.
+    // If set to true, the repair scheduler thread will be created. The thread will
+    // check for secondary configuration available for each repair type (full, incremental,
+    // and preview_repaired), and based on that, it will schedule repairs.
+    public volatile Boolean enabled;
+    // Time interval between successive checks to see if ongoing repairs are complete or if it is time to schedule
+    // repairs.
     public final DurationSpec.IntSecondsBound repair_check_interval = new DurationSpec.IntSecondsBound("5m");
-    // when any nodes leave the ring then the repair schedule needs to adjust the order, etc.
-    // the repair scheduler keeps the deleted hosts information in its persisted metadata for the defined interval in this config.
-    // This information is useful so the scheduler is absolutely sure that the node is indeed removed from the ring, and then it can adjust the repair schedule accordingly.
-    // So, the duration in this config determinses for how long deleted host's information is kept in the scheduler's metadata.
+    // The scheduler needs to adjust its order when nodes leave the ring. Deleted hosts are tracked in metadata
+    // for a specified duration to ensure they are indeed removed before adjustments are made to the schedule.
     public volatile DurationSpec.IntSecondsBound history_clear_delete_hosts_buffer_interval = new DurationSpec.IntSecondsBound("2h");
-    // the maximum number of retries for a repair session.
-    public volatile Integer repair_max_retries = 3;
-    // the backoff time in seconds for retrying a repair session.
-    public volatile DurationSpec.LongSecondsBound repair_retry_backoff = new DurationSpec.LongSecondsBound("30s");
+    // Minimum duration for the execution of a single repair task. This prevents the scheduler from overwhelming
+    // the node by scheduling too many repair tasks in a short period of time.
+    public volatile DurationSpec.LongSecondsBound repair_task_min_duration = new DurationSpec.LongSecondsBound("5s");
 
     // global_settings overides Options.defaultOptions for all repair types
     public volatile Options global_settings;
 
+    public static final Class<? extends IAutoRepairTokenRangeSplitter> DEFAULT_SPLITTER = RepairTokenRangeSplitter.class;
+
+    // make transient so gets consturcted in the implementation.
+    private final transient Map<RepairType, IAutoRepairTokenRangeSplitter> tokenRangeSplitters = new EnumMap<>(RepairType.class);
+
     public enum RepairType implements Serializable
     {
-        full,
-        incremental;
+        FULL,
+        INCREMENTAL,
+        PREVIEW_REPAIRED;
+
+        private final String configName;
+
+        RepairType()
+        {
+            this.configName = name().toLowerCase();
+        }
+
+        /**
+         * @return Format of the repair type as it should be represented in configuration.
+         * Canonically this is the enum name in lowerCase.
+         */
+        public String getConfigName()
+        {
+            return configName;
+        }
 
         public static AutoRepairState getAutoRepairState(RepairType repairType)
         {
             switch (repairType)
             {
-                case full:
-                    return new FullRepairState();
-                case incremental:
-                    return new IncrementalRepairState();
+                case FULL:
+                    return new AutoRepairState.FullRepairState();
+                case INCREMENTAL:
+                    return new AutoRepairState.IncrementalRepairState();
+                case PREVIEW_REPAIRED:
+                    return new AutoRepairState.PreviewRepairedState();
             }
 
             throw new IllegalArgumentException("Invalid repair type: " + repairType);
         }
+
+        /**
+         * Case-insensitive parsing of the repair type string into {@link RepairType}
+         *
+         * @param repairTypeStr the repair type string
+         * @return the {@link RepairType} represented by the {@code repairTypeStr} string
+         * @throws IllegalArgumentException when the repair type string does not match any repair type
+         */
+        public static RepairType parse(String repairTypeStr)
+        {
+            return RepairType.valueOf(Objects.requireNonNull(repairTypeStr, "repairTypeStr cannot be null").toUpperCase());
+        }
     }
 
-    // repair_type_overrides overrides the global_settings for a specific repair type
-    public volatile Map<RepairType, Options> repair_type_overrides = new EnumMap<>(RepairType.class);
+    // repair_type_overrides overrides the global_settings for a specific repair type.  String used as key instead
+    // of enum to allow lower case key in yaml.
+    public volatile ConcurrentMap<String, Options> repair_type_overrides = Maps.newConcurrentMap();
 
     public AutoRepairConfig()
     {
-        this(false);
+        this(true);
     }
 
     public AutoRepairConfig(boolean enabled)
     {
         this.enabled = enabled;
         global_settings = Options.getDefaultOptions();
-        for (RepairType type : RepairType.values())
-        {
-            repair_type_overrides.put(type, new Options());
-        }
     }
 
     public DurationSpec.IntSecondsBound getRepairCheckInterval()
@@ -101,9 +142,21 @@ public class AutoRepairConfig implements Serializable
         return enabled;
     }
 
+    @VisibleForTesting
+    public void setAutoRepairSchedulingEnabled(boolean enabled)
+    {
+        this.enabled = enabled;
+    }
+
     public DurationSpec.IntSecondsBound getAutoRepairHistoryClearDeleteHostsBufferInterval()
     {
         return history_clear_delete_hosts_buffer_interval;
+    }
+
+    public void startScheduler()
+    {
+        enabled = true;
+        AutoRepair.instance.setup();
     }
 
     public void setAutoRepairHistoryClearDeleteHostsBufferInterval(String duration)
@@ -111,24 +164,14 @@ public class AutoRepairConfig implements Serializable
         history_clear_delete_hosts_buffer_interval = new DurationSpec.IntSecondsBound(duration);
     }
 
-    public int getRepairMaxRetries()
+    public DurationSpec.LongSecondsBound getRepairTaskMinDuration()
     {
-        return repair_max_retries;
+        return repair_task_min_duration;
     }
 
-    public void setRepairMaxRetries(int maxRetries)
+    public void setRepairTaskMinDuration(String duration)
     {
-        repair_max_retries = maxRetries;
-    }
-
-    public DurationSpec.LongSecondsBound getRepairRetryBackoff()
-    {
-        return repair_retry_backoff;
-    }
-
-    public void setRepairRetryBackoff(String interval)
-    {
-        repair_retry_backoff = new DurationSpec.LongSecondsBound(interval);
+        repair_task_min_duration = new DurationSpec.LongSecondsBound(duration);
     }
 
     public boolean isAutoRepairEnabled(RepairType repairType)
@@ -138,14 +181,12 @@ public class AutoRepairConfig implements Serializable
 
     public void setAutoRepairEnabled(RepairType repairType, boolean enabled)
     {
-        ensureOverrides(repairType);
-        repair_type_overrides.get(repairType).enabled = enabled;
+        getOptions(repairType).enabled = enabled;
     }
 
     public void setRepairByKeyspace(RepairType repairType, boolean repairByKeyspace)
     {
-        ensureOverrides(repairType);
-        repair_type_overrides.get(repairType).repair_by_keyspace = repairByKeyspace;
+        getOptions(repairType).repair_by_keyspace = repairByKeyspace;
     }
 
     public boolean getRepairByKeyspace(RepairType repairType)
@@ -160,19 +201,7 @@ public class AutoRepairConfig implements Serializable
 
     public void setRepairThreads(RepairType repairType, int repairThreads)
     {
-        ensureOverrides(repairType);
-        repair_type_overrides.get(repairType).number_of_repair_threads = repairThreads;
-    }
-
-    public int getRepairSubRangeNum(RepairType repairType)
-    {
-        return applyOverrides(repairType, opt -> opt.number_of_subranges);
-    }
-
-    public void setRepairSubRangeNum(RepairType repairType, int repairSubRanges)
-    {
-        ensureOverrides(repairType);
-        repair_type_overrides.get(repairType).number_of_subranges = repairSubRanges;
+        getOptions(repairType).number_of_repair_threads = repairThreads;
     }
 
     public DurationSpec.IntSecondsBound getRepairMinInterval(RepairType repairType)
@@ -182,8 +211,7 @@ public class AutoRepairConfig implements Serializable
 
     public void setRepairMinInterval(RepairType repairType, String minRepairInterval)
     {
-        ensureOverrides(repairType);
-        repair_type_overrides.get(repairType).min_repair_interval = new DurationSpec.IntSecondsBound(minRepairInterval);
+        getOptions(repairType).min_repair_interval = new DurationSpec.IntSecondsBound(minRepairInterval);
     }
 
     public int getRepairSSTableCountHigherThreshold(RepairType repairType)
@@ -193,8 +221,7 @@ public class AutoRepairConfig implements Serializable
 
     public void setRepairSSTableCountHigherThreshold(RepairType repairType, int sstableHigherThreshold)
     {
-        ensureOverrides(repairType);
-        repair_type_overrides.get(repairType).sstable_upper_threshold = sstableHigherThreshold;
+        getOptions(repairType).sstable_upper_threshold = sstableHigherThreshold;
     }
 
     public DurationSpec.IntSecondsBound getAutoRepairTableMaxRepairTime(RepairType repairType)
@@ -204,8 +231,7 @@ public class AutoRepairConfig implements Serializable
 
     public void setAutoRepairTableMaxRepairTime(RepairType repairType, String autoRepairTableMaxRepairTime)
     {
-        ensureOverrides(repairType);
-        repair_type_overrides.get(repairType).table_max_repair_time = new DurationSpec.IntSecondsBound(autoRepairTableMaxRepairTime);
+        getOptions(repairType).table_max_repair_time = new DurationSpec.IntSecondsBound(autoRepairTableMaxRepairTime);
     }
 
     public Set<String> getIgnoreDCs(RepairType repairType)
@@ -215,8 +241,7 @@ public class AutoRepairConfig implements Serializable
 
     public void setIgnoreDCs(RepairType repairType, Set<String> ignoreDCs)
     {
-        ensureOverrides(repairType);
-        repair_type_overrides.get(repairType).ignore_dcs = ignoreDCs;
+        getOptions(repairType).ignore_dcs = ignoreDCs;
     }
 
     public boolean getRepairPrimaryTokenRangeOnly(RepairType repairType)
@@ -226,8 +251,7 @@ public class AutoRepairConfig implements Serializable
 
     public void setRepairPrimaryTokenRangeOnly(RepairType repairType, boolean primaryTokenRangeOnly)
     {
-        ensureOverrides(repairType);
-        repair_type_overrides.get(repairType).repair_primary_token_range_only = primaryTokenRangeOnly;
+        getOptions(repairType).repair_primary_token_range_only = primaryTokenRangeOnly;
     }
 
     public int getParallelRepairPercentage(RepairType repairType)
@@ -237,8 +261,7 @@ public class AutoRepairConfig implements Serializable
 
     public void setParallelRepairPercentage(RepairType repairType, int percentage)
     {
-        ensureOverrides(repairType);
-        repair_type_overrides.get(repairType).parallel_repair_percentage = percentage;
+        getOptions(repairType).parallel_repair_percentage = percentage;
     }
 
     public int getParallelRepairCount(RepairType repairType)
@@ -248,25 +271,42 @@ public class AutoRepairConfig implements Serializable
 
     public void setParallelRepairCount(RepairType repairType, int count)
     {
-        ensureOverrides(repairType);
-        repair_type_overrides.get(repairType).parallel_repair_count = count;
+        getOptions(repairType).parallel_repair_count = count;
     }
 
-    public boolean getMVRepairEnabled(RepairType repairType)
+    public boolean getAllowParallelReplicaRepair(RepairType repairType)
     {
-        return applyOverrides(repairType, opt -> opt.mv_repair_enabled);
+        return applyOverrides(repairType, opt -> opt.allow_parallel_replica_repair);
     }
 
-    public void setMVRepairEnabled(RepairType repairType, boolean enabled)
+    public void setAllowParallelReplicaRepair(RepairType repairType, boolean enabled)
     {
-        ensureOverrides(repairType);
-        repair_type_overrides.get(repairType).mv_repair_enabled = enabled;
+        getOptions(repairType).allow_parallel_replica_repair = enabled;
+    }
+
+    public boolean getAllowParallelReplicaRepairAcrossSchedules(RepairType repairType)
+    {
+        return applyOverrides(repairType, opt -> opt.allow_parallel_replica_repair_across_schedules);
+    }
+
+    public void setAllowParallelReplicaRepairAcrossSchedules(RepairType repairType, boolean enabled)
+    {
+        getOptions(repairType).allow_parallel_replica_repair_across_schedules = enabled;
+    }
+
+    public boolean getMaterializedViewRepairEnabled(RepairType repairType)
+    {
+        return applyOverrides(repairType, opt -> opt.materialized_view_repair_enabled);
+    }
+
+    public void setMaterializedViewRepairEnabled(RepairType repairType, boolean enabled)
+    {
+        getOptions(repairType).materialized_view_repair_enabled = enabled;
     }
 
     public void setForceRepairNewNode(RepairType repairType, boolean forceRepairNewNode)
     {
-        ensureOverrides(repairType);
-        repair_type_overrides.get(repairType).force_repair_new_node = forceRepairNewNode;
+        getOptions(repairType).force_repair_new_node = forceRepairNewNode;
     }
 
     public boolean getForceRepairNewNode(RepairType repairType)
@@ -274,15 +314,30 @@ public class AutoRepairConfig implements Serializable
         return applyOverrides(repairType, opt -> opt.force_repair_new_node);
     }
 
-    public String getTokenRangeSplitter(RepairType repairType)
+    public ParameterizedClass getTokenRangeSplitter(RepairType repairType)
     {
         return applyOverrides(repairType, opt -> opt.token_range_splitter);
     }
 
+    /**
+     * Set a new token range splitter, this is not meant to be used other than for testing.
+     */
+    @VisibleForTesting
+    void setTokenRangeSplitter(RepairType repairType, ParameterizedClass tokenRangeSplitter)
+    {
+        getOptions(repairType).token_range_splitter = tokenRangeSplitter;
+        tokenRangeSplitters.remove(repairType);
+    }
+
+    public IAutoRepairTokenRangeSplitter getTokenRangeSplitterInstance(RepairType repairType)
+    {
+        return tokenRangeSplitters.computeIfAbsent(repairType,
+                                                   key -> newAutoRepairTokenRangeSplitter(key, getTokenRangeSplitter(key)));
+    }
+
     public void setInitialSchedulerDelay(RepairType repairType, String initialSchedulerDelay)
     {
-        ensureOverrides(repairType);
-        repair_type_overrides.get(repairType).initial_scheduler_delay = new DurationSpec.IntSecondsBound(initialSchedulerDelay);
+        getOptions(repairType).initial_scheduler_delay = new DurationSpec.IntSecondsBound(initialSchedulerDelay);
     }
 
     public DurationSpec.IntSecondsBound getInitialSchedulerDelay(RepairType repairType)
@@ -297,8 +352,64 @@ public class AutoRepairConfig implements Serializable
 
     public void setRepairSessionTimeout(RepairType repairType, String repairSessionTimeout)
     {
-        ensureOverrides(repairType);
-        repair_type_overrides.get(repairType).repair_session_timeout = new DurationSpec.IntSecondsBound(repairSessionTimeout);
+        getOptions(repairType).repair_session_timeout = new DurationSpec.IntSecondsBound(repairSessionTimeout);
+    }
+
+    public int getRepairMaxRetries(RepairType repairType)
+    {
+        return applyOverrides(repairType, opt -> opt.repair_max_retries);
+    }
+
+    public void setRepairMaxRetries(RepairType repairType, int maxRetries)
+    {
+        getOptions(repairType).repair_max_retries = maxRetries;
+    }
+
+    public DurationSpec.LongSecondsBound getRepairRetryBackoff(RepairType repairType)
+    {
+        return applyOverrides(repairType, opt -> opt.repair_retry_backoff);
+    }
+
+    public void setRepairRetryBackoff(RepairType repairType, String interval)
+    {
+        getOptions(repairType).repair_retry_backoff = new DurationSpec.LongSecondsBound(interval);
+    }
+
+    @VisibleForTesting
+    static IAutoRepairTokenRangeSplitter newAutoRepairTokenRangeSplitter(RepairType repairType, ParameterizedClass parameterizedClass) throws ConfigurationException
+    {
+        try
+        {
+            Class<? extends IAutoRepairTokenRangeSplitter> tokenRangeSplitterClass;
+            final String className;
+            if (parameterizedClass.class_name != null && !parameterizedClass.class_name.isEmpty())
+            {
+                className = parameterizedClass.class_name.contains(".") ?
+                            parameterizedClass.class_name :
+                            "org.apache.cassandra.repair.autorepair." + parameterizedClass.class_name;
+                tokenRangeSplitterClass = FBUtilities.classForName(className, "token_range_splitter");
+            }
+            else
+            {
+                // If token_range_splitter.class_name is not defined, just use default, this is for convenience.
+                tokenRangeSplitterClass = AutoRepairConfig.DEFAULT_SPLITTER;
+            }
+            try
+            {
+                Map<String, String> parameters = parameterizedClass.parameters != null ? parameterizedClass.parameters : Collections.emptyMap();
+                // first attempt to initialize with RepairType and Map arguments.
+                return tokenRangeSplitterClass.getConstructor(RepairType.class, Map.class).newInstance(repairType, parameters);
+            }
+            catch (NoSuchMethodException nsme)
+            {
+                // fall back on no argument constructor.
+                return tokenRangeSplitterClass.getConstructor().newInstance();
+            }
+        }
+        catch (Exception ex)
+        {
+            throw new ConfigurationException("Unable to create instance of IAutoRepairTokenRangeSplitter", ex);
+        }
     }
 
     // Options configures auto-repair behavior for a given repair type.
@@ -307,7 +418,32 @@ public class AutoRepairConfig implements Serializable
     {
         // defaultOptions defines the default auto-repair behavior when no overrides are defined
         @VisibleForTesting
-        protected static final Options defaultOptions = getDefaultOptions();
+        private static Map<AutoRepairConfig.RepairType, Options> defaultOptions;
+
+        private static Map<AutoRepairConfig.RepairType, Options> initializeDefaultOptions()
+        {
+            Map<AutoRepairConfig.RepairType, Options> options = new EnumMap<>(AutoRepairConfig.RepairType.class);
+            options.put(AutoRepairConfig.RepairType.FULL, getDefaultOptions());
+            options.put(RepairType.INCREMENTAL, getDefaultOptions());
+            options.put(RepairType.PREVIEW_REPAIRED, getDefaultOptions());
+
+            return options;
+        }
+
+        public static Map<AutoRepairConfig.RepairType, Options> getDefaultOptionsMap()
+        {
+            if (defaultOptions == null)
+            {
+                synchronized (AutoRepairConfig.class)
+                {
+                    if (defaultOptions == null)
+                    {
+                        defaultOptions = initializeDefaultOptions();
+                    }
+                }
+            }
+            return defaultOptions;
+        }
 
         public Options()
         {
@@ -318,108 +454,110 @@ public class AutoRepairConfig implements Serializable
         {
             Options opts = new Options();
 
-            opts.enabled = false;
-            opts.repair_by_keyspace = false;
-            opts.number_of_subranges = 16;
+            opts.enabled = true;
+            opts.repair_by_keyspace = true;
             opts.number_of_repair_threads = 1;
             opts.parallel_repair_count = 3;
             opts.parallel_repair_percentage = 3;
-            opts.sstable_upper_threshold = 10000;
-            opts.min_repair_interval = new DurationSpec.IntSecondsBound("24h");
+            opts.allow_parallel_replica_repair = false;
+            opts.allow_parallel_replica_repair_across_schedules = true;
+            opts.sstable_upper_threshold = 100000;
             opts.ignore_dcs = new HashSet<>();
             opts.repair_primary_token_range_only = true;
             opts.force_repair_new_node = false;
             opts.table_max_repair_time = new DurationSpec.IntSecondsBound("6h");
-            opts.mv_repair_enabled = false;
-            opts.token_range_splitter = DefaultAutoRepairTokenSplitter.class.getName();
-            opts.initial_scheduler_delay = new DurationSpec.IntSecondsBound("5m"); // 5 minutes
-            opts.repair_session_timeout = new DurationSpec.IntSecondsBound("3h"); // 3 hours
+            opts.materialized_view_repair_enabled = false;
+            opts.auto_migrate = false;
+            opts.token_range_splitter = new ParameterizedClass(DEFAULT_SPLITTER.getName(), Collections.emptyMap());
+            opts.initial_scheduler_delay = new DurationSpec.IntSecondsBound("5m");
+            opts.repair_session_timeout = new DurationSpec.IntSecondsBound("1h");
+            opts.min_repair_interval = new DurationSpec.IntSecondsBound("1h");
 
             return opts;
         }
 
-        // enable/disable auto repair for the given repair type
+        // Enable/Disable full or incremental or previewed_repair auto repair
         public volatile Boolean enabled;
-        // auto repair is default repair table by table, if this is enabled, the framework will repair all the tables in a keyspace in one go.
+        // If true, attempts to group tables in the same keyspace into one repair; otherwise, each table is repaired
+        // individually.
         public volatile Boolean repair_by_keyspace;
-        // the number of subranges to split each to-be-repaired token range into,
-        // the higher this number, the smaller the repair sessions will be
-        // How many subranges to divide one range into? The default is 1.
-        // If you are using v-node, say 256, then the repair will always go one v-node range at a time, this parameter, additionally, will let us further subdivide a given v-node range into sub-ranges.
-        // With the value “1” and v-nodes of 256, a given table on a node will undergo the repair 256 times. But with a value “2,” the same table on a node will undergo a repair 512 times because every v-node range will be further divided by two.
-        // If you do not use v-nodes or the number of v-nodes is pretty small, say 8, setting this value to a higher number, say 16, will be useful to repair on a smaller range, and the chance of succeeding is higher.
-        public volatile Integer number_of_subranges;
-        // the number of repair threads to run for a given invoked Repair Job.
-        // Once the scheduler schedules one repair session, then howmany threads to use inside that job will be controlled through this parameter.
-        // This is similar to -j for repair options for the nodetool repair command.
+        // Number of threads to use for each repair job scheduled by the scheduler. Similar to the -j option in nodetool
+        // repair.
         public volatile Integer number_of_repair_threads;
-        // The number of nodes running repair parallelly. If parallel_repair_count is set, it will choose the larger value of the two. The default is 3.
-        // This configuration controls how many nodes would run repair in parallel.
-        // The value “3” means, at any given point in time, at most 3 nodes would be running repair in parallel. These selected nodes can be from any datacenters.
-        // If one or more node(s) finish repair, then the framework automatically picks up the next candidate and ensures the maximum number of nodes running repair do not exceed “3”.
+        // Number of nodes running repair in parallel. If parallel_repair_percentage is set, the larger value is used.
         public volatile Integer parallel_repair_count;
-        // the number of repair nodes that can run in parallel
-        // of the total number of nodes in the group [0,100]
-        // The percentage of nodes in the cluster that run repair parallelly. If parallelrepaircount is set, it will choose the larger value of the two.
-        // The problem with a fixed number of nodes (the above property) is that in a large-scale environment,
-        // the nodes keep getting added/removed due to elasticity, so if we have a fixed number, then manual interventions would increase because, on a continuous basis,operators would have to adjust to meet the SLA.
-        // The default is 3%, which means that 3% of the nodes in the Cassandra cluster would be repaired in parallel.
-        // So now, if a fleet, an operator won't have to worry about changing the repair frequency, etc., as overall repair time will continue to remain the same even if nodes are added or removed due to elasticity.
-        // Extremely fewer manual interventions as it will rarely violate the repair SLA for customers
+        // Percentage of nodes in the cluster running repair in parallel. If parallel_repair_count is set, the larger value
+        // is used. Recommendation is that the repair cycle on the cluster should finish within gc_grace_seconds.
         public volatile Integer parallel_repair_percentage;
-        // the upper threshold of SSTables allowed to participate in a single repair session
-        // Threshold to skip a table if it has too many sstables. The default is 10000. This means, if a table on a node has 10000 or more SSTables, then that table will be skipped.
-        // This is to avoid penalizing good tables (neighbors) with an outlier.
+        // Whether to allow a node to take its turn running repair while one or more of its replicas are running repair.
+        // Defaults to false, as running repairs concurrently on replicas can increase load and also cause
+        // anticompaction conflicts while running incremental repair.
+        public volatile Boolean allow_parallel_replica_repair;
+        // An addition to allow_parallel_replica_repair that also blocks repairs when replicas (including this node itself)
+        // are repairing in any schedule. For example, if a replica is executing full repairs, a value of false will
+        // prevent starting incremental repairs for this node. Defaults to true and is only evaluated when
+        // allow_parallel_replica_repair is false.
+        public volatile Boolean allow_parallel_replica_repair_across_schedules;
+        // Threshold to skip repairing tables with too many SSTables. Defaults to 10,000 SSTables to avoid penalizing good
+        // tables.
         public volatile Integer sstable_upper_threshold;
-        // the minimum time in hours between repairing the same node again. This is useful for extremely tiny clusters, say 5 nodes, which finishes
-        // repair quicly.
-        // The default is 24 hours. This means that if the scheduler finishes one round on all the nodes in < 24 hours. On a given node it won’t start a new repair round
-        // until the last repair conducted on a given node is < 24 hours.
+        // Minimum duration between repairing the same node again. This is useful for tiny clusters, such as
+        // clusters with 5 nodes that finish repairs quickly. The default is 3 hours. This means that if the scheduler
+        // completes one round on all nodes in less than 3 hours, it will not start a new repair round on a given node
+        // until 3 hours have passed since the last repair.
         public volatile DurationSpec.IntSecondsBound min_repair_interval;
-        // specifies a denylist of datacenters to repair
-        // This is useful if you want to completely avoid running repairs in one or more data centers. By default, it is empty, i.e., the framework will repair nodes in all the datacenters.
+        // Avoid running repairs in specific data centers. By default, repairs run in all data centers. Specify data
+        // centers to exclude in this list. Note that repair sessions will still consider all replicas from excluded
+        // data centers. Useful if you have keyspaces that are not replicated in certain data centers, and you want to
+        // not run repair schedule in certain data centers.
         public volatile Set<String> ignore_dcs;
-        // Set this 'true' if AutoRepair should repair only the primary ranges owned by this node; else, 'false'
-        // It is the same as -pr in nodetool repair options.
+        // Repair only the primary ranges owned by a node. Equivalent to the -pr option in nodetool repair. Defaults
+        // to true. General advice is to keep this true.
         public volatile Boolean repair_primary_token_range_only;
-        // configures whether to force immediate repair on new nodes
-        // default it is set to 'false'; this is useful if you want to repair new nodes immediately after they join the ring.
+        // Force immediate repair on new nodes after they join the ring.
         public volatile Boolean force_repair_new_node;
-        // the maximum time that a repair session can run for a single table
-        // Max time for repairing one table on a given node, if exceeded, skip the table. The default is 6 hours.
-        // Let's say there is a Cassandra cluster in that there are 10 tables belonging to 10 different customers.
-        // Out of these 10 tables, 1 table is humongous. Repairing this 1 table, say, takes 5 days, in the worst case, but others could finish in just 1 hour.
-        // Then we would penalize 9 customers just because of one bad actor, and those 9 customers would ping an operator and would require a lot of back-and-forth manual interventions, etc.
-        // So, the idea here is to penalize the outliers instead of good candidates. This can easily be configured with a higher value if we want to disable the functionality.
+        // Maximum time allowed for repairing one table on a given node. If exceeded, the repair proceeds to the
+        // next table.
         public volatile DurationSpec.IntSecondsBound table_max_repair_time;
-        // the default is 'true'.
-        // This flag determines whether the auto-repair framework needs to run anti-entropy, a.k.a, repair on the MV table or not.
-        public volatile Boolean mv_repair_enabled;
-        // the default is DefaultAutoRepairTokenSplitter.class.getName(). The class should implement IAutoRepairTokenRangeSplitter.
-        // The default implementation splits the tokens based on the token ranges owned by this node divided by the number of 'number_of_subranges'
-        public volatile String token_range_splitter;
-        // the minimum delay after a node starts before the scheduler starts running repair
+        // Repairs materialized views if true.
+        public volatile Boolean materialized_view_repair_enabled;
+        // Whether to automatically migrate data during repair operations, only safe if full repairs are enabled
+        public volatile Boolean auto_migrate;
+
+        /**
+         * Splitter implementation to use for generating repair assignments.
+         * <p>
+         * The default is {@link RepairTokenRangeSplitter}. The class should implement {@link IAutoRepairTokenRangeSplitter}
+         * and have a constructor accepting ({@link RepairType}, {@link java.util.Map})
+         */
+        public volatile ParameterizedClass token_range_splitter;
+        // After a node restart, wait for this much delay before scheduler starts running repair; this is to avoid starting repair immediately after a node restart.
         public volatile DurationSpec.IntSecondsBound initial_scheduler_delay;
-        // repair session timeout - this is applicable for each repair session
-        // the major issue with Repair is a session sometimes hangs; so this timeout is useful to unblock such problems
+        // Timeout for resuming stuck repair sessions.
         public volatile DurationSpec.IntSecondsBound repair_session_timeout;
+        // Maximum number of retries for a repair session.
+        public volatile Integer repair_max_retries = 3;
+        // Backoff time before retrying a repair session.
+        public volatile DurationSpec.LongSecondsBound repair_retry_backoff = new DurationSpec.LongSecondsBound("30s");
 
         public String toString()
         {
             return "Options{" +
                    "enabled=" + enabled +
                    ", repair_by_keyspace=" + repair_by_keyspace +
-                   ", number_of_subranges=" + number_of_subranges +
                    ", number_of_repair_threads=" + number_of_repair_threads +
                    ", parallel_repair_count=" + parallel_repair_count +
                    ", parallel_repair_percentage=" + parallel_repair_percentage +
+                   ", allow_parallel_replica_repair=" + allow_parallel_replica_repair +
+                   ", allow_parallel_replica_repair_across_schedules=" + allow_parallel_replica_repair_across_schedules +
                    ", sstable_upper_threshold=" + sstable_upper_threshold +
                    ", min_repair_interval=" + min_repair_interval +
                    ", ignore_dcs=" + ignore_dcs +
                    ", repair_primary_token_range_only=" + repair_primary_token_range_only +
                    ", force_repair_new_node=" + force_repair_new_node +
                    ", table_max_repair_time=" + table_max_repair_time +
-                   ", mv_repair_enabled=" + mv_repair_enabled +
+                   ", materialized_view_repair_enabled=" + materialized_view_repair_enabled +
+                   ", auto_migrate=" + auto_migrate +
                    ", token_range_splitter=" + token_range_splitter +
                    ", intial_scheduler_delay=" + initial_scheduler_delay +
                    ", repair_session_timeout=" + repair_session_timeout +
@@ -427,31 +565,47 @@ public class AutoRepairConfig implements Serializable
         }
     }
 
+    @Nonnull
+    protected Options getOptions(RepairType repairType)
+    {
+        return repair_type_overrides.computeIfAbsent(repairType.getConfigName(), k -> new Options());
+    }
+
+    private static <T> T getOverride(Options options, Function<Options, T> optionSupplier)
+    {
+        return options != null ? optionSupplier.apply(options) : null;
+    }
+
     @VisibleForTesting
     protected <T> T applyOverrides(RepairType repairType, Function<Options, T> optionSupplier)
     {
-        ArrayList<Options> optsProviders = new ArrayList<>();
-        if (repair_type_overrides != null)
-        {
-            optsProviders.add(repair_type_overrides.get(repairType));
-        }
-        optsProviders.add(global_settings);
-        optsProviders.add(Options.defaultOptions);
+        // Check option by repair type first
+        Options repairTypeOverrides = getOptions(repairType);
+        T val = optionSupplier.apply(repairTypeOverrides);
 
-        return optsProviders.stream()
-                            .map(opt -> Optional.ofNullable(opt).map(optionSupplier).orElse(null))
-                            .filter(Objects::nonNull)
-                            .findFirst()
-                            .orElse(null);
+        if (val != null)
+            return val;
+
+        // Check option in global settings
+        if (global_settings != null)
+        {
+            val = getOverride(global_settings, optionSupplier);
+
+            if (val != null)
+                return val;
+        }
+
+        // Otherwise check defaults
+        return getOverride(Options.getDefaultOptionsMap().get(repairType), optionSupplier);
     }
 
-    protected void ensureOverrides(RepairType repairType)
+    public boolean getAutoMigrate(RepairType repairType)
     {
-        if (repair_type_overrides == null)
-        {
-            repair_type_overrides = new EnumMap<>(RepairType.class);
-        }
+        return applyOverrides(repairType, opt -> opt.auto_migrate);
+    }
 
-        repair_type_overrides.computeIfAbsent(repairType, k -> new Options());
+    public void setAutoMigrate(RepairType repairType, boolean autoMigrate)
+    {
+        getOptions(repairType).auto_migrate = autoMigrate;
     }
 }

@@ -17,16 +17,17 @@
  */
 package org.apache.cassandra.tools.nodetool;
 
+import java.io.PrintStream;
+
 import com.google.common.annotations.VisibleForTesting;
-import com.google.common.base.Joiner;
+
 import io.airlift.airline.Command;
-import org.apache.cassandra.repair.autorepair.AutoRepairConfig;
-import org.apache.cassandra.repair.autorepair.AutoRepairConfig.RepairType;
 import org.apache.cassandra.tools.NodeProbe;
 import org.apache.cassandra.tools.NodeTool.NodeToolCmd;
 
-import java.io.PrintStream;
-
+/**
+ * Prints all the configurations for AutoRepair through nodetool.
+ */
 @Command(name = "getautorepairconfig", description = "Print autorepair configurations")
 public class GetAutoRepairConfig extends NodeToolCmd
 {
@@ -36,46 +37,9 @@ public class GetAutoRepairConfig extends NodeToolCmd
     @Override
     public void execute(NodeProbe probe)
     {
-        AutoRepairConfig config = probe.getAutoRepairConfig();
-        if (config == null || !config.isAutoRepairSchedulingEnabled())
-        {
+        if (probe.isAutoRepairDisabled())
             out.println("Auto-repair is not enabled");
-            return;
-        }
-
-        StringBuilder sb = new StringBuilder();
-        sb.append("repair scheduler configuration:");
-        sb.append("\n\trepair eligibility check interval: " + config.getRepairCheckInterval());
-        sb.append("\n\tTTL for repair history for dead nodes: " + config.getAutoRepairHistoryClearDeleteHostsBufferInterval());
-        sb.append("\n\tmax retries for repair: " + config.getRepairMaxRetries());
-        sb.append("\n\tretry backoff: " + config.getRepairRetryBackoff());
-        for (RepairType repairType : RepairType.values())
-        {
-            sb.append(formatRepairTypeConfig(probe, repairType, config));
-        }
-
-        out.println(sb);
-    }
-
-    private String formatRepairTypeConfig(NodeProbe probe, RepairType repairType, AutoRepairConfig config)
-    {
-        StringBuilder sb = new StringBuilder();
-        sb.append("\nconfiguration for repair type: " + repairType);
-        sb.append("\n\tenabled: " + config.isAutoRepairEnabled(repairType));
-        sb.append("\n\tminimum repair interval: " + config.getRepairMinInterval(repairType));
-        sb.append("\n\trepair threads: " + config.getRepairThreads(repairType));
-        sb.append("\n\tnumber of repair subranges: " + config.getRepairSubRangeNum(repairType));
-        sb.append("\n\tpriority hosts: " + Joiner.on(',').skipNulls().join(probe.getRepairPriorityForHosts(repairType)));
-        sb.append("\n\tsstable count higher threshold: " + config.getRepairSSTableCountHigherThreshold(repairType));
-        sb.append("\n\ttable max repair time in sec: " + config.getAutoRepairTableMaxRepairTime(repairType));
-        sb.append("\n\tignore datacenters: " + Joiner.on(',').skipNulls().join(config.getIgnoreDCs(repairType)));
-        sb.append("\n\trepair primary token-range: " + config.getRepairPrimaryTokenRangeOnly(repairType));
-        sb.append("\n\tnumber of parallel repairs within group: " + config.getParallelRepairCount(repairType));
-        sb.append("\n\tpercentage of parallel repairs within group: " + config.getParallelRepairPercentage(repairType));
-        sb.append("\n\tmv repair enabled: " + config.getMVRepairEnabled(repairType));
-        sb.append("\n\tinitial scheduler delay: " + config.getInitialSchedulerDelay(repairType));
-        sb.append("\n\trepair setssion timeout: " + config.getRepairSessionTimeout(repairType));
-
-        return sb.toString();
+        else
+            out.println(probe.autoRepairConfiguration());
     }
 }

@@ -33,6 +33,7 @@ import org.junit.Test;
 
 import org.apache.cassandra.distributed.shared.WithProperties;
 import org.apache.cassandra.io.util.File;
+import org.apache.cassandra.repair.autorepair.AutoRepairConfig;
 import org.yaml.snakeyaml.error.YAMLException;
 
 import static org.apache.cassandra.config.CassandraRelevantProperties.CONFIG_ALLOW_SYSTEM_PROPERTIES;
@@ -41,8 +42,6 @@ import static org.apache.cassandra.config.DataStorageSpec.DataStorageUnit.MEBIBY
 import static org.apache.cassandra.config.YamlConfigurationLoader.SYSTEM_PROPERTY_PREFIX;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import org.apache.cassandra.repair.autorepair.AutoRepairConfig;
-
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
@@ -229,11 +228,11 @@ public class YamlConfigurationLoaderTest
                                                                "optional", false,
                                                                "enabled", true);
         Map<String, Object> autoRepairConfig = ImmutableMap.of("enabled", true,
-                                                               "global_settings", ImmutableMap.of("number_of_repair_threads",
-                                                                                                  1),
-                                                               "repair_type_overrides", ImmutableMap.of(
-        "full", ImmutableMap.of("number_of_repair_threads",
-                                2)));
+                                                               "global_settings",
+                                                                        ImmutableMap.of("number_of_repair_threads", 1),
+                                                               "repair_type_overrides",
+                                                                        ImmutableMap.of("full",
+                                                                                    ImmutableMap.of("number_of_repair_threads", 2)));
         Map<String,Object> map = new ImmutableMap.Builder<String, Object>()
                                  .put("storage_port", storagePort)
                                  .put("commitlog_sync", commitLogSync)
@@ -253,9 +252,9 @@ public class YamlConfigurationLoaderTest
         assertEquals(true, config.client_encryption_options.enabled); // Check a nested object
         assertEquals(new DataStorageSpec.IntBytesBound("5B"), config.internode_socket_send_buffer_size); // Check names backward compatibility (CASSANDRA-17141 and CASSANDRA-15234)
         assertEquals(new DataStorageSpec.IntBytesBound("5B"), config.internode_socket_receive_buffer_size); // Check names backward compatibility (CASSANDRA-17141 and CASSANDRA-15234)
-        assertEquals(true, config.auto_repair.enabled);
-        assertEquals(new DurationSpec.IntSecondsBound("6h"), config.auto_repair.getAutoRepairTableMaxRepairTime(AutoRepairConfig.RepairType.incremental));
-        config.auto_repair.setMVRepairEnabled(AutoRepairConfig.RepairType.incremental, false);
+        assertTrue(config.auto_repair.enabled);
+        assertEquals(new DurationSpec.IntSecondsBound("6h"), config.auto_repair.getAutoRepairTableMaxRepairTime(AutoRepairConfig.RepairType.INCREMENTAL));
+        config.auto_repair.setMaterializedViewRepairEnabled(AutoRepairConfig.RepairType.INCREMENTAL, false);
     }
 
     @Test

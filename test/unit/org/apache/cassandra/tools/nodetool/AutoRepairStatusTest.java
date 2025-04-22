@@ -29,15 +29,20 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
+import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.repair.autorepair.AutoRepairConfig;
 import org.apache.cassandra.tools.NodeProbe;
 import org.apache.cassandra.tools.Output;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 
+import static org.apache.cassandra.Util.setAutoRepairEnabled;
 import static org.junit.Assert.assertEquals;
 import static org.mockito.Mockito.when;
 
+/**
+ * Unit tests for {@link org.apache.cassandra.tools.nodetool.AutoRepairStatus}
+ */
 @RunWith(Parameterized.class)
 public class AutoRepairStatusTest
 {
@@ -45,9 +50,6 @@ public class AutoRepairStatusTest
     private static NodeProbe probe;
 
     private ByteArrayOutputStream cmdOutput;
-
-    @Mock
-    private static AutoRepairConfig config;
 
     private static AutoRepairStatus cmd;
 
@@ -61,14 +63,18 @@ public class AutoRepairStatusTest
     }
 
     @Before
-    public void setUp()
+    public void setUp() throws Exception
     {
         MockitoAnnotations.initMocks(this);
         cmdOutput = new ByteArrayOutputStream();
         PrintStream out = new PrintStream(cmdOutput);
         when(probe.output()).thenReturn(new Output(out, out));
-        when(probe.getAutoRepairConfig()).thenReturn(config);
         cmd = new AutoRepairStatus();
+        DatabaseDescriptor.daemonInitialization();
+        DatabaseDescriptor.loadConfig();
+        setAutoRepairEnabled(true);
+        DatabaseDescriptor.getAutoRepairConfig().setAutoRepairEnabled(AutoRepairConfig.RepairType.FULL, true);
+        DatabaseDescriptor.getAutoRepairConfig().setAutoRepairEnabled(AutoRepairConfig.RepairType.INCREMENTAL, true);
     }
 
     @Test(expected = IllegalArgumentException.class)
@@ -81,7 +87,7 @@ public class AutoRepairStatusTest
     @Test
     public void testExecuteWithNoNodes()
     {
-        cmd.repairType = repairType;
+        cmd.repairType = repairType.name();
 
         cmd.execute(probe);
         assertEquals("Active Repairs\n" +
@@ -91,8 +97,8 @@ public class AutoRepairStatusTest
     @Test
     public void testExecute()
     {
-        when(probe.getOnGoingRepairHostIds(repairType)).thenReturn(ImmutableSet.of("host1", "host2", "host3", "host4"));
-        cmd.repairType = repairType;
+        when(probe.getAutoRepairOnGoingRepairHostIds(repairType.name())).thenReturn(ImmutableSet.of("host1", "host2", "host3", "host4"));
+        cmd.repairType = repairType.name();
 
         cmd.execute(probe);
 

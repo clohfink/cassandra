@@ -21,85 +21,113 @@ package org.apache.cassandra.distributed.test.repair;
 import java.io.IOException;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
-import java.util.concurrent.TimeUnit;
 import java.util.UUID;
 
 import com.google.common.collect.ImmutableMap;
-import com.google.common.util.concurrent.Uninterruptibles;
+
+import org.apache.cassandra.config.DurationSpec;
+import org.apache.cassandra.distributed.api.TokenSupplier;
+import org.apache.cassandra.metrics.AutoRepairMetrics;
+import org.apache.cassandra.metrics.AutoRepairMetricsManager;
+import org.apache.cassandra.schema.SystemDistributedKeyspace;
+
 import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import org.apache.cassandra.distributed.Cluster;
 import org.apache.cassandra.distributed.api.ConsistencyLevel;
 import org.apache.cassandra.distributed.test.TestBaseImpl;
 import org.apache.cassandra.repair.autorepair.AutoRepair;
 import org.apache.cassandra.repair.autorepair.AutoRepairConfig;
-import org.apache.cassandra.repair.autorepair.AutoRepairKeyspace;
+import org.apache.cassandra.service.AutoRepairService;
 
 import static org.apache.cassandra.schema.SchemaConstants.DISTRIBUTED_KEYSPACE_NAME;
 import static org.junit.Assert.assertEquals;
 
+/**
+ * Distributed tests for {@link org.apache.cassandra.repair.autorepair.AutoRepair} scheduler
+ */
 public class AutoRepairSchedulerTest extends TestBaseImpl
 {
-
+    static final Logger logger = LoggerFactory.getLogger(AutoRepairSchedulerTest.class);
     private static Cluster cluster;
     static SimpleDateFormat sdf;
 
     @BeforeClass
     public static void init() throws IOException
     {
-        System.setProperty("cassandra.streaming.requires_view_build_during_repair", "false");
-        System.setProperty("cassandra.streaming.requires_cdc_replay", "false");
-
         // Define the expected date format pattern
         String pattern = "EEE MMM dd HH:mm:ss z yyyy";
         // Create SimpleDateFormat object with the given pattern
         sdf = new SimpleDateFormat(pattern);
         sdf.setLenient(false);
-        cluster = Cluster.build(3).withConfig(config -> config
-                                                        .set("auto_repair",
-                                                             ImmutableMap.of(
-                                                             "repair_type_overrides",
-                                                             ImmutableMap.of(AutoRepairConfig.RepairType.full.toString(),
-                                                                                 ImmutableMap.of(
-                                                                                 "initial_scheduler_delay", "5s",
-                                                                                 "enabled", "true",
-                                                                                 "parallel_repair_count", "1",
-                                                                                 "parallel_repair_percentage", "0",
-                                                                                 "min_repair_interval", "1s"),
-                                                                             AutoRepairConfig.RepairType.incremental.toString(),
-                                                                                 ImmutableMap.of(
-                                                                                 "initial_scheduler_delay", "5s",
-                                                                                 "enabled", "true",
-                                                                                 "parallel_repair_count", "1",
-                                                                                 "parallel_repair_percentage", "0",
-                                                                                 "min_repair_interval", "1s"))))
-                                                        .set("auto_repair.enabled", "true")
-                                                        .set("auto_repair.repair_check_interval", "10s")).start();
+        // Configure a 3-node cluster with num_tokens: 4 and auto_repair enabled
+        cluster = Cluster.build(3)
+                         .withTokenCount(4)
+                         .withTokenSupplier(TokenSupplier.evenlyDistributedTokens(3, 4))
+                         .withConfig(config -> config
+                                               .set("num_tokens", 4)
+                                               .set("auto_repair",
+                                                    ImmutableMap.of(
+                                                    "repair_type_overrides",
+                                                    ImmutableMap.of(AutoRepairConfig.RepairType.FULL.getConfigName(),
+                                                                    ImmutableMap.of(
+                                                                    "initial_scheduler_delay", "5s",
+                                                                    "enabled", "true",
+                                                                    "parallel_repair_count", "2",
+                                                                    // Allow parallel replica repair to allow replicas
+                                                                    // to execute full repair at same time.
+                                                                    "allow_parallel_replica_repair", "true",
+                                                                    "min_repair_interval", "15s"),
+                                                                    AutoRepairConfig.RepairType.INCREMENTAL.getConfigName(),
+                                                                    ImmutableMap.of(
+                                                                    "initial_scheduler_delay", "5s",
+                                                                    "enabled", "true",
+                                                                    // Set parallel repair count to 3 to provoke
+                                                                    // contention between replicas when scheduling.
+                                                                    "parallel_repair_count", "3",
+                                                                    // Disallow parallel replica repair to prevent
+                                                                    // replicas from issuing incremental repair at
+                                                                    // same time.
+                                                                    "allow_parallel_replica_repair", "false",
+                                                                    // Run more aggressively since full repair is
+                                                                    // less restrictive about when it can run repair,
+                                                                    // so need to check more frequently to allow
+                                                                    // incremental to get an attempt in.
+                                                                    "min_repair_interval", "5s"))))
+                                               .set("auto_repair.enabled", "true")
+                                               .set("auto_repair.global_settings.repair_by_keyspace", "true")
+                                               .set("auto_repair.global_settings.repair_retry_backoff", "5s")
+                                               .set("auto_repair.repair_task_min_duration", "0s")
+                                               .set("auto_repair.repair_check_interval", "5s"))
+                         .start();
 
         cluster.schemaChange("CREATE KEYSPACE IF NOT EXISTS " + KEYSPACE + " WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 3};");
         cluster.schemaChange(withKeyspace("CREATE TABLE %s.tbl (pk int, ck text, v1 int, v2 int, PRIMARY KEY (pk, ck)) WITH read_repair='NONE'"));
     }
 
     @AfterClass
-    public static void afterClass()
+    public static void tearDown()
     {
-        System.clearProperty("cassandra.streaming.requires_view_build_during_repair");
-        System.clearProperty("cassandra.streaming.requires_cdc_replay");
+        cluster.close();
     }
 
     @Test
     public void testScheduler() throws ParseException
     {
         // ensure there was no history of previous repair runs through the scheduler
-        Object[][] rows = cluster.coordinator(1).execute(String.format("SELECT repair_type, host_id, repair_start_ts, repair_finish_ts, repair_turn FROM %s.%s", DISTRIBUTED_KEYSPACE_NAME, AutoRepairKeyspace.AUTO_REPAIR_HISTORY), ConsistencyLevel.QUORUM);
+        Object[][] rows = cluster.coordinator(1).execute(String.format("SELECT repair_type, host_id, repair_start_ts, repair_finish_ts, repair_turn FROM %s.%s", DISTRIBUTED_KEYSPACE_NAME, SystemDistributedKeyspace.AUTO_REPAIR_HISTORY), ConsistencyLevel.QUORUM);
         assertEquals(0, rows.length);
 
         cluster.forEach(i -> i.runOnInstance(() -> {
             try
             {
+                AutoRepairService.setup();
                 AutoRepair.instance.setup();
             }
             catch (Exception e)
@@ -107,16 +135,72 @@ public class AutoRepairSchedulerTest extends TestBaseImpl
                 throw new RuntimeException(e);
             }
         }));
-        // wait for a couple of minutes for repair to go through on all three nodes
-        Uninterruptibles.sleepUninterruptibly(2, TimeUnit.MINUTES);
 
-        validate(AutoRepairConfig.RepairType.full.toString());
-        validate(AutoRepairConfig.RepairType.incremental.toString());
+        logger.info("Repair setup done");
+        // validate that the repair ran on all nodes
+        cluster.forEach(i -> i.runOnInstance(() -> {
+            // Reduce sleeping if repair finishes quickly to speed up test but make it non-zero to provoke some
+            // contention.
+            AutoRepair.SLEEP_IF_REPAIR_FINISHES_QUICKLY = new DurationSpec.IntSecondsBound("1s");
+
+            AutoRepairMetrics incrementalMetrics = AutoRepairMetricsManager.getMetrics(AutoRepairConfig.RepairType.INCREMENTAL);
+            while (incrementalMetrics.nodeRepairTimeInSec.getValue().longValue() <= 0)
+            {
+                try
+                {
+                    Thread.sleep(1000);
+                }
+                catch (InterruptedException e)
+                {
+                    throw new RuntimeException(e);
+                }
+            }
+            logger.info("AutoRepair has completed one INCREMENTAL repair cycle");
+
+            // Expect some contention on incremental repair.
+            while (incrementalMetrics.repairDelayedByReplica.getCount() <= 0)
+            {
+                try
+                {
+                    Thread.sleep(1000);
+                }
+                catch (InterruptedException e)
+                {
+                    throw new RuntimeException(e);
+                }
+            }
+            logger.info("AutoRepair has observed replica contention in INCREMENTAL repair");
+
+            // Do not expect any contention across schedules since allow_parallel_replica_repairs across schedules
+            // was not configured.
+            assertEquals(0L, incrementalMetrics.repairDelayedBySchedule.getCount());
+
+            AutoRepairMetrics fullMetrics = AutoRepairMetricsManager.getMetrics(AutoRepairConfig.RepairType.FULL);
+            while (fullMetrics.nodeRepairTimeInSec.getValue().longValue() <= 0)
+            {
+                try
+                {
+                    Thread.sleep(1000);
+                }
+                catch (InterruptedException e)
+                {
+                    throw new RuntimeException(e);
+                }
+            }
+            logger.info("AutoRepair has completed one FULL repair cycle");
+
+            // No repair contention should be observed for full repair since allow_parallel_replica_repair was true
+            assertEquals(0L, fullMetrics.repairDelayedByReplica.getCount());
+            assertEquals(0L, fullMetrics.repairDelayedBySchedule.getCount());
+        }));
+
+        validate(AutoRepairConfig.RepairType.FULL.toString());
+        validate(AutoRepairConfig.RepairType.INCREMENTAL.toString());
     }
 
     private void validate(String repairType) throws ParseException
     {
-        Object[][] rows = cluster.coordinator(1).execute(String.format("SELECT repair_type, host_id, repair_start_ts, repair_finish_ts, repair_turn FROM %s.%s where repair_type='%s'", DISTRIBUTED_KEYSPACE_NAME, AutoRepairKeyspace.AUTO_REPAIR_HISTORY, repairType), ConsistencyLevel.QUORUM);
+        Object[][] rows = cluster.coordinator(1).execute(String.format("SELECT repair_type, host_id, repair_start_ts, repair_finish_ts, repair_turn FROM %s.%s where repair_type='%s'", DISTRIBUTED_KEYSPACE_NAME, SystemDistributedKeyspace.AUTO_REPAIR_HISTORY, repairType), ConsistencyLevel.QUORUM);
         assertEquals(3, rows.length);
         for (int node = 0; node < rows.length; node++)
         {
@@ -124,17 +208,13 @@ public class AutoRepairSchedulerTest extends TestBaseImpl
             // repair_type
             Assert.assertEquals(repairType, row[0].toString());
             // host_id
-            UUID.fromString(row[1].toString());
+            Assert.assertNotNull(UUID.fromString(row[1].toString()));
             // ensure there is a legit repair_start_ts and repair_finish_ts
             sdf.parse(row[2].toString());
             sdf.parse(row[3].toString());
             // the reason why the repair was scheduled
+            Assert.assertNotNull(row[4]);
             Assert.assertEquals("MY_TURN", row[4].toString());
-            for (Object col : row)
-            {
-                System.out.println("Data:" + col);
-            }
-            System.out.println("=====================================");
         }
     }
 }

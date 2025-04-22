@@ -20,7 +20,6 @@ package org.apache.cassandra.repair.autorepair;
 
 import com.google.common.annotations.VisibleForTesting;
 
-import org.apache.cassandra.config.DurationSpec;
 import org.apache.cassandra.db.ColumnFamilyStore;
 import org.apache.cassandra.db.Keyspace;
 import org.apache.cassandra.db.view.TableViews;
@@ -36,10 +35,7 @@ import org.apache.cassandra.repair.messages.RepairOption;
 import org.apache.cassandra.service.AutoRepairService;
 import org.apache.cassandra.service.StorageService;
 import org.apache.cassandra.streaming.PreviewKind;
-import org.apache.cassandra.utils.concurrent.Condition;
-import org.apache.cassandra.utils.progress.ProgressEvent;
-import org.apache.cassandra.utils.progress.ProgressEventType;
-import org.apache.cassandra.utils.progress.ProgressListener;
+import org.apache.cassandra.utils.Clock;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -51,16 +47,15 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
-import static org.apache.cassandra.utils.Clock.Global.currentTimeMillis;
-import static org.apache.cassandra.utils.concurrent.Condition.newOneTimeCondition;
-
-// AutoRepairState represents the state of automated repair for a given repair type.
-public abstract class AutoRepairState implements ProgressListener
+/**
+ * AutoRepairState represents the state of automated repair for a given repair type.
+ */
+public abstract class AutoRepairState
 {
     protected static final Logger logger = LoggerFactory.getLogger(AutoRepairState.class);
     private final SimpleDateFormat format = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss,SSS");
     @VisibleForTesting
-    protected static Supplier<Long> timeFunc = System::currentTimeMillis;
+    protected static Supplier<Long> timeFunc = Clock.Global::currentTimeMillis;
 
     @VisibleForTesting
     protected final RepairType repairType;
@@ -80,7 +75,6 @@ public abstract class AutoRepairState implements ProgressListener
     protected int totalMVTablesConsideredForRepair = 0;
     @VisibleForTesting
     protected int totalDisabledTablesRepairCount = 0;
-
     @VisibleForTesting
     protected int failedTokenRangesCount = 0;
     @VisibleForTesting
@@ -88,11 +82,9 @@ public abstract class AutoRepairState implements ProgressListener
     @VisibleForTesting
     protected int skippedTokenRangesCount = 0;
     @VisibleForTesting
+    protected int skippedTablesCount = 0;
+    @VisibleForTesting
     protected AutoRepairHistory longestUnrepairedNode;
-    @VisibleForTesting
-    protected Condition condition = newOneTimeCondition();
-    @VisibleForTesting
-    protected boolean success = true;
     protected final AutoRepairMetrics metrics;
 
     protected AutoRepairState(RepairType repairType)
@@ -105,44 +97,8 @@ public abstract class AutoRepairState implements ProgressListener
 
     protected RepairRunnable getRepairRunnable(String keyspace, RepairOption options)
     {
-        RepairRunnable task = new RepairRunnable(StorageService.instance, StorageService.nextRepairCommand.incrementAndGet(),
-                                                 options, keyspace);
-
-        task.addProgressListener(this);
-
-        return task;
-    }
-
-    @Override
-    public void progress(String tag, ProgressEvent event)
-    {
-        ProgressEventType type = event.getType();
-        String message = String.format("[%s] %s", format.format(currentTimeMillis()), event.getMessage());
-        if (type == ProgressEventType.ERROR)
-        {
-            logger.error("Repair failure for {} repair: {}", repairType.toString(), message);
-            success = false;
-            condition.signalAll();
-        }
-        if (type == ProgressEventType.PROGRESS)
-        {
-            message = message + " (progress: " + (int) event.getProgressPercentage() + "%)";
-            logger.debug("Repair progress for {} repair: {}", repairType.toString(), message);
-        }
-        if (type == ProgressEventType.COMPLETE)
-        {
-            success = true;
-            condition.signalAll();
-        }
-    }
-
-    public void waitForRepairToComplete(DurationSpec.IntSecondsBound repairSessionTimeout) throws InterruptedException
-    {
-        //if for some reason we don't hear back on repair progress for sometime
-        if (!condition.await(repairSessionTimeout.toSeconds(), TimeUnit.SECONDS))
-        {
-            success = false;
-        }
+        return new RepairRunnable(StorageService.instance, StorageService.nextRepairCommand.incrementAndGet(),
+                                  options, keyspace);
     }
 
     public long getLastRepairTime()
@@ -259,9 +215,14 @@ public abstract class AutoRepairState implements ProgressListener
         return skippedTokenRangesCount;
     }
 
-    public boolean isSuccess()
+    public void setSkippedTablesCount(int count)
     {
-        return success;
+        skippedTablesCount = count;
+    }
+
+    public int getSkippedTablesCount()
+    {
+        return skippedTablesCount;
     }
 
     public void recordTurn(AutoRepairUtils.RepairTurn turn)
@@ -279,73 +240,89 @@ public abstract class AutoRepairState implements ProgressListener
         return totalDisabledTablesRepairCount;
     }
 
-    public void resetWaitCondition()
+
+    public static class PreviewRepairedState extends AutoRepairState
     {
-        condition = newOneTimeCondition();
-    }
-}
+        public PreviewRepairedState()
+        {
+            super(RepairType.PREVIEW_REPAIRED);
+        }
 
-class IncrementalRepairState extends AutoRepairState
-{
-    public IncrementalRepairState()
-    {
-        super(RepairType.incremental);
-    }
+        @Override
+        public RepairRunnable getRepairRunnable(String keyspace, List<String> tables, Set<Range<Token>> ranges, boolean primaryRangeOnly)
+        {
+            RepairOption option = new RepairOption(RepairParallelism.PARALLEL, primaryRangeOnly, false, false,
+                                                   AutoRepairService.instance.getAutoRepairConfig().getRepairThreads(repairType), ranges,
+                                                   !ranges.isEmpty(), false, false, PreviewKind.REPAIRED, false, true, false, false);
 
-    @Override
-    public RepairRunnable getRepairRunnable(String keyspace, List<String> tables, Set<Range<Token>> ranges, boolean primaryRangeOnly)
-    {
-        RepairOption option = new RepairOption(RepairParallelism.PARALLEL, primaryRangeOnly, true, false,
-                                               AutoRepairService.instance.getAutoRepairConfig().getRepairThreads(repairType), ranges,
-                                               !ranges.isEmpty(), false, false, PreviewKind.NONE, true, true, false, false);
+            option.getColumnFamilies().addAll(tables);
 
-        option.getColumnFamilies().addAll(filterOutUnsafeTables(keyspace, tables));
-
-        return getRepairRunnable(keyspace, option);
+            return getRepairRunnable(keyspace, option);
+        }
     }
 
-    @VisibleForTesting
-    protected List<String> filterOutUnsafeTables(String keyspaceName, List<String> tables)
+    public static class IncrementalRepairState extends AutoRepairState
     {
-        Keyspace keyspace = Keyspace.open(keyspaceName);
+        public IncrementalRepairState()
+        {
+            super(RepairType.INCREMENTAL);
+        }
 
-        return tables.stream()
-                     .filter(table -> {
-                         ColumnFamilyStore cfs = keyspace.getColumnFamilyStore(table);
-                         TableViews views = keyspace.viewManager.forTable(cfs.metadata().id);
-                         if (views != null && !views.isEmpty())
-                         {
-                             logger.debug("Skipping incremental repair for {}.{} as it has materialized views", keyspaceName, table);
-                             return false;
-                         }
+        @Override
+        public RepairRunnable getRepairRunnable(String keyspace, List<String> tables, Set<Range<Token>> ranges, boolean primaryRangeOnly)
+        {
+            RepairOption option = new RepairOption(RepairParallelism.PARALLEL, primaryRangeOnly, true, false,
+                                                   AutoRepairService.instance.getAutoRepairConfig().getRepairThreads(repairType), ranges,
+                                                   !ranges.isEmpty(), false, false, PreviewKind.NONE, true, true, false, false);
 
-                         if (cfs.metadata().params != null && cfs.metadata().params.cdc)
-                         {
-                             logger.debug("Skipping incremental repair for {}.{} as it has CDC enabled", keyspaceName, table);
-                             return false;
-                         }
+            option.getColumnFamilies().addAll(filterOutUnsafeTables(keyspace, tables));
 
-                         return true;
-                     }).collect(Collectors.toList());
+            return getRepairRunnable(keyspace, option);
+        }
+
+        @VisibleForTesting
+        protected List<String> filterOutUnsafeTables(String keyspaceName, List<String> tables)
+        {
+            Keyspace keyspace = Keyspace.open(keyspaceName);
+
+            return tables.stream()
+                         .filter(table -> {
+                             ColumnFamilyStore cfs = keyspace.getColumnFamilyStore(table);
+                             TableViews views = keyspace.viewManager.forTable(cfs.metadata().id);
+                             if (views != null && !views.isEmpty())
+                             {
+                                 logger.debug("Skipping incremental repair for {}.{} as it has materialized views", keyspaceName, table);
+                                 return false;
+                             }
+
+                             if (cfs.metadata().params != null && cfs.metadata().params.cdc)
+                             {
+                                 logger.debug("Skipping incremental repair for {}.{} as it has CDC enabled", keyspaceName, table);
+                                 return false;
+                             }
+
+                             return true;
+                         }).collect(Collectors.toList());
+        }
     }
-}
 
-class FullRepairState extends AutoRepairState
-{
-    public FullRepairState()
+    public static class FullRepairState extends AutoRepairState
     {
-        super(RepairType.full);
-    }
+        public FullRepairState()
+        {
+            super(RepairType.FULL);
+        }
 
-    @Override
-    public RepairRunnable getRepairRunnable(String keyspace, List<String> tables, Set<Range<Token>> ranges, boolean primaryRangeOnly)
-    {
-        RepairOption option = new RepairOption(RepairParallelism.PARALLEL, primaryRangeOnly, false, false,
-                                               AutoRepairService.instance.getAutoRepairConfig().getRepairThreads(repairType), ranges,
-                                               !ranges.isEmpty(), false, false, PreviewKind.NONE, true, true, false, false);
+        @Override
+        public RepairRunnable getRepairRunnable(String keyspace, List<String> tables, Set<Range<Token>> ranges, boolean primaryRangeOnly)
+        {
+            RepairOption option = new RepairOption(RepairParallelism.PARALLEL, primaryRangeOnly, false, false,
+                                                   AutoRepairService.instance.getAutoRepairConfig().getRepairThreads(repairType), ranges,
+                                                   !ranges.isEmpty(), false, false, PreviewKind.NONE, true, true, false, false);
 
-        option.getColumnFamilies().addAll(tables);
+            option.getColumnFamilies().addAll(tables);
 
-        return getRepairRunnable(keyspace, option);
+            return getRepairRunnable(keyspace, option);
+        }
     }
 }

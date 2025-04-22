@@ -28,7 +28,6 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import com.google.common.collect.ImmutableSet;
-import org.junit.After;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -44,14 +43,18 @@ import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.gms.Gossiper;
 import org.apache.cassandra.locator.InetAddressAndPort;
 import org.apache.cassandra.repair.autorepair.AutoRepairConfig;
-import org.apache.cassandra.repair.autorepair.AutoRepairKeyspace;
 import org.apache.cassandra.repair.autorepair.AutoRepairUtils;
 import org.apache.cassandra.schema.SchemaConstants;
+import org.apache.cassandra.schema.SystemDistributedKeyspace;
 
 import static org.apache.cassandra.Util.setAutoRepairEnabled;
 import static org.apache.cassandra.config.CassandraRelevantProperties.SYSTEM_DISTRIBUTED_DEFAULT_RF;
 import static org.junit.Assert.assertEquals;
+import static org.assertj.core.api.Assertions.assertThat;
 
+/**
+ * Unit tests for {@link org.apache.cassandra.service.AutoRepairService}
+ */
 @RunWith(Suite.class)
 @Suite.SuiteClasses({ AutoRepairServiceTest.BasicTests.class, AutoRepairServiceTest.SetterTests.class })
 public class AutoRepairServiceTest
@@ -64,20 +67,13 @@ public class AutoRepairServiceTest
         @Before
         public void setUp()
         {
-            System.setProperty("cassandra.streaming.requires_cdc_replay", "false");
-            System.setProperty("cassandra.streaming.requires_view_build_during_repair", "false");
+            DatabaseDescriptor.setCDCOnRepairEnabled(false);
+            DatabaseDescriptor.setMaterializedViewsOnRepairEnabled(false);
             DatabaseDescriptor.setMaterializedViewsEnabled(false);
             DatabaseDescriptor.setCDCEnabled(false);
             config = new AutoRepairConfig();
             autoRepairService = new AutoRepairService();
             autoRepairService.config = config;
-        }
-
-        @After
-        public void tearDown()
-        {
-            System.clearProperty("cassandra.streaming.requires_view_build_during_repair");
-            System.clearProperty("cassandra.streaming.requires_cdc_replay");
         }
 
         @Test
@@ -104,22 +100,20 @@ public class AutoRepairServiceTest
             assertEquals(100, config.getAutoRepairHistoryClearDeleteHostsBufferInterval().toSeconds());
         }
 
-
         @Test
         public void testsetAutoRepairMaxRetriesCount()
         {
-            autoRepairService.setAutoRepairMaxRetriesCount(101);
+            autoRepairService.setAutoRepairMaxRetriesCount(AutoRepairConfig.RepairType.INCREMENTAL.name(), 101);
 
-            assertEquals(101, config.getRepairMaxRetries());
+            assertEquals(101, config.getRepairMaxRetries(AutoRepairConfig.RepairType.INCREMENTAL));
         }
-
 
         @Test
         public void testsetAutoRepairRetryBackoffInSec()
         {
-            autoRepairService.setAutoRepairRetryBackoff("102s");
+            autoRepairService.setAutoRepairRetryBackoff(AutoRepairConfig.RepairType.INCREMENTAL.name(), "102s");
 
-            assertEquals(102, config.getRepairRetryBackoff().toSeconds());
+            assertEquals(102, config.getRepairRetryBackoff(AutoRepairConfig.RepairType.INCREMENTAL).toSeconds());
         }
 
         @Test(expected = ConfigurationException.class)
@@ -127,16 +121,17 @@ public class AutoRepairServiceTest
         {
             autoRepairService.config = new AutoRepairConfig(false);
 
-            autoRepairService.setAutoRepairEnabled(AutoRepairConfig.RepairType.incremental, true);
+            autoRepairService.setAutoRepairEnabled(AutoRepairConfig.RepairType.INCREMENTAL.name(), true);
         }
 
         @Test(expected = ConfigurationException.class)
         public void testSetAutoRepairEnabledThrowsForIRWithMVReplay()
         {
             autoRepairService.config = new AutoRepairConfig(true);
-            System.setProperty("cassandra.streaming.requires_view_build_during_repair", "true");
+            autoRepairService.config.setMaterializedViewRepairEnabled(AutoRepairConfig.RepairType.INCREMENTAL, true);
+            DatabaseDescriptor.setMaterializedViewsOnRepairEnabled(true);
 
-            autoRepairService.setAutoRepairEnabled(AutoRepairConfig.RepairType.incremental, true);
+            autoRepairService.setAutoRepairEnabled(AutoRepairConfig.RepairType.INCREMENTAL.name(), true);
         }
 
         @Test
@@ -144,19 +139,20 @@ public class AutoRepairServiceTest
         {
             autoRepairService.config = new AutoRepairConfig(true);
             DatabaseDescriptor.setMaterializedViewsEnabled(true);
-            System.setProperty("cassandra.streaming.requires_view_build_during_repair", "false");
-            System.setProperty("cassandra.streaming.requires_cdc_replay", "false");
+            DatabaseDescriptor.setCDCOnRepairEnabled(false);
+            DatabaseDescriptor.setMaterializedViewsOnRepairEnabled(false);
 
-            autoRepairService.setAutoRepairEnabled(AutoRepairConfig.RepairType.incremental, true);
+            autoRepairService.setAutoRepairEnabled(AutoRepairConfig.RepairType.INCREMENTAL.name(), true);
         }
 
         @Test(expected = ConfigurationException.class)
         public void testSetAutoRepairEnabledThrowsForIRWithCDCReplay()
         {
             autoRepairService.config = new AutoRepairConfig(true);
-            System.setProperty("cassandra.streaming.requires_cdc_replay", "true");
+            DatabaseDescriptor.setCDCEnabled(true);
+            DatabaseDescriptor.setCDCOnRepairEnabled(true);
 
-            autoRepairService.setAutoRepairEnabled(AutoRepairConfig.RepairType.incremental, true);
+            autoRepairService.setAutoRepairEnabled(AutoRepairConfig.RepairType.INCREMENTAL.name(), true);
         }
 
         @Test
@@ -164,9 +160,9 @@ public class AutoRepairServiceTest
         {
             autoRepairService.config = new AutoRepairConfig(true);
             DatabaseDescriptor.setCDCEnabled(true);
-            System.setProperty("cassandra.streaming.requires_cdc_replay", "false");
+            DatabaseDescriptor.setCDCOnRepairEnabled(false);
 
-            autoRepairService.setAutoRepairEnabled(AutoRepairConfig.RepairType.incremental, true);
+            autoRepairService.setAutoRepairEnabled(AutoRepairConfig.RepairType.INCREMENTAL.name(), true);
         }
     }
 
@@ -186,7 +182,6 @@ public class AutoRepairServiceTest
         {
             return Arrays.asList(AutoRepairConfig.RepairType.values());
         }
-
 
         @BeforeClass
         public static void setupClass() throws Exception
@@ -210,7 +205,7 @@ public class AutoRepairServiceTest
             AutoRepairUtils.insertNewRepairHistory(repairType, host1, now, now - 1000000);
             AutoRepairUtils.insertNewRepairHistory(repairType, host2, now, now - 1000000);
 
-            Set<String> hosts = instance.getOnGoingRepairHostIds(repairType);
+            Set<String> hosts = instance.getOnGoingRepairHostIds(repairType.name());
 
             assertEquals(ImmutableSet.of(host1.toString(), host2.toString()), hosts);
         }
@@ -228,7 +223,7 @@ public class AutoRepairServiceTest
         public T arg;
 
         @Parameterized.Parameter(2)
-        public BiConsumer<AutoRepairConfig.RepairType, T> setter;
+        public BiConsumer<String, T> setter;
 
         @Parameterized.Parameter(3)
         public Function<AutoRepairConfig.RepairType, T> getter;
@@ -239,15 +234,14 @@ public class AutoRepairServiceTest
             return Stream.of(
             forEachRepairType(true, AutoRepairService.instance::setAutoRepairEnabled, config::isAutoRepairEnabled),
             forEachRepairType(100, AutoRepairService.instance::setRepairThreads, config::getRepairThreads),
-            forEachRepairType(200, AutoRepairService.instance::setRepairSubRangeNum, config::getRepairSubRangeNum),
             forEachRepairType(400, AutoRepairService.instance::setRepairSSTableCountHigherThreshold, config::getRepairSSTableCountHigherThreshold),
             forEachRepairType(ImmutableSet.of("dc1", "dc2"), AutoRepairService.instance::setIgnoreDCs, config::getIgnoreDCs),
             forEachRepairType(true, AutoRepairService.instance::setPrimaryTokenRangeOnly, config::getRepairPrimaryTokenRangeOnly),
-            forEachRepairType(600, AutoRepairService.instance::setParallelRepairPercentageInGroup, config::getParallelRepairPercentage),
-            forEachRepairType(700, AutoRepairService.instance::setParallelRepairCountInGroup, config::getParallelRepairCount),
-            forEachRepairType(true, AutoRepairService.instance::setMVRepairEnabled, config::getMVRepairEnabled),
-            forEachRepairType(ImmutableSet.of(InetAddressAndPort.getLocalHost()), AutoRepairService.instance::setRepairPriorityForHosts, AutoRepairUtils::getPriorityHosts),
-            forEachRepairType(ImmutableSet.of(InetAddressAndPort.getLocalHost()), AutoRepairService.instance::setForceRepairForHosts, SetterTests::isLocalHostForceRepair)
+            forEachRepairType(600, AutoRepairService.instance::setParallelRepairPercentage, config::getParallelRepairPercentage),
+            forEachRepairType(700, AutoRepairService.instance::setParallelRepairCount, config::getParallelRepairCount),
+            forEachRepairType(true, AutoRepairService.instance::setMVRepairEnabled, config::getMaterializedViewRepairEnabled),
+            forEachRepairType(InetAddressAndPort.getLocalHost().getHostAddressAndPort(), (repairType, commaSeparatedHostSet) -> AutoRepairService.instance.setRepairPriorityForHosts(repairType, (String) commaSeparatedHostSet), AutoRepairUtils::getPriorityHosts),
+            forEachRepairType(InetAddressAndPort.getLocalHost().getHostAddressAndPort(), (repairType, commaSeparatedHostSet) -> AutoRepairService.instance.setForceRepairForHosts(repairType, (String) commaSeparatedHostSet), SetterTests::isLocalHostForceRepair)
             ).flatMap(Function.identity()).collect(Collectors.toList());
         }
 
@@ -256,7 +250,7 @@ public class AutoRepairServiceTest
             UUID hostId = Gossiper.instance.getHostId(InetAddressAndPort.getLocalHost());
             UntypedResultSet resultSet = QueryProcessor.executeInternal(String.format(
             "SELECT force_repair FROM %s.%s WHERE host_id = %s and repair_type = '%s'",
-            SchemaConstants.DISTRIBUTED_KEYSPACE_NAME, AutoRepairKeyspace.AUTO_REPAIR_HISTORY, hostId, type));
+            SchemaConstants.DISTRIBUTED_KEYSPACE_NAME, SystemDistributedKeyspace.AUTO_REPAIR_HISTORY, hostId, type));
 
             if (!resultSet.isEmpty() && resultSet.one().getBoolean("force_repair"))
             {
@@ -265,7 +259,7 @@ public class AutoRepairServiceTest
             return ImmutableSet.of();
         }
 
-        private static <T> Stream<Object[]> forEachRepairType(T arg, BiConsumer<AutoRepairConfig.RepairType, T> setter, Function<AutoRepairConfig.RepairType, T> getter)
+        private static <T> Stream<Object[]> forEachRepairType(T arg, BiConsumer<String, T> setter, Function<AutoRepairConfig.RepairType, T> getter)
         {
             Object[][] testCases = new Object[AutoRepairConfig.RepairType.values().length][4];
             for (AutoRepairConfig.RepairType repairType : AutoRepairConfig.RepairType.values())
@@ -292,19 +286,27 @@ public class AutoRepairServiceTest
         {
             QueryProcessor.executeInternal(String.format(
             "TRUNCATE %s.%s",
-            SchemaConstants.DISTRIBUTED_KEYSPACE_NAME, AutoRepairKeyspace.AUTO_REPAIR_HISTORY));
+            SchemaConstants.DISTRIBUTED_KEYSPACE_NAME, SystemDistributedKeyspace.AUTO_REPAIR_HISTORY));
             QueryProcessor.executeInternal(String.format(
             "TRUNCATE %s.%s",
-            SchemaConstants.DISTRIBUTED_KEYSPACE_NAME, AutoRepairKeyspace.AUTO_REPAIR_PRIORITY));
+            SchemaConstants.DISTRIBUTED_KEYSPACE_NAME, SystemDistributedKeyspace.AUTO_REPAIR_PRIORITY));
         }
 
         @Test
         public void testSetters()
         {
-            System.setProperty("cassandra.streaming.requires_cdc_replay", "false");
-            System.setProperty("cassandra.streaming.requires_view_build_during_repair", "false");
-            setter.accept(repairType, arg);
-            assertEquals(arg, getter.apply(repairType));
+            DatabaseDescriptor.setCDCOnRepairEnabled(false);
+            DatabaseDescriptor.setMaterializedViewsOnRepairEnabled(false);
+            setter.accept(repairType.name(), arg);
+            T actualConfig = getter.apply(repairType);
+            if (actualConfig instanceof Set)
+                // When performing a setRepairPriorityForHosts or setForceRepairForHosts, a comma-separated list of
+                // ip addresses is provided as input. The configuration is expected to return a Set of Strings that
+                // represent the configured IP addresses. This especial handling allows verification of this special
+                // case where one of the entries in the Set must match the configured input.
+                assertThat(actualConfig).satisfiesAnyOf(entry -> assertThat(entry.toString()).contains(arg.toString()));
+            else
+                assertThat(actualConfig).isEqualTo(arg);
         }
     }
 }

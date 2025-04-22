@@ -50,11 +50,11 @@ import com.google.common.base.Suppliers;
 
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import org.apache.cassandra.config.ParameterizedClass;
 import org.apache.cassandra.io.util.File;
 import org.apache.cassandra.io.util.FileInputStreamPlus;
 import org.apache.cassandra.io.util.FileOutputStreamPlus;
 import org.apache.cassandra.repair.autorepair.IAutoRepairTokenRangeSplitter;
-import org.apache.cassandra.utils.concurrent.*;
 import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -86,6 +86,7 @@ import org.apache.cassandra.io.util.DataOutputBufferFixed;
 import org.apache.cassandra.io.util.FileUtils;
 import org.apache.cassandra.locator.InetAddressAndPort;
 import org.apache.cassandra.security.ISslContextFactory;
+import org.apache.cassandra.utils.concurrent.FutureCombiner;
 import org.apache.cassandra.utils.concurrent.UncheckedInterruptedException;
 
 import static org.apache.cassandra.config.CassandraRelevantProperties.LINE_SEPARATOR;
@@ -686,11 +687,31 @@ public class FBUtilities
         }
     }
 
-    public static IAutoRepairTokenRangeSplitter newAutoRepairTokenRangeSplitter(String className) throws ConfigurationException
+    public static IAutoRepairTokenRangeSplitter newAutoRepairTokenRangeSplitter(ParameterizedClass parameterizedClass) throws ConfigurationException
     {
-        if (!className.contains("."))
-            className = "org.apache.cassandra.repair.autorepair." + className;
-        return FBUtilities.construct(className, "auto repair token splitter");
+        String className = parameterizedClass.class_name.contains(".") ?
+                           parameterizedClass.class_name :
+                           "org.apache.cassandra.repair.autorepair." + parameterizedClass.class_name;
+
+        try
+        {
+            Class<?> tokenRangeSplitterClass = Class.forName(className);
+            try
+            {
+                Map<String, String> parameters = parameterizedClass.parameters != null ? parameterizedClass.parameters : Collections.emptyMap();
+                // first attempt to initialize with Map arguments.
+                return (IAutoRepairTokenRangeSplitter) tokenRangeSplitterClass.getConstructor(Map.class).newInstance(parameters);
+            }
+            catch (NoSuchMethodException nsme)
+            {
+                // fall back on no argument constructor.
+                return (IAutoRepairTokenRangeSplitter)  tokenRangeSplitterClass.getConstructor().newInstance();
+            }
+        }
+        catch (Exception ex)
+        {
+            throw new ConfigurationException("Unable to create instance of IAutoRepairTokenRangeSplitter for " + className, ex);
+        }
     }
 
     /**

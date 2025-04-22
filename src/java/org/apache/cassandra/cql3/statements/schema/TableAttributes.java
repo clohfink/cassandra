@@ -26,7 +26,6 @@ import com.google.common.collect.Sets;
 import org.apache.cassandra.cql3.statements.PropertyDefinitions;
 import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.exceptions.SyntaxException;
-import org.apache.cassandra.repair.autorepair.AutoRepairConfig;
 import org.apache.cassandra.schema.AutoRepairParams;
 import org.apache.cassandra.schema.CachingParams;
 import org.apache.cassandra.schema.CompactionParams;
@@ -53,7 +52,7 @@ public final class TableAttributes extends PropertyDefinitions
             validBuilder.add(option.toString());
         validBuilder.add(ID);
         validKeywords = validBuilder.build();
-        obsoleteKeywords = ImmutableSet.of("dclocal_read_repair_chance", "read_repair_chance");
+        obsoleteKeywords = ImmutableSet.of("dclocal_read_repair_chance", "read_repair_chance", "automated_repair_full", "automated_repair_incremental");
     }
 
     public void validate()
@@ -157,11 +156,8 @@ public final class TableAttributes extends PropertyDefinitions
         if (hasOption(Option.READ_REPAIR))
             builder.readRepair(ReadRepairStrategy.fromString(getString(Option.READ_REPAIR)));
 
-        if (hasOption(Option.AUTOMATED_REPAIR_FULL))
-            builder.automatedRepairFull(AutoRepairParams.fromMap(AutoRepairConfig.RepairType.full, getMap(Option.AUTOMATED_REPAIR_FULL)));
-
-        if (hasOption(Option.AUTOMATED_REPAIR_INCREMENTAL))
-            builder.automatedRepairIncremental(AutoRepairParams.fromMap(AutoRepairConfig.RepairType.incremental, getMap(Option.AUTOMATED_REPAIR_INCREMENTAL)));
+        if (hasOption(Option.AUTO_REPAIR))
+            builder.automatedRepair(AutoRepairParams.fromMap(getMap(Option.AUTO_REPAIR)));
 
         return builder.build();
     }

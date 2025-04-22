@@ -25,28 +25,37 @@ import com.google.common.annotations.VisibleForTesting;
 
 import io.airlift.airline.Command;
 import io.airlift.airline.Option;
-import org.apache.cassandra.repair.autorepair.AutoRepairConfig;
 import org.apache.cassandra.tools.NodeProbe;
 import org.apache.cassandra.tools.NodeTool;
 import org.apache.cassandra.tools.nodetool.formatter.TableBuilder;
 
 import static com.google.common.base.Preconditions.checkArgument;
 
+/**
+ * Provides currently running auto-repair tasks.
+ */
 @Command(name = "autorepairstatus", description = "Print autorepair status")
 public class AutoRepairStatus extends NodeTool.NodeToolCmd
 {
     @VisibleForTesting
     @Option(title = "repair type", name = { "-t", "--repair-type" }, description = "Repair type")
-    protected AutoRepairConfig.RepairType repairType;
+    protected String repairType;
 
     @Override
     public void execute(NodeProbe probe)
     {
         checkArgument(repairType != null, "--repair-type is required.");
         PrintStream out = probe.output().out;
+
+        if (probe.isAutoRepairDisabled())
+        {
+            out.println("Auto-repair is not enabled");
+            return;
+        }
+
         TableBuilder table = new TableBuilder();
         table.add("Active Repairs");
-        Set<String> ongoingRepairHostIds = probe.getOnGoingRepairHostIds(repairType);
+        Set<String> ongoingRepairHostIds = probe.getAutoRepairOnGoingRepairHostIds(repairType);
         table.add(getSetString(ongoingRepairHostIds));
         table.printTo(out);
     }

@@ -3776,6 +3776,16 @@ public class DatabaseDescriptor
         conf.materialized_views_enabled = enableMaterializedViews;
     }
 
+    public static boolean isMaterializedViewsOnRepairEnabled()
+    {
+        return conf.materialized_views_on_repair_enabled;
+    }
+
+    public static void setMaterializedViewsOnRepairEnabled(boolean val)
+    {
+        conf.materialized_views_on_repair_enabled = val;
+    }
+
     public static boolean getSASIIndexesEnabled()
     {
         return conf.sasi_indexes_enabled;
@@ -3881,6 +3891,16 @@ public class DatabaseDescriptor
     public static void setCDCBlockWrites(boolean val)
     {
         conf.cdc_block_writes = val;
+    }
+
+    public static boolean isCDCOnRepairEnabled()
+    {
+        return conf.cdc_on_repair_enabled;
+    }
+
+    public static void setCDCOnRepairEnabled(boolean val)
+    {
+        conf.cdc_on_repair_enabled = val;
     }
 
     public static String getCDCLogLocation()
@@ -4766,6 +4786,26 @@ public class DatabaseDescriptor
         return timeUnit.toSeconds(value);
     }
 
+    public static boolean getLogOutOfTokenRangeRequests()
+    {
+        return conf.log_out_of_token_range_requests;
+    }
+
+    public static void setLogOutOfTokenRangeRequests(boolean enabled)
+    {
+        conf.log_out_of_token_range_requests = enabled;
+    }
+
+    public static boolean getRejectOutOfTokenRangeRequests()
+    {
+        return conf.reject_out_of_token_range_requests;
+    }
+
+    public static void setRejectOutOfTokenRangeRequests(boolean enabled)
+    {
+        conf.reject_out_of_token_range_requests = enabled;
+    }
+
     public static Config.CQLStartTime getCQLStartTime()
     {
         return conf.cql_start_time;
@@ -4790,23 +4830,9 @@ public class DatabaseDescriptor
         conf.incremental_repair_disk_headroom_reject_ratio = value;
     }
 
-    public static boolean getLogOutOfTokenRangeRequests()
+    @VisibleForTesting
+    public static void setInitialTokens(String initial_token)
     {
-        return conf.log_out_of_token_range_requests;
-    }
-
-    public static void setLogOutOfTokenRangeRequests(boolean enabled)
-    {
-        conf.log_out_of_token_range_requests = enabled;
-    }
-
-    public static boolean getRejectOutOfTokenRangeRequests()
-    {
-        return conf.reject_out_of_token_range_requests;
-    }
-
-    public static void setRejectOutOfTokenRangeRequests(boolean enabled)
-    {
-        conf.reject_out_of_token_range_requests = enabled;
+        conf.initial_token = initial_token;
     }
 }

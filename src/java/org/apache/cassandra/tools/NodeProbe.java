@@ -67,7 +67,6 @@ import org.apache.cassandra.batchlog.BatchlogManagerMBean;
 import org.apache.cassandra.db.ColumnFamilyStoreMBean;
 import org.apache.cassandra.db.compaction.CompactionManager;
 import org.apache.cassandra.db.compaction.CompactionManagerMBean;
-import org.apache.cassandra.exceptions.InvalidRequestException;
 import org.apache.cassandra.fql.FullQueryLoggerOptions;
 import org.apache.cassandra.fql.FullQueryLoggerOptionsCompositeData;
 import org.apache.cassandra.gms.FailureDetector;
@@ -78,14 +77,12 @@ import org.apache.cassandra.hints.HintsService;
 import org.apache.cassandra.hints.HintsServiceMBean;
 import org.apache.cassandra.locator.DynamicEndpointSnitchMBean;
 import org.apache.cassandra.locator.EndpointSnitchInfoMBean;
-import org.apache.cassandra.locator.InetAddressAndPort;
 import org.apache.cassandra.metrics.CassandraMetricsRegistry;
 import org.apache.cassandra.metrics.StorageMetrics;
 import org.apache.cassandra.metrics.TableMetrics;
 import org.apache.cassandra.metrics.ThreadPoolMetrics;
 import org.apache.cassandra.net.MessagingService;
 import org.apache.cassandra.net.MessagingServiceMBean;
-import org.apache.cassandra.repair.autorepair.AutoRepairConfig;
 import org.apache.cassandra.service.ActiveRepairServiceMBean;
 import org.apache.cassandra.service.AutoRepairService;
 import org.apache.cassandra.service.AutoRepairServiceMBean;
@@ -152,7 +149,6 @@ public class NodeProbe implements AutoCloseable
     protected PermissionsCacheMBean pcProxy;
     protected RolesCacheMBean rcProxy;
     protected AutoRepairServiceMBean autoRepairProxy;
-
     protected Output output;
     private boolean failed;
 
@@ -2200,40 +2196,42 @@ public class NodeProbe implements AutoCloseable
         return ssProxy.getDefaultKeyspaceReplicationFactor();
     }
 
-    public AutoRepairConfig getAutoRepairConfig() {
-        return autoRepairProxy.getAutoRepairConfig();
+    public boolean isAutoRepairDisabled()
+    {
+        return autoRepairProxy.isAutoRepairDisabled();
     }
 
-    public void setAutoRepairEnabled(AutoRepairConfig.RepairType repairType, boolean enabled)
+    public String autoRepairConfiguration()
+    {
+        return autoRepairProxy.getAutoRepairConfiguration();
+    }
+
+    public void setAutoRepairTokenRangeSplitterParameter(String repairType, String key, String value)
+    {
+        autoRepairProxy.setAutoRepairTokenRangeSplitterParameter(repairType, key, value);
+    }
+
+    public void setAutoRepairEnabled(String repairType, boolean enabled)
     {
         autoRepairProxy.setAutoRepairEnabled(repairType, enabled);
     }
 
-    public void setRepairThreads(AutoRepairConfig.RepairType repairType, int repairThreads)
+    public void setAutoRepairThreads(String repairType, int repairThreads)
     {
         autoRepairProxy.setRepairThreads(repairType, repairThreads);
     }
 
-    public void setRepairPriorityForHosts(AutoRepairConfig.RepairType repairType, Set<InetAddressAndPort> hosts)
+    public void setAutoRepairPriorityForHosts(String repairType, String commaSeparatedHostSet)
     {
-        autoRepairProxy.setRepairPriorityForHosts(repairType, hosts);
+        autoRepairProxy.setRepairPriorityForHosts(repairType, commaSeparatedHostSet);
     }
 
-    public Set<InetAddressAndPort> getRepairPriorityForHosts(AutoRepairConfig.RepairType repairType)
+    public void setAutoRepairForceRepairForHosts(String repairType, String commaSeparatedHostSet)
     {
-        return autoRepairProxy.getRepairHostPriority(repairType);
+        autoRepairProxy.setForceRepairForHosts(repairType, commaSeparatedHostSet);
     }
 
-    public void setForceRepairForHosts(AutoRepairConfig.RepairType repairType, Set<InetAddressAndPort> hosts){
-        autoRepairProxy.setForceRepairForHosts(repairType, hosts);
-    }
-
-    public void setRepairSubRangeNum(AutoRepairConfig.RepairType repairType, int repairSubRanges)
-    {
-        autoRepairProxy.setRepairSubRangeNum(repairType, repairSubRanges);
-    }
-
-    public void setRepairMinInterval(AutoRepairConfig.RepairType repairType, String minRepairInterval)
+    public void setAutoRepairMinInterval(String repairType, String minRepairInterval)
     {
         autoRepairProxy.setRepairMinInterval(repairType, minRepairInterval);
     }
@@ -2243,66 +2241,94 @@ public class NodeProbe implements AutoCloseable
         autoRepairProxy.setAutoRepairHistoryClearDeleteHostsBufferDuration(duration);
     }
 
-    public void setAutoRepairMaxRetriesCount(int retries)
+    public void startAutoRepairScheduler()
     {
-        autoRepairProxy.setAutoRepairMaxRetriesCount(retries);
+        autoRepairProxy.startScheduler();
     }
 
-    public void setAutoRepairRetryBackoff(String interval)
+    public void setAutoRepairMinRepairTaskDuration(String duration)
     {
-        autoRepairProxy.setAutoRepairRetryBackoff(interval);
+        autoRepairProxy.setAutoRepairMinRepairTaskDuration(duration);
     }
 
-    public void setRepairSSTableCountHigherThreshold(AutoRepairConfig.RepairType repairType, int ssTableHigherThreshold)
+    public void setAutoRepairSSTableCountHigherThreshold(String repairType, int ssTableHigherThreshold)
     {
         autoRepairProxy.setRepairSSTableCountHigherThreshold(repairType, ssTableHigherThreshold);
     }
 
-    public void setAutoRepairTableMaxRepairTime(AutoRepairConfig.RepairType repairType, String autoRepairTableMaxRepairTime)
+    public void setAutoRepairTableMaxRepairTime(String repairType, String autoRepairTableMaxRepairTime)
     {
         autoRepairProxy.setAutoRepairTableMaxRepairTime(repairType, autoRepairTableMaxRepairTime);
     }
 
-    public void setAutoRepairIgnoreDCs(AutoRepairConfig.RepairType repairType, Set<String> ignoreDCs)
+    public void setAutoRepairIgnoreDCs(String repairType, Set<String> ignoreDCs)
     {
         autoRepairProxy.setIgnoreDCs(repairType, ignoreDCs);
     }
 
-    public void setParallelRepairPercentageInGroup(AutoRepairConfig.RepairType repairType, int percentageInGroup) {
-        autoRepairProxy.setParallelRepairPercentageInGroup(repairType, percentageInGroup);
+    public void setAutoRepairParallelRepairPercentage(String repairType, int percentage)
+    {
+        autoRepairProxy.setParallelRepairPercentage(repairType, percentage);
     }
 
-    public void setParallelRepairCountInGroup(AutoRepairConfig.RepairType repairType, int countInGroup) {
-        autoRepairProxy.setParallelRepairCountInGroup(repairType, countInGroup);
+    public void setAutoRepairParallelRepairCount(String repairType, int count)
+    {
+        autoRepairProxy.setParallelRepairCount(repairType, count);
     }
 
-    public void setPrimaryTokenRangeOnly(AutoRepairConfig.RepairType repairType, boolean primaryTokenRangeOnly)
+    public void setAutoRepairAllowParallelReplicaRepair(String repairType, boolean enabled)
+    {
+        autoRepairProxy.setAllowParallelReplicaRepair(repairType, enabled);
+    }
+
+    public void setAutoRepairAllowParallelReplicaRepairAcrossSchedules(String repairType, boolean enabled)
+    {
+        autoRepairProxy.setAllowParallelReplicaRepairAcrossSchedules(repairType, enabled);
+    }
+
+    public void setAutoRepairPrimaryTokenRangeOnly(String repairType, boolean primaryTokenRangeOnly)
     {
         autoRepairProxy.setPrimaryTokenRangeOnly(repairType, primaryTokenRangeOnly);
     }
 
-    public void setMVRepairEnabled(AutoRepairConfig.RepairType repairType, boolean enabled)
+    public void setAutoRepairMaterializedViewRepairEnabled(String repairType, boolean enabled)
     {
         autoRepairProxy.setMVRepairEnabled(repairType, enabled);
     }
 
-    public List<String> mutateSSTableRepairedState(boolean repair, boolean preview, String keyspace, List<String> tables) throws InvalidRequestException
+    public List<String> mutateSSTableRepairedState(boolean repair, boolean preview, String keyspace, List<String> tables)
     {
         return ssProxy.mutateSSTableRepairedState(repair, preview, keyspace, tables);
     }
 
-    public List<String> getTablesForKeyspace(String keyspace) {
+    public List<String> getAutoRepairTablesForKeyspace(String keyspace)
+    {
         return ssProxy.getTablesForKeyspace(keyspace);
     }
 
-    public void setRepairSessionTimeout(AutoRepairConfig.RepairType repairType, String timeout)
+    public void setAutoRepairSessionTimeout(String repairType, String timeout)
     {
         autoRepairProxy.setRepairSessionTimeout(repairType, timeout);
     }
 
-    public Set<String> getOnGoingRepairHostIds(AutoRepairConfig.RepairType type)
+    public Set<String> getAutoRepairOnGoingRepairHostIds(String repairType)
     {
-        return autoRepairProxy.getOnGoingRepairHostIds(type);
+        return autoRepairProxy.getOnGoingRepairHostIds(repairType);
+    }
+
+    public void setAutoRepairRepairByKeyspace(String repairType, boolean enabled)
+    {
+        autoRepairProxy.setRepairByKeyspace(repairType, enabled);
+    }
+
+    public void setAutoRepairMaxRetriesCount(String repairType, int retries)
+    {
+        autoRepairProxy.setAutoRepairMaxRetriesCount(repairType, retries);
+    }
+
+    public void setAutoRepairRetryBackoff(String repairType, String interval)
+    {
+        autoRepairProxy.setAutoRepairRetryBackoff(repairType, interval);
     }
 }
 
