@@ -19,8 +19,11 @@
 package org.apache.cassandra.db;
 
 import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
+import java.util.Random;
 
+import com.google.common.hash.Hasher;
 import com.google.common.hash.Hashing;
 import org.junit.Assert;
 import org.junit.BeforeClass;
@@ -127,4 +130,111 @@ public class DigestTest
         assertArrayEquals(digests[2].digest(), Arrays.copyOfRange(h, 16, 32));
     }
 
+    /**
+     * Helper method to compute the 128-bit hash using Guava's Murmur3_128 hasher.
+     *
+     * @param input the byte array to hash.
+     * @return the 16-byte (128-bit) hash.
+     */
+    private byte[] computeGuavaHash(byte[] input) {
+        Hasher hasher = Hashing.murmur3_128().newHasher();
+        hasher.putBytes(input);
+        return hasher.hash().asBytes();
+    }
+
+    /**
+     * Test that an empty input produces the same hash.
+     */
+    @Test
+    public void testEmptyInput() {
+        byte[] input = new byte[0];
+
+        Murmur3Digest myDigest = new Murmur3Digest();
+        myDigest.update(input, 0, input.length);
+        byte[] myHash = myDigest.digest();
+
+        byte[] guavaHash = computeGuavaHash(input);
+        Assert.assertArrayEquals("Empty input hash mismatch", guavaHash, myHash);
+    }
+
+    /**
+     * Test using a simple string input.
+     */
+    @Test
+    public void testStringInput() {
+        String inputStr = "The quick brown fox jumps over the lazy dog";
+        byte[] input = inputStr.getBytes(StandardCharsets.UTF_8);
+
+        // Test using the byte array update
+        Murmur3Digest digestFromArray = new Murmur3Digest();
+        digestFromArray.update(input, 0, input.length);
+        byte[] hashFromArray = digestFromArray.digest();
+
+        // Compute reference hash from Guava
+        byte[] guavaHash = computeGuavaHash(input);
+        Assert.assertArrayEquals("Byte array input hash mismatch", guavaHash, hashFromArray);
+
+        // Test using an array-backed ByteBuffer update
+        ByteBuffer bbArray = ByteBuffer.wrap(input);
+        Murmur3Digest digestFromArrayBuffer = new Murmur3Digest();
+        digestFromArrayBuffer.update(bbArray, bbArray.position(), bbArray.remaining());
+        byte[] hashFromArrayBuffer = digestFromArrayBuffer.digest();
+        Assert.assertArrayEquals("Array-backed ByteBuffer hash mismatch", guavaHash, hashFromArrayBuffer);
+    }
+
+    /**
+     * Test that using a direct ByteBuffer produces the same hash.
+     */
+    @Test
+    public void testDirectByteBuffer() {
+        String inputStr = "Sample data for direct ByteBuffer test.";
+        byte[] input = inputStr.getBytes(StandardCharsets.UTF_8);
+
+        // Create a direct ByteBuffer and fill it.
+        ByteBuffer directBuffer = ByteBuffer.allocateDirect(input.length);
+        directBuffer.put(input);
+        directBuffer.flip();
+
+        Murmur3Digest myDigest = new Murmur3Digest();
+        myDigest.update(directBuffer, directBuffer.position(), directBuffer.remaining());
+        byte[] myHash = myDigest.digest();
+
+        byte[] guavaHash = computeGuavaHash(input);
+        Assert.assertArrayEquals("Direct ByteBuffer hash mismatch", guavaHash, myHash);
+    }
+
+    /**
+     * Test that incremental updates (splitting the input over multiple update calls)
+     * produce the same hash as a single update.
+     */
+    @Test
+    public void testIncrementalUpdates() {
+        // Create random data of 1024 bytes.
+        byte[] input = new byte[1024];
+        new Random(42).nextBytes(input);
+
+        // Compute hash using a single update call.
+        Murmur3Digest digestSingle = new Murmur3Digest();
+        digestSingle.update(input, 0, input.length);
+        byte[] hashSingle = digestSingle.digest();
+
+        // Compute hash using multiple update calls (splitting input into chunks).
+        Murmur3Digest digestIncremental = new Murmur3Digest();
+        int chunkSize = input.length / 10;
+        int offset = 0;
+        while (offset < input.length) {
+            int len = Math.min(chunkSize, input.length - offset);
+            digestIncremental.update(input, offset, len);
+            offset += len;
+        }
+        byte[] hashIncremental = digestIncremental.digest();
+
+        // Reference hash from Guava
+        byte[] guavaHash = computeGuavaHash(input);
+
+        Assert.assertArrayEquals("Incremental update hash mismatch (single vs. incremental)",
+                                 hashSingle, hashIncremental);
+        Assert.assertArrayEquals("Incremental update hash mismatch (Guava vs. incremental)",
+                                 guavaHash, hashIncremental);
+    }
 }

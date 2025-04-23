@@ -380,7 +380,7 @@
     </condition>
 
     <!-- needed to compile org.apache.cassandra.utils.JMXServerUtils -->
-    <condition property="jdk11-javac-exports" value="--add-exports java.rmi/sun.rmi.registry=ALL-UNNAMED --add-exports java.rmi/sun.rmi.transport.tcp=ALL-UNNAMED" else="">
+    <condition property="jdk11-javac-exports" value="--add-exports java.rmi/sun.rmi.registry=ALL-UNNAMED --add-exports java.rmi/sun.rmi.transport.tcp=ALL-UNNAMED --add-exports java.base/sun.nio.ch=ALL-UNNAMED" else="">
         <not>
             <equals arg1="${ant.java.version}" arg2="1.8"/>
         </not>

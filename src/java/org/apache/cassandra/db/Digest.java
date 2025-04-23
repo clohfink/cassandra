@@ -84,7 +84,7 @@ public class Digest
         };
     }
 
-    Digest(Hasher hasher)
+    public Digest(Hasher hasher)
     {
         this.hasher = hasher;
     }

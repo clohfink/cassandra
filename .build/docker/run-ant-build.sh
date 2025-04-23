@@ -132,7 +132,7 @@ esac
 
 # figure out resource limits, scripts, and mounts for the test type
 if [[ "${target}" == *"dtest"* ]]; then
-    docker_flags="-m 10g --memory-swap 5g"
+    docker_flags="-m 10g --memory-swap 10g"
 else
     docker_flags="-m 5g --memory-swap 5g"
 fi
