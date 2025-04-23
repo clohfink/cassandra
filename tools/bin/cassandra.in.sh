@@ -68,7 +68,7 @@ if [ -n "$JAVA_HOME" ]; then
         fi
     done
 else
-    JAVA=`command -v java 2> /dev/null`
+    JAVA=/usr/bin/java
 fi
 
 if [ -z $JAVA ] ; then
