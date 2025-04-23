@@ -67,15 +67,13 @@ if [ -n "$JAVA_HOME" ]; then
             break
         fi
     done
-else
-    JAVA=/usr/bin/java
 fi
 
 if [ -z $JAVA ] ; then
-    echo Unable to find java executable. Check JAVA_HOME and PATH environment variables. >&2
+    echo "Unable to find java executable trying to use default java"
+    JAVA=/etc/alternatives/java
     exit 1;
 fi
-
 # Determine the sort of JVM we'll be running on.
 java_ver_output=`"${JAVA:-java}" -version 2>&1`
 jvmver=`echo "$java_ver_output" | grep '[openjdk|java] version' | awk -F'"' 'NR==1 {print $2}' | cut -d\- -f1`
