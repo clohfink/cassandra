@@ -99,12 +99,12 @@ if [ -n "$JAVA_HOME" ]; then
             break
         fi
     done
+else
+    JAVA=`command -v java 2> /dev/null`
 fi
 
-
 if [ -z $JAVA ] ; then
-    echo "Unable to find java executable trying to use default java"
-    JAVA=/etc/alternatives/java
+    echo Unable to find java executable. Check JAVA_HOME and PATH environment variables. >&2
     exit 1;
 fi
 
