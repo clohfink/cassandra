@@ -121,6 +121,8 @@ public final class SchemaKeyspace
               + "additional_write_policy text,"
               + "cdc boolean,"
               + "read_repair text,"
+              + "automated_repair_full blob," // no longer used,
+              + "automated_repair_incremental blob," // no longer used,
               + "auto_repair frozen<map<text, text>>,"
               + "PRIMARY KEY ((keyspace_name), table_name))");
 
