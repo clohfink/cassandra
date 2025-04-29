@@ -84,9 +84,8 @@ appender reference in the root level section below.
     </encoder>
   </appender>
 
-  <!-- Uncomment bellow and corresponding appender-ref to activate logback metrics
   <appender name="LogbackMetrics" class="com.codahale.metrics.logback.InstrumentedAppender" />
-   -->
+
   <appender name="ISSUES_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
     <file>${cassandra.logdir}/issues.log</file>
 
@@ -131,9 +130,7 @@ appender reference in the root level section below.
     <appender-ref ref="STDOUT" />
     <appender-ref ref="ISSUES_FILE" />
     <appender-ref ref="ASYNCDEBUGLOG" /> <!-- Comment this line to disable debug.log -->
-    <!--
     <appender-ref ref="LogbackMetrics" />
-    -->
   </root>
 
   <logger name="org.apache.cassandra" level="DEBUG"/>

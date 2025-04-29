@@ -362,5 +362,7 @@ if [ "x$MX4J_PORT" != "x" ]; then
     fi
 fi
 
+#JVM_OPTS="$JVM_OPTS -Dspectator-agent.slf4j.simpleLogger.defaultLogLevel=debug"
+
 JVM_OPTS="$JVM_OPTS $JVM_EXTRA_OPTS"
 
