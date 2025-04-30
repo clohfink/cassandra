@@ -275,6 +275,33 @@ public final class TableParams
                           .toString();
     }
 
+
+    /**
+     * This provides backwards compatibility with C* 4.1.8.50 ignoring the AUTO_REPAIR option when creating an ID
+     */
+    public String toDeterministicString()
+    {
+        return MoreObjects.toStringHelper(this)
+                          .add(Option.COMMENT.toString(), comment)
+                          .add(Option.BLOOM_FILTER_FP_CHANCE.toString(), bloomFilterFpChance)
+                          .add(Option.CRC_CHECK_CHANCE.toString(), crcCheckChance)
+                          .add(Option.GC_GRACE_SECONDS.toString(), gcGraceSeconds)
+                          .add(Option.DEFAULT_TIME_TO_LIVE.toString(), defaultTimeToLive)
+                          .add(Option.MEMTABLE_FLUSH_PERIOD_IN_MS.toString(), memtableFlushPeriodInMs)
+                          .add(Option.MIN_INDEX_INTERVAL.toString(), minIndexInterval)
+                          .add(Option.MAX_INDEX_INTERVAL.toString(), maxIndexInterval)
+                          .add(Option.SPECULATIVE_RETRY.toString(), speculativeRetry)
+                          .add(Option.CACHING.toString(), caching)
+                          .add(Option.COMPACTION.toString(), compaction)
+                          .add(Option.COMPRESSION.toString(), compression)
+                          .add(Option.MEMTABLE.toString(), memtable)
+                          .add(Option.EXTENSIONS.toString(), extensions)
+                          .add(Option.CDC.toString(), cdc)
+                          .add(Option.READ_REPAIR.toString(), readRepair)
+                          .addValue("automated_repair_full=AutoRepairParams{options={full={enabled=true}, incremental={enabled=true}}}, automated_repair_incremental=AutoRepairParams{options={full={enabled=true}, incremental={enabled=true}}}")
+                          .toString();
+    }
+
     public void appendCqlTo(CqlBuilder builder, boolean isView)
     {
         // option names should be in alphabetical order

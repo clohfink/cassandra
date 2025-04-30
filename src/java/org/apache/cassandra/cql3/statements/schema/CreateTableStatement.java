@@ -190,7 +190,7 @@ public final class CreateTableStatement extends AlterSchemaStatement
                                           .add("partitionKeyColumns", partitionKeyColumns)
                                           .add("clusteringColumns", clusteringColumns)
                                           .add("clusteringOrder", clusteringOrder)
-                                          .add("attrs", attrs.asNewTableParams())
+                                          .add("attrs", attrs.asNewTableParams().toDeterministicString())
                                           .add("useCompactStorage", useCompactStorage)
                                           .toString();
 

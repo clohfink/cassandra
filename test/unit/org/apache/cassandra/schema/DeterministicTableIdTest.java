@@ -30,6 +30,7 @@ import org.apache.cassandra.cql3.CQLTester;
 import org.apache.cassandra.db.ColumnFamilyStore;
 import org.apache.cassandra.db.Keyspace;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertThat;
 import static org.hamcrest.CoreMatchers.equalTo;
 import static org.hamcrest.CoreMatchers.not;
@@ -67,6 +68,14 @@ public class DeterministicTableIdTest extends CQLTester
     public void afterTest()
     {
         schemaChange(DROP_TABLE_QUERY);
+    }
+
+    @Test
+    public void knownIdTest()
+    {
+        UUID tableId1 = createTableAndGetTableId(CREATE_TABLE_QUERY_1);
+        // generated off v4.1.50, if this is different it means we open ourselves to data loss in mixed mode
+        assertEquals("Table ID should be 7728cc44-1aa5-3b51-838e-22f67773f03f", UUID.fromString("7728cc44-1aa5-3b51-838e-22f67773f03f"), tableId1);
     }
 
     @Test
