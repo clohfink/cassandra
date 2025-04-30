@@ -20,10 +20,13 @@ package com.netflix.cassandra.metrics;
 
 import java.net.URL;
 import java.nio.file.Paths;
+import java.util.Optional;
 
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertTrue;
 
 public class ResourcesMetricsTest
 {
@@ -95,5 +98,73 @@ public class ResourcesMetricsTest
 
         assertEquals(expectedAverageDelay, reader.getMetrics().coreAveragedtotalDelay());
         assertEquals(expectedAverageRunningTime, reader.getMetrics().coreAveragedtotalRunningTime());
+    }
+
+    @Test
+    public void test_PressureMetrics_DoNotExist()
+    {
+        ResourcesMetrics.PSIReader reader = new ResourcesMetrics.PSIReader("nonexistent_path");
+        assertNotNull(reader.getMetrics());
+        assertTrue(reader.getMetrics().getPressure(ResourcesMetrics.PSIMeasurement.PressureType.CPU).isEmpty());
+        assertTrue(reader.getMetrics().getPressure(ResourcesMetrics.PSIMeasurement.PressureType.MEMORY).isEmpty());
+        assertTrue(reader.getMetrics().getPressure(ResourcesMetrics.PSIMeasurement.PressureType.IO).isEmpty());
+    }
+
+    @Test
+    public void test_PressureMetrics_NormalCase()
+    {
+        URL resource = getClass().getClassLoader().getResource("netflix/metrics/mock_pressure");
+        String dir = Paths.get(resource.getPath()).toString();
+
+        ResourcesMetrics.PSIReader reader = new ResourcesMetrics.PSIReader(dir);
+        assertNotNull(reader.getMetrics());
+        Optional<ResourcesMetrics.PSIMeasurement> cpu = reader.getMetrics().getPressure(ResourcesMetrics.PSIMeasurement.PressureType.CPU);
+        Optional<ResourcesMetrics.PSIMeasurement> memory = reader.getMetrics().getPressure(ResourcesMetrics.PSIMeasurement.PressureType.MEMORY);
+        Optional<ResourcesMetrics.PSIMeasurement> io = reader.getMetrics().getPressure(ResourcesMetrics.PSIMeasurement.PressureType.IO);
+
+        assertTrue(cpu.isPresent());
+        assertTrue(memory.isPresent());
+        assertTrue(io.isPresent());
+
+        for (ResourcesMetrics.PSIMeasurement measurement : new ResourcesMetrics.PSIMeasurement[]{cpu.get(), memory.get(), io.get()})
+        {
+            assertEquals(1.11, measurement.shortAverage(), 0.001);
+            assertEquals(2.22, measurement.mediumAverage(), 0.001);
+            assertEquals(3.33, measurement.longAverage(), 0.001);
+        }
+    }
+
+    @Test
+    public void test_PressureMetrics_OnlyCPU()
+    {
+        URL resource = getClass().getClassLoader().getResource("netflix/metrics/mock_pressure_cpu_only");
+        String dir = Paths.get(resource.getPath()).toString();
+
+        ResourcesMetrics.PSIReader reader = new ResourcesMetrics.PSIReader(dir);
+        assertNotNull(reader.getMetrics());
+        Optional<ResourcesMetrics.PSIMeasurement> cpu = reader.getMetrics().getPressure(ResourcesMetrics.PSIMeasurement.PressureType.CPU);
+        Optional<ResourcesMetrics.PSIMeasurement> memory = reader.getMetrics().getPressure(ResourcesMetrics.PSIMeasurement.PressureType.MEMORY);
+        Optional<ResourcesMetrics.PSIMeasurement> io = reader.getMetrics().getPressure(ResourcesMetrics.PSIMeasurement.PressureType.IO);
+
+        assertTrue(cpu.isPresent());
+        assertTrue(memory.isEmpty());
+        assertTrue(io.isEmpty());
+    }
+
+    @Test
+    public void test_PressureMetrics_Malformed()
+    {
+        URL resource = getClass().getClassLoader().getResource("netflix/metrics/mock_pressure_malformed");
+        String dir = Paths.get(resource.getPath()).toString();
+
+        ResourcesMetrics.PSIReader reader = new ResourcesMetrics.PSIReader(dir);
+        assertNotNull(reader.getMetrics());
+        Optional<ResourcesMetrics.PSIMeasurement> cpu = reader.getMetrics().getPressure(ResourcesMetrics.PSIMeasurement.PressureType.CPU);
+        Optional<ResourcesMetrics.PSIMeasurement> memory = reader.getMetrics().getPressure(ResourcesMetrics.PSIMeasurement.PressureType.MEMORY);
+        Optional<ResourcesMetrics.PSIMeasurement> io = reader.getMetrics().getPressure(ResourcesMetrics.PSIMeasurement.PressureType.IO);
+
+        assertTrue(cpu.isEmpty());
+        assertTrue(memory.isEmpty());
+        assertTrue(io.isEmpty());
     }
 }

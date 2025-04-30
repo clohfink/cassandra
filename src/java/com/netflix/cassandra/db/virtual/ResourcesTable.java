@@ -20,6 +20,8 @@ package com.netflix.cassandra.db.virtual;
 
 import java.lang.management.ManagementFactory;
 import java.lang.management.OperatingSystemMXBean;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
@@ -48,6 +50,7 @@ public class ResourcesTable extends AbstractVirtualTable
 
     public static final String TABLE_NAME = "resource_util";
     private final CpuUsageMonitor monitor;
+    private final ThreadsWaitingMonitor threadsWaitingMonitor;
 
     ResourcesTable(String keyspace)
     {
@@ -60,6 +63,8 @@ public class ResourcesTable extends AbstractVirtualTable
                            .build());
         monitor = new CpuUsageMonitor();
         monitor.startMonitoring();
+        threadsWaitingMonitor = new ThreadsWaitingMonitor();
+        threadsWaitingMonitor.startMonitoring();
     }
 
     public static double clampAndRound(double value)
@@ -85,20 +90,28 @@ public class ResourcesTable extends AbstractVirtualTable
         SimpleDataSet result = new SimpleDataSet(metadata());
         double cpu = clampAndRound(monitor.getAverageCpuUsage() / 100.0);
         double disk = clampAndRound(DiskUsageMonitor.instance.getDiskUsage());
+        double threadsWaiting = threadsWaitingMonitor.getAverageThreadsWaiting();
 
-        ResourcesMetrics.SchedStatMetrics schedStatMetrics = ResourcesMetrics.schedStatReader.getMetrics();
-        double threadsWaiting = schedStatMetrics.coreAveragedtotalRunningTime() == 0 ? 0 :
-        round(((double) TimeUnit.NANOSECONDS.toSeconds(schedStatMetrics.coreAveragedtotalDelay())
-                                       / TimeUnit.NANOSECONDS.toSeconds(schedStatMetrics.coreAveragedtotalRunningTime()) * 100.0));
+        ResourcesMetrics.PSIMetrics psiMetrics = ResourcesMetrics.psiReader.getMetrics();
+        double cpuPressureShort = psiMetrics.getPressure(ResourcesMetrics.PSIMeasurement.PressureType.CPU)
+                                            .map(ResourcesMetrics.PSIMeasurement::shortAverage).orElse(0.0);
+        double cpuPressureMed = psiMetrics.getPressure(ResourcesMetrics.PSIMeasurement.PressureType.CPU)
+                                          .map(ResourcesMetrics.PSIMeasurement::mediumAverage).orElse(0.0);
+        double cpuPressureLong = psiMetrics.getPressure(ResourcesMetrics.PSIMeasurement.PressureType.CPU)
+                                           .map(ResourcesMetrics.PSIMeasurement::longAverage).orElse(0.0);
 
         result.row("compute").column(VALUE, cpu);
         result.row("disk").column(VALUE, disk);
         result.row("threadsWaiting").column(VALUE, threadsWaiting);
+        result.row("cpuPressureShort").column(VALUE, cpuPressureShort);
+        result.row("cpuPressureMed").column(VALUE, cpuPressureMed);
+        result.row("cpuPressureLong").column(VALUE, cpuPressureLong);
 
         return result;
     }
 
-    public static class CpuUsageMonitor {
+    public static class CpuUsageMonitor
+    {
         // Number of samples in the sliding window (one per second for 60 seconds)
         private static final int WINDOW_SIZE = 60;
 
@@ -137,6 +150,58 @@ public class ResourcesTable extends AbstractVirtualTable
         {
             scheduler.shutdown();
         }
+    }
 
+    public static class ThreadsWaitingMonitor
+    {
+        static final int WINDOW_SIZE = 10;
+        final List<ResourcesMetrics.SchedStatMetrics> buffer = new ArrayList<>();
+        ResourcesMetrics.SchedStatMetrics previousMeasure;
+
+        public ThreadsWaitingMonitor()
+        {
+            previousMeasure = ResourcesMetrics.schedStatReader.getMetrics();
+        }
+
+        public void startMonitoring()
+        {
+            scheduler.scheduleWithFixedDelay(() -> {
+                ResourcesMetrics.SchedStatMetrics currentMeasure = ResourcesMetrics.schedStatReader.getMetrics();
+                ResourcesMetrics.SchedStatMetrics diff = new ResourcesMetrics.SchedStatMetrics(
+                currentMeasure.coreAveragedtotalDelay() - previousMeasure.coreAveragedtotalDelay(),
+                currentMeasure.coreAveragedtotalRunningTime() - previousMeasure.coreAveragedtotalRunningTime()
+                );
+                synchronized (buffer)
+                {
+                    buffer.add(diff);
+                    if (buffer.size() > WINDOW_SIZE)
+                    {
+                        buffer.remove(0);
+                    }
+                }
+                previousMeasure = currentMeasure;
+            }, 0, 1, TimeUnit.MINUTES);
+        }
+
+        public double getAverageThreadsWaiting()
+        {
+            synchronized (buffer)
+            {
+                if (buffer.isEmpty())
+                {
+                    return 0;
+                }
+                double totalDelay = 0;
+                double totalRunningTime = 0;
+
+                for (ResourcesMetrics.SchedStatMetrics measure : buffer)
+                {
+                    totalDelay += measure.coreAveragedtotalDelay();
+                    totalRunningTime += measure.coreAveragedtotalRunningTime();
+                }
+                return totalRunningTime == 0 ? 0 :
+                       round(((totalDelay / totalRunningTime)));
+            }
+        }
     }
 }

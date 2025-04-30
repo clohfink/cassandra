@@ -20,7 +20,13 @@ package com.netflix.cassandra.metrics;
 
 import java.io.BufferedReader;
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.EnumMap;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.regex.Pattern;
 
 import com.google.common.collect.ImmutableList;
@@ -41,7 +47,9 @@ public class ResourcesMetrics
     private static final Logger logger = LoggerFactory.getLogger(ResourcesMetrics.class);
     private static final MetricNameFactory factory = new DefaultNameFactory("Resources");
     private static final String SCHEDSTAT = System.getProperty("cassandra.schedstat_file", "/proc/schedstat");
+    private static final String PSI = System.getProperty("cassandra.pressure_dir", "/proc/pressure");
     public static final SchedStatReader schedStatReader = new SchedStatReader(SCHEDSTAT);
+    public static final PSIReader psiReader = new PSIReader(PSI);
     public static final Gauge<Long> schedulingDelay = Metrics.register(
     factory.createMetricName("CpuDelay"),
     new SchedulingDelayGauge(schedStatReader)
@@ -193,6 +201,159 @@ public class ResourcesMetrics
         public long coreAveragedtotalDelay()
         {
             return coreAveragedtotalDelay;
+        }
+    }
+
+    public static class PSIReader
+    {
+        // Note: The PSI metrics support changing these times and providing custom keys.
+        // This needs to be updated to match those keys if we want to change from the defaults.
+        private static final String shortAverageKey = "avg10";
+        private static final String mediumAverageKey = "avg60";
+        private static final String longAverageKey = "avg300";
+        private static final List<String> measureKeys = ImmutableList.of(shortAverageKey, mediumAverageKey, longAverageKey);
+
+        private List<PSIMeasurement.PressureType> typesToRead;
+        private final String path;
+
+        public PSIReader(String path)
+        {
+            File file = new File(path);
+            if (file.exists())
+            {
+                typesToRead = new ArrayList<>();
+                this.path = path;
+                for (PSIMeasurement.PressureType type : PSIMeasurement.PressureType.values())
+                {
+                    File pressureFile = new File(path, type.name().toLowerCase());
+                    if (!pressureFile.exists())
+                    {
+                        logger.warn("Pressure metrics file {} does not exist", pressureFile.path());
+                    }
+                    else
+                    {
+                        typesToRead.add(type);
+                    }
+                }
+            }
+            else
+            {
+                this.path = null;
+                logger.warn("Pressure metrics directory {} does not exist", path);
+            }
+        }
+
+        public PSIMetrics getMetrics()
+        {
+            if (path == null)
+                return new PSIMetrics(Collections.emptyList());
+
+            List<PSIMeasurement> measurements = new ArrayList<>();
+            for (PSIMeasurement.PressureType type : typesToRead) {
+                File file = new File(path, type.name().toLowerCase());
+                try (BufferedReader reader = new BufferedReader(new FileReader(file.absolutePath())))
+                {
+                    String line;
+                    while ((line = reader.readLine()) != null)
+                    {
+                        if (line.startsWith("some"))
+                        {
+                            Map<String, Double> values = new HashMap<>();
+                            for (String key : measureKeys) {
+                                // The format is "some key1=0.0 key2=0.0 key3=0.0 total=123"
+                                // Algorithm:
+                                //   start index is the key. End index is the next space.
+                                //   parse the value between the start and end index.
+                                //   if either index is -1, skip the line.
+                                String searchString = key + '=';
+                                int startIndex = line.indexOf(searchString);
+                                int endIndex = line.indexOf(' ', startIndex);
+                                if (startIndex == -1 || endIndex == -1)
+                                {
+                                    // bailout— the format is invalid
+                                    logger.error("Invalid format for line while reading key {} for pressure {}: {}", key, type, line);
+                                    return new PSIMetrics(Collections.emptyList());
+                                }
+                                else
+                                {
+                                    String valueString = line.substring(startIndex + searchString.length(), endIndex);
+                                    values.put(key, Double.parseDouble(valueString));
+                                }
+                            }
+                            measurements.add(new PSIMeasurement(type,
+                                                                values.get(shortAverageKey),
+                                                                values.get(mediumAverageKey),
+                                                                values.get(longAverageKey)));
+                        }
+                    }
+                }
+                catch (IOException e)
+                {
+                    logger.error("Error reading psi metrics from {}", path, e);
+                }
+            }
+
+            return new PSIMetrics(measurements);
+        }
+    }
+
+
+    public static class PSIMeasurement {
+        public enum PressureType
+        {
+            CPU, MEMORY, IO
+        }
+
+        private final Double shortAverage;
+        private final Double mediumAverage;
+        private final Double longAverage;
+        private final PressureType type;
+
+        public PSIMeasurement(PressureType type, Double shortAverage, Double mediumAverage, Double longAverage)
+        {
+            this.type = type;
+            this.shortAverage = shortAverage;
+            this.mediumAverage = mediumAverage;
+            this.longAverage = longAverage;
+        }
+
+        public Double shortAverage()
+        {
+            return shortAverage;
+        }
+
+        public Double mediumAverage()
+        {
+            return mediumAverage;
+        }
+
+        public Double longAverage()
+        {
+            return longAverage;
+        }
+
+        public PressureType type()
+        {
+            return type;
+        }
+    }
+
+    public static class PSIMetrics
+    {
+        private final EnumMap<PSIMeasurement.PressureType, PSIMeasurement> measurements;
+
+        public PSIMetrics(List<PSIMeasurement> pressures)
+        {
+            measurements = new EnumMap<>(PSIMeasurement.PressureType.class);
+            for (PSIMeasurement pressure : pressures)
+            {
+                measurements.put(pressure.type(), pressure);
+            }
+        }
+
+        public Optional<PSIMeasurement> getPressure(PSIMeasurement.PressureType type)
+        {
+            return Optional.ofNullable(measurements.get(type));
         }
     }
 }
