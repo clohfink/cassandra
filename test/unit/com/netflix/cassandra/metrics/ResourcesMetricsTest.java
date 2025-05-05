@@ -25,6 +25,7 @@ import java.util.Optional;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
@@ -105,9 +106,9 @@ public class ResourcesMetricsTest
     {
         ResourcesMetrics.PSIReader reader = new ResourcesMetrics.PSIReader("nonexistent_path");
         assertNotNull(reader.getMetrics());
-        assertTrue(reader.getMetrics().getPressure(ResourcesMetrics.PSIMeasurement.PressureType.CPU).isEmpty());
-        assertTrue(reader.getMetrics().getPressure(ResourcesMetrics.PSIMeasurement.PressureType.MEMORY).isEmpty());
-        assertTrue(reader.getMetrics().getPressure(ResourcesMetrics.PSIMeasurement.PressureType.IO).isEmpty());
+        assertFalse(reader.getMetrics().getPressure(ResourcesMetrics.PSIMeasurement.PressureType.CPU).isPresent());
+        assertFalse(reader.getMetrics().getPressure(ResourcesMetrics.PSIMeasurement.PressureType.MEMORY).isPresent());
+        assertFalse(reader.getMetrics().getPressure(ResourcesMetrics.PSIMeasurement.PressureType.IO).isPresent());
     }
 
     @Test
@@ -147,8 +148,8 @@ public class ResourcesMetricsTest
         Optional<ResourcesMetrics.PSIMeasurement> io = reader.getMetrics().getPressure(ResourcesMetrics.PSIMeasurement.PressureType.IO);
 
         assertTrue(cpu.isPresent());
-        assertTrue(memory.isEmpty());
-        assertTrue(io.isEmpty());
+        assertFalse(memory.isPresent());
+        assertFalse(io.isPresent());
     }
 
     @Test
@@ -163,8 +164,8 @@ public class ResourcesMetricsTest
         Optional<ResourcesMetrics.PSIMeasurement> memory = reader.getMetrics().getPressure(ResourcesMetrics.PSIMeasurement.PressureType.MEMORY);
         Optional<ResourcesMetrics.PSIMeasurement> io = reader.getMetrics().getPressure(ResourcesMetrics.PSIMeasurement.PressureType.IO);
 
-        assertTrue(cpu.isEmpty());
-        assertTrue(memory.isEmpty());
-        assertTrue(io.isEmpty());
+        assertFalse(cpu.isPresent());
+        assertFalse(memory.isPresent());
+        assertFalse(io.isPresent());
     }
 }
