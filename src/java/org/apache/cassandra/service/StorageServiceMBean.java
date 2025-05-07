@@ -324,6 +324,9 @@ public interface StorageServiceMBean extends NotificationEmitter
     void setReadHashing(String algorithm);
     String getReadHashing();
 
+    String getGlobalHeapBufferAllocator();
+    void setGlobalHeapBufferAllocator(String value);
+    
     /**
      * Forces major compaction of a single keyspace
      */

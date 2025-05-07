@@ -4620,6 +4620,18 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
         return DatabaseDescriptor.getReadHasher().toString();
     }
 
+    @Override
+    public String getGlobalHeapBufferAllocator()
+    {
+        return DatabaseDescriptor.getGlobalHeapBufferAllocator().toString();
+    }
+
+    @Override
+    public void setGlobalHeapBufferAllocator(String value)
+    {
+        DatabaseDescriptor.setGlobalHeapBufferAllocator(value);
+    }
+
     /**
      * @param allowIndexes Allow index CF names to be passed in
      * @param autoAddIndexes Automatically add secondary indexes if a CF has them

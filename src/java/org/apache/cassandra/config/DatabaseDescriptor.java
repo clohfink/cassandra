@@ -2944,6 +2944,16 @@ public class DatabaseDescriptor
         setNativeTransportMaxMessageSizeInBytes(newNativeTransportMaxMessageSizeInBytes);
     }
 
+    public static Config.HeapBufferAllocatorType getGlobalHeapBufferAllocator()
+    {
+        return conf.global_heap_buffer_allocator;
+    }
+
+    public static void setGlobalHeapBufferAllocator(String value)
+    {
+        conf.global_heap_buffer_allocator = Config.HeapBufferAllocatorType.valueOf(value);
+    }
+
     public static Config.ReadHashingFunction getReadHasher()
     {
         return conf.read_hashing;

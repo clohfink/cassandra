@@ -104,6 +104,14 @@ public class Config
         murmur3;
     }
 
+    public enum HeapBufferAllocatorType
+    {
+        unpooled,
+        global
+    }
+
+    public volatile HeapBufferAllocatorType global_heap_buffer_allocator = HeapBufferAllocatorType.unpooled;
+
     /**
      * end Netflix specific configuration options
      */

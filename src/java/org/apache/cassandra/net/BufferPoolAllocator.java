@@ -28,6 +28,8 @@ import io.netty.buffer.UnpooledUnsafeDirectByteBuf;
 import org.apache.cassandra.io.compress.BufferType;
 import org.apache.cassandra.utils.memory.BufferPool;
 import org.apache.cassandra.utils.memory.BufferPools;
+import org.apache.cassandra.config.DatabaseDescriptor;
+import org.apache.cassandra.config.Config;
 
 import static java.lang.Integer.max;
 
@@ -54,6 +56,8 @@ public abstract class BufferPoolAllocator extends AbstractByteBufAllocator
     @Override
     protected ByteBuf newHeapBuffer(int minCapacity, int maxCapacity)
     {
+        if (DatabaseDescriptor.getGlobalHeapBufferAllocator() == Config.HeapBufferAllocatorType.global)
+            return newDirectBuffer(minCapacity, maxCapacity);
         return Unpooled.buffer(minCapacity, maxCapacity);
     }
 
