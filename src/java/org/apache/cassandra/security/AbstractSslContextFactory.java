@@ -18,7 +18,6 @@
 
 package org.apache.cassandra.security;
 
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -31,11 +30,12 @@ import javax.net.ssl.TrustManagerFactory;
 
 import com.google.common.collect.ImmutableList;
 
+import com.netflix.metatron.ipc.security.MetatronKeyManagerFactory;
 import com.netflix.metatron.ipc.security.MetatronSslContext;
+import com.netflix.metatron.ipc.security.MetatronTrustManagerFactory;
 import io.netty.handler.ssl.ApplicationProtocolConfig;
 import io.netty.handler.ssl.CipherSuiteFilter;
 import io.netty.handler.ssl.ClientAuth;
-import io.netty.handler.ssl.JdkSslContext;
 import io.netty.handler.ssl.OpenSsl;
 import io.netty.handler.ssl.SslContext;
 import io.netty.handler.ssl.SslContextBuilder;
@@ -212,16 +212,45 @@ abstract public class AbstractSslContextFactory implements ISslContextFactory
     @Override
     public SslContext createNettyMetatronSslContext(SocketType socketType, CipherSuiteFilter cipherFilter) throws SSLException
     {
-        ApplicationProtocolConfig ALPN = new ApplicationProtocolConfig(
-        ApplicationProtocolConfig.Protocol.ALPN, ApplicationProtocolConfig.SelectorFailureBehavior.NO_ADVERTISE,
-        ApplicationProtocolConfig.SelectedListenerFailureBehavior.ACCEPT, Collections.unmodifiableList(Arrays.asList(MetatronSslContext.MetatronSslContextSpi.getDefaultProtocol())));
+        ApplicationProtocolConfig alpn = new ApplicationProtocolConfig(
+        ApplicationProtocolConfig.Protocol.ALPN,
+        ApplicationProtocolConfig.SelectorFailureBehavior.NO_ADVERTISE,
+        ApplicationProtocolConfig.SelectedListenerFailureBehavior.ACCEPT,
+        Collections.singletonList(MetatronSslContext.MetatronSslContextSpi.getDefaultProtocol())
+        );
 
-        if (socketType == SocketType.SERVER)
-               return new JdkSslContext(MetatronSslContext.forServer(), false, null, cipherFilter,
-                        ALPN, this.require_client_auth ? ClientAuth.REQUIRE : ClientAuth.NONE, null, false);
+        try
+        {
+            KeyManagerFactory kmf = new MetatronKeyManagerFactory();
+            TrustManagerFactory tmf = new MetatronTrustManagerFactory();
 
-        return new JdkSslContext(MetatronSslContext.forClient(DatabaseDescriptor.getClusterName()), true, null, cipherFilter,
-                ALPN, this.require_client_auth ? ClientAuth.REQUIRE : ClientAuth.NONE, null, false);
+            SslContextBuilder builder;
+
+            if (socketType == SocketType.SERVER)
+            {
+                kmf.init(MetatronKeyManagerFactory.serverParameters());
+                tmf.init(MetatronTrustManagerFactory.serverParameters());
+                builder = SslContextBuilder.forServer(kmf);
+            }
+            else
+            {
+                kmf.init(MetatronKeyManagerFactory.clientParameters());
+                tmf.init(MetatronTrustManagerFactory.clientParameters(DatabaseDescriptor.getClusterName()));
+                builder = SslContextBuilder.forClient().keyManager(kmf);
+            }
+
+            return builder
+                   .trustManager(tmf)
+                   .sslProvider(openSslIsAvailable ? SslProvider.OPENSSL : SslProvider.JDK)
+                   .ciphers(null, cipherFilter)
+                   .applicationProtocolConfig(alpn)
+                   .clientAuth(this.require_client_auth ? ClientAuth.REQUIRE : ClientAuth.NONE)
+                   .build();
+        }
+        catch (Exception e)
+        {
+            throw new SSLException("Failed to initialize Netty SSL context", e);
+        }
     }
 
     /**
