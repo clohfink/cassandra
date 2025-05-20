@@ -62,6 +62,12 @@ public class ResourcesMetrics
     factory.createMetricName("DiskUtil"),
     () -> DiskUsageMonitor.instance.getDiskUsage()
     );
+    public static final Gauge<Double> psiGauge = Metrics.register(
+    factory.createMetricName("CpuPSI"),
+    () -> psiReader.getMetrics().getPressure(PSIMeasurement.PressureType.CPU)
+                   .map(PSIMeasurement::mediumAverage)
+                   .orElse(0.0)
+    );
 
     public static class SchedulingDelayGauge implements Gauge<Long>
     {

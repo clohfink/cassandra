@@ -268,6 +268,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
         // This is just to force the class to init so it gets registered in JMX
         ResourcesMetrics.schedulingDelay.getValue();
         ResourcesMetrics.runningTime.getValue();
+        ResourcesMetrics.psiGauge.getValue();
     }
     public static final int INDEFINITE = -1;
     public static final int RING_DELAY_MILLIS = getRingDelay(); // delay after which we assume ring has stablized
