@@ -19,7 +19,10 @@
 package com.netflix.cassandra.db.virtual;
 
 import java.nio.ByteBuffer;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 
@@ -48,6 +51,7 @@ import org.apache.cassandra.db.rows.Unfiltered;
 import org.apache.cassandra.db.rows.UnfilteredRowIterator;
 import org.apache.cassandra.db.rows.UnfilteredRowIterators;
 import org.apache.cassandra.db.virtual.VirtualTable;
+import org.apache.cassandra.locator.IEndpointSnitch;
 import org.apache.cassandra.locator.InetAddressAndPort;
 import org.apache.cassandra.net.Message;
 import org.apache.cassandra.schema.ColumnMetadata;
@@ -66,7 +70,7 @@ public class ClusterPartitionCount extends ScopedTable
     public static final String NAME = "partition_count";
     private Cache<String, ICardinality> cache;
 
-    protected ClusterPartitionCount(String keyspace)
+    public ClusterPartitionCount(String keyspace)
     {
         super(TableMetadata.builder(keyspace, NAME)
                            .comment("Estimate of total number of partitions in the cluster, tombstones unresolved")
@@ -112,7 +116,20 @@ public class ClusterPartitionCount extends ScopedTable
         }
         SinglePartitionReadCommand read = createReadCommand(partitionKey);
         Map<InetAddressAndPort, Future<Message<ReadResponse>>> results = sendReadCommandToAllEndpoints(read);
-        waitForFutures(results, Clock.Global.currentTimeMillis(), DatabaseDescriptor.getReadRpcTimeout(TimeUnit.MILLISECONDS) / 2);
+
+        // Track completed racks
+        Map<String, Set<InetAddressAndPort>> rackResponses = new HashMap<>();
+        Map<String, Set<InetAddressAndPort>> rackNodes = new HashMap<>();
+        IEndpointSnitch snitch = DatabaseDescriptor.getEndpointSnitch();
+
+        // First pass to identify all racks and their nodes
+        for (InetAddressAndPort endpoint : results.keySet())
+        {
+            String rack = snitch.getRack(endpoint);
+            rackNodes.computeIfAbsent(rack, k -> new HashSet<>()).add(endpoint);
+        }
+
+        waitForFullRack(results, rackNodes, rackResponses, snitch);
 
         // see MetadataCollector.cardinality
         ICardinality base = new HyperLogLogPlus(13, 25);
@@ -129,6 +146,62 @@ public class ClusterPartitionCount extends ScopedTable
         cache.put(cacheKey, base);
 
         return result;
+    }
+
+    /**
+     * Waits for responses from a full rack of nodes.
+     *
+     * @param results The map of results from each endpoint
+     * @param rackNodes Map of rack names to their nodes
+     * @param rackResponses Map to track which nodes in each rack have responded
+     * @param snitch The endpoint snitch to get rack information
+     * @return true if a full rack was found, false if timeout occurred
+     */
+    public boolean waitForFullRack(Map<InetAddressAndPort, Future<Message<ReadResponse>>> results,
+                                   Map<String, Set<InetAddressAndPort>> rackNodes,
+                                   Map<String, Set<InetAddressAndPort>> rackResponses,
+                                   IEndpointSnitch snitch)
+    {
+        long startTime = Clock.Global.currentTimeMillis();
+        long timeout = DatabaseDescriptor.getReadRpcTimeout(TimeUnit.MILLISECONDS) / 2;
+        boolean hasFullRack = false;
+
+        while (!hasFullRack && Clock.Global.currentTimeMillis() - startTime < timeout)
+        {
+            for (Map.Entry<InetAddressAndPort, Future<Message<ReadResponse>>> entry : results.entrySet())
+            {
+                if (entry.getValue().isDone())
+                {
+                    String rack = snitch.getRack(entry.getKey());
+                    rackResponses.computeIfAbsent(rack, k -> new HashSet<>()).add(entry.getKey());
+
+                    // Check if we have a full rack
+                    Set<InetAddressAndPort> rackNodesSet = rackNodes.get(rack);
+                    Set<InetAddressAndPort> rackResponsesSet = rackResponses.get(rack);
+                    if (rackNodesSet != null && rackResponsesSet != null &&
+                        rackNodesSet.size() == rackResponsesSet.size())
+                    {
+                        hasFullRack = true;
+                        break;
+                    }
+                }
+            }
+
+            if (!hasFullRack)
+            {
+                try
+                {
+                    Thread.sleep(10); // Small sleep to prevent busy waiting
+                }
+                catch (InterruptedException e)
+                {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+        }
+
+        return hasFullRack;
     }
 
     /**
