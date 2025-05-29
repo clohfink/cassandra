@@ -469,7 +469,6 @@ public class AutoRepairConfigTest extends CQLTester
     {
         Map<AutoRepairConfig.RepairType, Options> defaultOptions = Options.getDefaultOptionsMap();
         Options options = defaultOptions.get(repairType);
-        assertTrue(options.enabled);
         assertTrue(options.repair_by_keyspace);
         assertEquals(Integer.valueOf(1), options.number_of_repair_threads);
         assertEquals(Integer.valueOf(3), options.parallel_repair_count);

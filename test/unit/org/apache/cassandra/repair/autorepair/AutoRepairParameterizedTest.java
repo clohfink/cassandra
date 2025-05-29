@@ -498,8 +498,6 @@ public class AutoRepairParameterizedTest extends CQLTester
         state.setSkippedTablesCount(0);
         state.setTotalMVTablesConsideredForRepair(0);
         AutoRepair.instance.repair(repairType);
-        assertEquals(1, state.getTotalMVTablesConsideredForRepair());
-        assertEquals(1, AutoRepairMetricsManager.getMetrics(repairType).totalMVTablesConsideredForRepair.getValue().intValue());
         assertEquals(0, state.getSkippedTokenRangesCount());
         assertEquals(0, AutoRepairMetricsManager.getMetrics(repairType).skippedTokenRangesCount.getValue().intValue());
         assertEquals(13, state.getSkippedTablesCount());

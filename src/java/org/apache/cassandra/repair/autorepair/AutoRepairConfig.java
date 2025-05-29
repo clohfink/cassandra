@@ -423,9 +423,9 @@ public class AutoRepairConfig implements Serializable
         private static Map<AutoRepairConfig.RepairType, Options> initializeDefaultOptions()
         {
             Map<AutoRepairConfig.RepairType, Options> options = new EnumMap<>(AutoRepairConfig.RepairType.class);
-            options.put(AutoRepairConfig.RepairType.FULL, getDefaultOptions());
+            options.put(AutoRepairConfig.RepairType.FULL, getDisabledOptions());
             options.put(RepairType.INCREMENTAL, getDefaultOptions());
-            options.put(RepairType.PREVIEW_REPAIRED, getDefaultOptions());
+            options.put(RepairType.PREVIEW_REPAIRED, getDisabledOptions());
 
             return options;
         }
@@ -450,6 +450,14 @@ public class AutoRepairConfig implements Serializable
         }
 
         @VisibleForTesting
+        protected static Options getDisabledOptions()
+        {
+            Options opts = getDefaultOptions();
+            opts.enabled = false;
+            return opts;
+        }
+
+        @VisibleForTesting
         protected static Options getDefaultOptions()
         {
             Options opts = new Options();
@@ -467,7 +475,7 @@ public class AutoRepairConfig implements Serializable
             opts.force_repair_new_node = false;
             opts.table_max_repair_time = new DurationSpec.IntSecondsBound("6h");
             opts.materialized_view_repair_enabled = false;
-            opts.auto_migrate = false;
+            opts.auto_migrate = true;
             opts.token_range_splitter = new ParameterizedClass(DEFAULT_SPLITTER.getName(), Collections.emptyMap());
             opts.initial_scheduler_delay = new DurationSpec.IntSecondsBound("5m");
             opts.repair_session_timeout = new DurationSpec.IntSecondsBound("1h");
