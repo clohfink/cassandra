@@ -43,6 +43,7 @@ import com.google.common.base.MoreObjects;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
 
+import com.netflix.cassandra.db.virtual.NetflixViewsKeyspace;
 import org.apache.cassandra.dht.Range;
 import org.apache.cassandra.dht.Splitter;
 import org.apache.cassandra.dht.Token;
@@ -1105,7 +1106,7 @@ public class AutoRepairUtils
         {
             repair = false;
         }
-        if (ks.getName().equalsIgnoreCase(SchemaConstants.TRACE_KEYSPACE_NAME))
+        if (ks.getName().equalsIgnoreCase(SchemaConstants.TRACE_KEYSPACE_NAME) || ks.getName().equalsIgnoreCase(NetflixViewsKeyspace.NAME))
         {
             // by default, ignore the tables under system_traces as they do not have
             // that much important data

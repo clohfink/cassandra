@@ -36,7 +36,6 @@ import org.apache.cassandra.schema.SchemaKeyspace;
 import org.apache.cassandra.schema.SchemaKeyspaceTables;
 import org.apache.cassandra.utils.ByteBufferUtil;
 
-import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 
 /**
@@ -76,16 +75,7 @@ public class AutoRepairTablePropertyTest extends CQLTester
             Row row = builder.build();
             ColumnMetadata autoRepair = tables.metadata().getColumn(ByteBufferUtil.bytes("auto_repair"));
             ColumnData data = row.getCell(autoRepair);
-            if (autoRepairOn)
-            {
-                assertNotNull(data);
-            }
-            else
-            {
-                // if AutoRepair is not enabled, the column should not be returned
-                // as part of the system_schema.tables mutation
-                assertNull(data);
-            }
+            assertNull(data);
         }
     }
 }

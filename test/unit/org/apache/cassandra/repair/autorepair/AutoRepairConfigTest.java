@@ -480,7 +480,7 @@ public class AutoRepairConfigTest extends CQLTester
         assertEquals(new DurationSpec.IntSecondsBound("6h"), options.table_max_repair_time);
         assertFalse(options.materialized_view_repair_enabled);
         assertEquals(new ParameterizedClass(RepairTokenRangeSplitter.class.getName(), Collections.emptyMap()), options.token_range_splitter);
-        assertEquals(new DurationSpec.IntSecondsBound("5m"), options.initial_scheduler_delay);
+        assertEquals(new DurationSpec.IntSecondsBound("15m"), options.initial_scheduler_delay);
         assertEquals(new DurationSpec.IntSecondsBound("1h"), options.repair_session_timeout);
         assertEquals(new DurationSpec.IntSecondsBound("1h"), options.min_repair_interval);
     }
@@ -501,7 +501,7 @@ public class AutoRepairConfigTest extends CQLTester
         assertEquals(new DurationSpec.IntSecondsBound("6h"), config.global_settings.table_max_repair_time);
         assertFalse(config.global_settings.materialized_view_repair_enabled);
         assertEquals(new ParameterizedClass(RepairTokenRangeSplitter.class.getName(), Collections.emptyMap()), config.global_settings.token_range_splitter);
-        assertEquals(new DurationSpec.IntSecondsBound("5m"), config.global_settings.initial_scheduler_delay);
+        assertEquals(new DurationSpec.IntSecondsBound("15m"), config.global_settings.initial_scheduler_delay);
         assertEquals(new DurationSpec.IntSecondsBound("1h"), config.global_settings.repair_session_timeout);
         assertEquals(new DurationSpec.IntSecondsBound("1h"), config.global_settings.min_repair_interval);
     }

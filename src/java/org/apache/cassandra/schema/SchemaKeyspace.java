@@ -430,7 +430,7 @@ public final class SchemaKeyspace
         ColumnFilter.Builder builder = ColumnFilter.allRegularColumnsBuilder(partition.metadata(), false);
         for (ColumnMetadata column : filter.fetchedColumns())
         {
-            if (!column.name.toString().equals("cdc"))
+            if (!column.name.toString().equals("cdc") && !column.name.toString().equals("auto_repair"))
                 builder.add(column);
         }
 
@@ -567,14 +567,6 @@ public final class SchemaKeyspace
         // in mixed operation with pre-4.1 versioned node during upgrades.
         if (params.memtable != MemtableParams.DEFAULT)
             builder.add("memtable", params.memtable.configurationKey());
-
-        // As above, only add the auto_repair column if the scheduler is enabled
-        // to avoid RTE in pre-5.1 versioned node during upgrades
-        if (DatabaseDescriptor.getRawConfig() != null
-            && DatabaseDescriptor.getAutoRepairConfig().isAutoRepairSchedulingEnabled())
-        {
-            builder.add("auto_repair", params.autoRepair.asMap());
-        }
     }
 
     private static void addAlterTableToSchemaMutation(TableMetadata oldTable, TableMetadata newTable, Mutation.SimpleBuilder builder)

@@ -477,7 +477,7 @@ public class AutoRepairConfig implements Serializable
             opts.materialized_view_repair_enabled = false;
             opts.auto_migrate = true;
             opts.token_range_splitter = new ParameterizedClass(DEFAULT_SPLITTER.getName(), Collections.emptyMap());
-            opts.initial_scheduler_delay = new DurationSpec.IntSecondsBound("5m");
+            opts.initial_scheduler_delay = new DurationSpec.IntSecondsBound("15m");
             opts.repair_session_timeout = new DurationSpec.IntSecondsBound("1h");
             opts.min_repair_interval = new DurationSpec.IntSecondsBound("1h");
 
