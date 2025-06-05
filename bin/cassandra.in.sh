@@ -48,7 +48,7 @@ fi
 cassandra_storagedir="$CASSANDRA_HOME/data"
 
 # JAVA_HOME can optionally be set here
-#JAVA_HOME=/usr/local/jdk6
+JAVA_HOME=/usr/lib/jvm/zulu-11-$(dpkg --print-architecture)
 
 CLASSPATH="$CLASSPATH:$CASSANDRA_HOME/lib/*"
 
@@ -99,12 +99,16 @@ if [ -n "$JAVA_HOME" ]; then
             break
         fi
     done
-else
+fi
+
+if [ -z $JAVA ] ; then
     JAVA=`command -v java 2> /dev/null`
 fi
 
 if [ -z $JAVA ] ; then
     echo Unable to find java executable. Check JAVA_HOME and PATH environment variables. >&2
+    echo JAVA_HOME: $JAVA_HOME >&2
+    echo PATH: $PATH >&2
     exit 1;
 fi
 

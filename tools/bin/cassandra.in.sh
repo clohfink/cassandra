@@ -41,7 +41,7 @@ fi
 cassandra_storagedir="$CASSANDRA_HOME/data"
 
 # JAVA_HOME can optionally be set here
-#JAVA_HOME=/usr/local/jdk6
+JAVA_HOME=/usr/lib/jvm/zulu-11-$(dpkg --print-architecture)
 
 for jar in "$CASSANDRA_HOME"/tools/lib/*.jar; do
     CLASSPATH="$CLASSPATH:$jar"
@@ -67,14 +67,19 @@ if [ -n "$JAVA_HOME" ]; then
             break
         fi
     done
-else
+fi
+
+if [ -z $JAVA ] ; then
     JAVA=`command -v java 2> /dev/null`
 fi
 
 if [ -z $JAVA ] ; then
     echo Unable to find java executable. Check JAVA_HOME and PATH environment variables. >&2
+    echo JAVA_HOME: $JAVA_HOME >&2
+    echo PATH: $PATH >&2
     exit 1;
 fi
+
 # Determine the sort of JVM we'll be running on.
 java_ver_output=`"${JAVA:-java}" -version 2>&1`
 jvmver=`echo "$java_ver_output" | grep '[openjdk|java] version' | awk -F'"' 'NR==1 {print $2}' | cut -d\- -f1`
