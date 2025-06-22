@@ -88,3 +88,4 @@ fgrep "Time elapsed" $log_dir/* | sort -nk15 | tail -n 10
 if [[ "$ROCKET_TAG_TYPE" = "UNKNOWN" ]]; then  # Publish on version tag only
     cd pylib && ./build_and_publish.sh
 fi
+newt --app-type jenkins hollow-debs
