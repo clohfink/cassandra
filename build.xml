@@ -448,6 +448,9 @@
             <or>
                 <isset property="build.java.11"/>
                 <istrue value="${env.CASSANDRA_USE_JDK11}"/>
+                <not>
+                    <isset property="env.CASSANDRA_USE_JDK11"/>
+                </not>
             </or>
         </condition>
         <fail message="Inconsistent JDK11 options set">
