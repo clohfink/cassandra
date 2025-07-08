@@ -78,7 +78,7 @@ public class Config
     public volatile boolean enable_create_secondary_index = true; // default to true to avoid breaking tests
     public boolean upgrade_from_30_possible = false;
     public volatile DurationSpec.IntMinutesBound defaultMemtableFlushPeriod = new DurationSpec.IntMinutesBound("60m");
-    public volatile DurationSpec.IntMinutesBound partition_count_cache_expiry_min = new DurationSpec.IntMinutesBound("10m");
+    public volatile DurationSpec.IntMinutesBound partition_count_cache_expiry_min = new DurationSpec.IntMinutesBound("30m");
     public volatile boolean enable_dropped_columns = false;
 
     public volatile boolean enable_scheduled_compactions = false;
