@@ -9,9 +9,11 @@ This is Netflix's internal fork of Apache Cassandra 4.1, used for testing and be
 ## Build System
 
 ### Primary Build (Ant-based)
-- `ant` - Build using the main Ant build.xml (upstream Cassandra build)
+- `ant` - Build using the main Ant build.xml (upstream Cassandra build). Use this to test compile
 - `ant test` - Run all unit tests
 - `ant realclean` - Clean build artifacts
+- Always use `ant build -Duse.jdk11=true` not `ant compile` to check if it compiles
+- Dont use javac, use `ant build -Duse.jdk11=true` to test compiling
 
 ### Gradle Wrapper (Netflix packaging) - IGNORE
 - The `build.gradle` file is for Netflix internal packaging only
@@ -23,21 +25,11 @@ This is Netflix's internal fork of Apache Cassandra 4.1, used for testing and be
 - `ant testsome -Dtest.name=ClassName` - Run specific test class
 - `ant testsome -Dtest.name=org.apache.cassandra.dht.RangeStreamerTest -Dtest.methods=testSplitRangesForFetch` - Run specific test method
 
-## Architecture
-
-### Core Components
-- **Database Engine**: Located in `src/java/org/apache/cassandra/`
-  - `db/` - Core database functionality, storage engine, mutations
-  - `dht/` - Distributed hash table, partitioning, token management
-  - `gms/` - Gossip membership service for cluster communication
-  - `locator/` - Replication strategies and replica placement
-  - `net/` - Messaging system for inter-node communication
-  - `service/` - High-level database services (storage, repair, etc.)
-
 ### Configuration
 - Main config: `conf/cassandra.yaml`
 - `Config.java` - POJO representation of cassandra.yaml settings with defaults
 - `DatabaseDescriptor.java` - Singleton that controls access to configuration values
+- Add configuration option to `Config.java`, then add accessor and setter in `DatabaseDescriptor.java`
 
 ### Dependencies
 - Maintained in ant `build.xml`
@@ -52,6 +44,29 @@ This is a Netflix internal fork, not upstream Apache Cassandra:
 - Changes are made directly to this repository
 - No GitHub pull requests to upstream Apache Cassandra
 - Testing focuses on Netflix-specific use cases and benchmarking
+
+## Async Programming: Futures and Executors
+
+Cassandra uses a sophisticated custom async programming framework instead of standard Java futures.
+
+### Custom Future Framework
+- **Main Interface**: `org.apache.cassandra.utils.concurrent.Future` - Unifies Netty, Guava, and Java Future APIs
+- **Core Implementations**:
+  - `AbstractFuture` - Lock-free base implementation with atomic field updaters
+  - `AsyncFuture` - Non-blocking waits using wait queues for high concurrency
+  - `SyncFuture` - Synchronized implementation for thread-safe operations
+- **Promise Support**: `AsyncPromise`/`SyncPromise` extend Future with completion capabilities
+- **Utilities**: `ImmediateFuture` (pre-completed), `FutureCombiner` (multiple future coordination)
+
+### Custom Executor Architecture
+- **Core Pool**: `SharedExecutorPool` + `SEPExecutor` - Shared worker threads that can hop between executors
+- **Stage-Based**: `Stage` enum provides executors for READ, MUTATION, GOSSIP, etc. with per-stage concurrency
+- **Specialized**: 
+  - `InfiniteLoopExecutor` - Continuous background tasks
+  - `ImmediateExecutor` - Synchronous execution on calling thread
+- **Context-Aware**: `LocalAwareThreadPoolExecutorPlus` propagates thread-local context across async operations
+
+**Key Design**: Lock-free concurrency, ordered listener notifications, unified API across different Future libraries, and efficient resource utilization through shared worker pools.
 
 ## Key Files
 - `build.xml` - Main Ant build and dependency configuration
