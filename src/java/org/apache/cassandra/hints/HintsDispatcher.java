@@ -35,6 +35,7 @@ import org.apache.cassandra.net.Message;
 import org.apache.cassandra.net.MessagingService;
 import org.apache.cassandra.utils.concurrent.Condition;
 
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.apache.cassandra.hints.HintsDispatcher.Callback.Outcome.*;
 import static org.apache.cassandra.metrics.HintsServiceMetrics.updateDelayMetrics;
@@ -73,10 +74,11 @@ final class HintsDispatcher implements AutoCloseable
         this.abortRequested = abortRequested;
     }
 
-    static HintsDispatcher create(File file, RateLimiter rateLimiter, InetAddressAndPort address, UUID hostId, BooleanSupplier abortRequested)
+    static HintsDispatcher create(File file, AtomicReference<RateLimiter> rateLimiterRef, InetAddressAndPort address, UUID hostId, BooleanSupplier abortRequested)
     {
         int messagingVersion = MessagingService.instance().versions.get(address);
-        HintsDispatcher dispatcher = new HintsDispatcher(HintsReader.open(file, rateLimiter), hostId, address, messagingVersion, abortRequested);
+        HintsReader reader = HintsReader.open(file, rateLimiterRef);
+        HintsDispatcher dispatcher = new HintsDispatcher(reader, hostId, address, messagingVersion, abortRequested);
         HintDiagnostics.dispatcherCreated(dispatcher);
         return dispatcher;
     }

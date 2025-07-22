@@ -23,6 +23,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
@@ -33,7 +34,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import org.apache.cassandra.concurrent.ExecutorPlus;
-import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.io.FSReadError;
 import org.apache.cassandra.io.util.File;
 import org.apache.cassandra.locator.InetAddressAndPort;
@@ -57,12 +57,14 @@ final class HintsDispatchExecutor
     private final AtomicBoolean isPaused;
     private final Predicate<InetAddressAndPort> isAlive;
     private final Map<UUID, Future> scheduledDispatches;
+    private final AtomicReference<RateLimiter> rateLimiterRef;
 
-    HintsDispatchExecutor(File hintsDirectory, int maxThreads, AtomicBoolean isPaused, Predicate<InetAddressAndPort> isAlive)
+    HintsDispatchExecutor(File hintsDirectory, int maxThreads, AtomicBoolean isPaused, Predicate<InetAddressAndPort> isAlive, AtomicReference<RateLimiter> rateLimiterRef)
     {
         this.hintsDirectory = hintsDirectory;
         this.isPaused = isPaused;
         this.isAlive = isAlive;
+        this.rateLimiterRef = rateLimiterRef;
 
         scheduledDispatches = new ConcurrentHashMap<>();
         executor = executorFactory()
@@ -203,29 +205,17 @@ final class HintsDispatchExecutor
     {
         private final HintsStore store;
         private final UUID hostId;
-        private final RateLimiter rateLimiter;
 
         DispatchHintsTask(HintsStore store, UUID hostId, boolean isTransfer)
         {
             this.store = store;
             this.hostId = hostId;
-
-            // Rate limit is in bytes per second. Uses Double.MAX_VALUE if disabled (set to 0 in cassandra.yaml).
-            // Max rate is scaled by the number of nodes in the cluster (CASSANDRA-5272), unless we are transferring
-            // hints during decomission rather than dispatching them to their final destination.
-            // The goal is to bound maximum hints traffic going towards a particular node from the rest of the cluster,
-            // not total outgoing hints traffic from this node. This is why the rate limiter is not shared between
-            // all the dispatch tasks (as there will be at most one dispatch task for a particular host id at a time).
-            int nodesCount = isTransfer ? 1 : Math.max(1, StorageService.instance.getTokenMetadata().getAllEndpoints().size() - 1);
-            double throttleInBytes = DatabaseDescriptor.getHintedHandoffThrottleInKiB() * 1024.0 / nodesCount;
-            this.rateLimiter = RateLimiter.create(throttleInBytes == 0 ? Double.MAX_VALUE : throttleInBytes);
         }
 
         DispatchHintsTask(HintsStore store, UUID hostId)
         {
             this(store, hostId, false);
         }
-
 
         public void run()
         {
@@ -287,7 +277,7 @@ final class HintsDispatchExecutor
             InputPosition offset = store.getDispatchOffset(descriptor);
 
             BooleanSupplier shouldAbort = () -> !isAlive.test(address) || isPaused.get();
-            try (HintsDispatcher dispatcher = HintsDispatcher.create(file, rateLimiter, address, descriptor.hostId, shouldAbort))
+            try (HintsDispatcher dispatcher = HintsDispatcher.create(file, rateLimiterRef, address, descriptor.hostId, shouldAbort))
             {
                 if (offset != null)
                     dispatcher.seek(offset);
@@ -330,7 +320,7 @@ final class HintsDispatchExecutor
         {
             File file = descriptor.file(hintsDirectory);
 
-            try (HintsReader reader = HintsReader.open(file, rateLimiter))
+            try (HintsReader reader = HintsReader.open(file, rateLimiterRef))
             {
                 reader.forEach(page -> page.hintsIterator().forEachRemaining(HintsService.instance::writeForAllReplicas));
                 store.delete(descriptor);

@@ -21,8 +21,7 @@ import java.io.EOFException;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.Iterator;
-
-import javax.annotation.Nullable;
+import java.util.concurrent.atomic.AtomicReference;
 
 import com.google.common.primitives.Ints;
 import com.google.common.util.concurrent.RateLimiter;
@@ -58,22 +57,19 @@ class HintsReader implements AutoCloseable, Iterable<HintsReader.Page>
 
     private final HintsDescriptor descriptor;
     private final File file;
+
     private final ChecksummedDataInput input;
+    private final AtomicReference<RateLimiter> rateLimiterRef;
 
-    // we pass the RateLimiter into HintsReader itself because it's cheaper to calculate the size before the hint is deserialized
-    @Nullable
-    private final RateLimiter rateLimiter;
-
-    protected HintsReader(HintsDescriptor descriptor, File file, ChecksummedDataInput reader, RateLimiter rateLimiter)
+    protected HintsReader(HintsDescriptor descriptor, File file, ChecksummedDataInput reader, AtomicReference<RateLimiter> rateLimiterRef)
     {
         this.descriptor = descriptor;
         this.file = file;
         this.input = reader;
-        this.rateLimiter = rateLimiter;
+        this.rateLimiterRef = rateLimiterRef;
     }
 
-    @SuppressWarnings("resource") // HintsReader owns input
-    static HintsReader open(File file, RateLimiter rateLimiter)
+    static HintsReader open(File file, AtomicReference<RateLimiter> rateLimiterRef)
     {
         ChecksummedDataInput reader = ChecksummedDataInput.open(file);
         try
@@ -87,7 +83,7 @@ class HintsReader implements AutoCloseable, Iterable<HintsReader.Page>
             }
             else if (descriptor.isEncrypted())
                 reader = EncryptedChecksummedDataInput.upgradeInput(reader, descriptor.getCipher(), descriptor.createCompressor());
-            return new HintsReader(descriptor, file, reader, rateLimiter);
+            return new HintsReader(descriptor, file, reader, rateLimiterRef);
         }
         catch (IOException e)
         {
@@ -98,7 +94,7 @@ class HintsReader implements AutoCloseable, Iterable<HintsReader.Page>
 
     static HintsReader open(File file)
     {
-        return open(file, null);
+        return open(file, new AtomicReference<>());
     }
 
     public void close()
@@ -236,6 +232,7 @@ class HintsReader implements AutoCloseable, Iterable<HintsReader.Page>
             try
             {
                 hint = Hint.serializer.deserializeIfLive(input, now, size, descriptor.messagingVersion());
+                RateLimiter rateLimiter = rateLimiterRef.get();
                 if (rateLimiter != null && hint != null)
                     rateLimiter.acquire(size);
                 input.checkLimit(0);
@@ -339,6 +336,7 @@ class HintsReader implements AutoCloseable, Iterable<HintsReader.Page>
             input.limit(size);
 
             ByteBuffer buffer = Hint.serializer.readBufferIfLive(input, now, size, descriptor.messagingVersion());
+            RateLimiter rateLimiter = rateLimiterRef.get();
             if (rateLimiter != null && buffer != null)
                 rateLimiter.acquire(size);
 

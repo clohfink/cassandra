@@ -46,6 +46,8 @@ import com.google.common.collect.ImmutableSet;
 import com.google.common.primitives.Ints;
 import com.google.common.primitives.Longs;
 import com.google.common.util.concurrent.RateLimiter;
+
+import org.apache.cassandra.hints.HintsService;
 import org.apache.cassandra.repair.autorepair.AutoRepairConfig;
 import org.apache.commons.lang3.ArrayUtils;
 import org.apache.commons.lang3.StringUtils;
@@ -3277,6 +3279,7 @@ public class DatabaseDescriptor
     public static void setHintedHandoffThrottleInKiB(int throttleInKiB)
     {
         conf.hinted_handoff_throttle = new DataStorageSpec.IntKibibytesBound(throttleInKiB);
+        HintsService.instance.updateConfiguration();
     }
 
     public static int getBatchlogReplayThrottleInKiB()

@@ -28,6 +28,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
@@ -40,6 +41,7 @@ import org.apache.cassandra.utils.Clock;
 import org.apache.cassandra.utils.concurrent.Future;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import com.google.common.util.concurrent.RateLimiter;
 
 import org.apache.cassandra.concurrent.ScheduledExecutors;
 import org.apache.cassandra.config.DatabaseDescriptor;
@@ -85,6 +87,7 @@ public final class HintsService implements HintsServiceMBean
     private final HintsBufferPool bufferPool;
     final HintsDispatchExecutor dispatchExecutor;
     final AtomicBoolean isDispatchPaused;
+    private final AtomicReference<RateLimiter> sharedRateLimiter;
 
     private volatile boolean isShutDown = false;
 
@@ -112,7 +115,9 @@ public final class HintsService implements HintsServiceMBean
         bufferPool = new HintsBufferPool(bufferSize, writeExecutor::flushBuffer);
 
         isDispatchPaused = new AtomicBoolean(true);
-        dispatchExecutor = new HintsDispatchExecutor(hintsDirectory, maxDeliveryThreads, isDispatchPaused, failureDetector::isAlive);
+        sharedRateLimiter = new AtomicReference<>();
+        updateRateLimiter();
+        dispatchExecutor = new HintsDispatchExecutor(hintsDirectory, maxDeliveryThreads, isDispatchPaused, failureDetector::isAlive, sharedRateLimiter);
 
         // periodically empty the current content of the buffers
         int flushPeriod = DatabaseDescriptor.getHintsFlushPeriodInMS();
@@ -487,5 +492,40 @@ public final class HintsService implements HintsServiceMBean
     HintsBufferPool getHintsBufferPool()
     {
         return bufferPool;
+    }
+
+    private void updateRateLimiter()
+    {
+        int maxRf = 1;
+        try
+        {
+            for (Keyspace keyspace : Keyspace.all())
+            {
+                    maxRf = Math.max(maxRf, keyspace.getReplicationStrategy().getReplicationFactor().allReplicas);
+            }
+        }
+        catch (Exception e)
+        {
+            // if RF can't be determined, log a warning and continue
+            logger.warn("Failed to get maximum replication factor for hinted handoff throttling, using default value of 1", e);
+        }
+
+        maxRf = Math.max(1, maxRf - 1); // exclude self
+
+        // Rate limit is in bytes per second. Uses Double.MAX_VALUE if disabled (set to 0 in cassandra.yaml).
+        // The rate limiter is shared between all dispatch tasks and throttles based on the maximum replication factor
+        // across all keyspaces. This ensures we don't overwhelm a target node by limiting the total hints traffic
+        // it could receive from all source nodes simultaneously. For example, if max RF is 3, each node will be limited
+        // to 1/3 of the configured throttle rate, ensuring that even if all replicas stream hints to the same target,
+        // the total traffic won't exceed the configured limit.
+        double throttleInBytes = DatabaseDescriptor.getHintedHandoffThrottleInKiB() * 1024.0;
+        throttleInBytes = throttleInBytes == 0 ? Double.MAX_VALUE : Math.max(1024, throttleInBytes / maxRf);
+        logger.info("Setting hinted handoff throttle to {} bytes/sec", throttleInBytes);
+        sharedRateLimiter.set(RateLimiter.create(throttleInBytes));
+    }
+
+    public void updateConfiguration()
+    {
+        updateRateLimiter();
     }
 }
