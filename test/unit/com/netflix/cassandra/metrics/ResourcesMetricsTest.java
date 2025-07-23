@@ -168,4 +168,49 @@ public class ResourcesMetricsTest
         assertFalse(memory.isPresent());
         assertFalse(io.isPresent());
     }
+
+    @Test
+    public void test_getDiskUtilization_ValidRoot()
+    {
+        double utilization = ResourcesMetrics.getDiskUtilization();
+        assertTrue("Disk utilization should be between 0 and 1", utilization >= 0.0 && utilization <= 1.0);
+    }
+
+    @Test
+    public void test_getDiskUtilization_CustomRoot()
+    {
+        String originalProperty = System.getProperty("cassandra.disk_usage_root");
+        try
+        {
+            System.setProperty("cassandra.disk_usage_root", System.getProperty("java.io.tmpdir"));
+            double utilization = ResourcesMetrics.getDiskUtilization();
+            assertTrue("Disk utilization should be between 0 and 1", utilization >= 0.0 && utilization <= 1.0);
+        }
+        finally
+        {
+            if (originalProperty != null)
+                System.setProperty("cassandra.disk_usage_root", originalProperty);
+            else
+                System.clearProperty("cassandra.disk_usage_root");
+        }
+    }
+
+    @Test
+    public void test_getDiskUtilization_NonExistentPath()
+    {
+        String originalProperty = System.getProperty("cassandra.disk_usage_root");
+        try
+        {
+            System.setProperty("cassandra.disk_usage_root", "/nonexistent/path/that/should/not/exist");
+            double utilization = ResourcesMetrics.getDiskUtilization();
+            assertEquals("Non-existent path should return 0.0 utilization", 0.0, utilization, 0.001);
+        }
+        finally
+        {
+            if (originalProperty != null)
+                System.setProperty("cassandra.disk_usage_root", originalProperty);
+            else
+                System.clearProperty("cassandra.disk_usage_root");
+        }
+    }
 }

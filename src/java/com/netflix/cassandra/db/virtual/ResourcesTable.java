@@ -38,7 +38,6 @@ import org.apache.cassandra.db.virtual.AbstractVirtualTable;
 import org.apache.cassandra.db.virtual.SimpleDataSet;
 import org.apache.cassandra.dht.LocalPartitioner;
 import org.apache.cassandra.schema.TableMetadata;
-import org.apache.cassandra.service.disk.usage.DiskUsageMonitor;
 
 public class ResourcesTable extends AbstractVirtualTable
 {
@@ -89,7 +88,7 @@ public class ResourcesTable extends AbstractVirtualTable
     {
         SimpleDataSet result = new SimpleDataSet(metadata());
         double cpu = clampAndRound(monitor.getAverageCpuUsage() / 100.0);
-        double disk = clampAndRound(DiskUsageMonitor.instance.getDiskUsage());
+        double disk = clampAndRound(ResourcesMetrics.getDiskUtilization());
         double threadsWaiting = threadsWaitingMonitor.getAverageThreadsWaiting();
 
         ResourcesMetrics.PSIMetrics psiMetrics = ResourcesMetrics.psiReader.getMetrics();

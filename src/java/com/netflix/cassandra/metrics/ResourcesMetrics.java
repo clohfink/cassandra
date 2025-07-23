@@ -38,7 +38,6 @@ import org.apache.cassandra.io.util.File;
 import org.apache.cassandra.io.util.FileReader;
 import org.apache.cassandra.metrics.DefaultNameFactory;
 import org.apache.cassandra.metrics.MetricNameFactory;
-import org.apache.cassandra.service.disk.usage.DiskUsageMonitor;
 
 import static org.apache.cassandra.metrics.CassandraMetricsRegistry.Metrics;
 
@@ -60,8 +59,16 @@ public class ResourcesMetrics
     );
     public static final Gauge<Double> disk = Metrics.register(
     factory.createMetricName("DiskUtil"),
-    () -> DiskUsageMonitor.instance.getDiskUsage()
+    ResourcesMetrics::getDiskUtilization
     );
+
+    public static double getDiskUtilization()
+    {
+        File root = new File(System.getProperty("cassandra.disk_usage_root", "/"));
+        long total = root.toJavaIOFile().getTotalSpace();
+        long free = root.toJavaIOFile().getUsableSpace();
+        return total > 0 ? (double)(total - free) / total : 0.0;
+    }
     public static final Gauge<Double> psiGauge = Metrics.register(
     factory.createMetricName("CpuPSI"),
     () -> psiReader.getMetrics().getPressure(PSIMeasurement.PressureType.CPU)
