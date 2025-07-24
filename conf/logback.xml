@@ -134,4 +134,7 @@ appender reference in the root level section below.
   </root>
 
   <logger name="org.apache.cassandra" level="DEBUG"/>
+  
+  <!-- Suppress Metatron certificate verification errors -->
+  <logger name="com.netflix.metatron.ipc.security.MetatronTrustManagerFactory" level="WARN"/>
 </configuration>

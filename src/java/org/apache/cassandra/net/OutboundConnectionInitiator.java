@@ -389,9 +389,9 @@ public class OutboundConnectionInitiator<SuccessType extends OutboundConnectionI
                 JVMStabilityInspector.inspectThrowable(cause);
                 resultPromise.tryFailure(cause);
                 if (isCausedByConnectionReset(cause))
-                    logger.info("Failed to connect to peer {}", settings.connectToId(), cause);
+                    logger.info("Failed to connect to peer {}", settings.connectToId());
                 else
-                    logger.error("Failed to handshake with peer {}", settings.connectToId(), cause);
+                    logger.info("Failed to handshake with peer {}", settings.connectToId());
                 isClosed = true;
                 ctx.close();
             }
