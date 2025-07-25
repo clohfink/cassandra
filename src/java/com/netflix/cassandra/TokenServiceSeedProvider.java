@@ -25,6 +25,7 @@ import java.net.UnknownHostException;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.regex.Pattern;
 
@@ -51,6 +52,11 @@ public class TokenServiceSeedProvider implements SeedProvider
     private final TokenService tokenService;
 
     public TokenServiceSeedProvider()
+    {
+        this(new TokenService());
+    }
+
+    public TokenServiceSeedProvider(Map<?,?> unused)
     {
         this(new TokenService());
     }
