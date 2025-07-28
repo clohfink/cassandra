@@ -111,6 +111,7 @@ public class Config
     }
 
     public volatile HeapBufferAllocatorType global_heap_buffer_allocator = HeapBufferAllocatorType.unpooled;
+    public int native_slow_pool_max_threads = 64;
 
     /**
      * end Netflix specific configuration options

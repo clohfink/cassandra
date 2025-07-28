@@ -2704,6 +2704,16 @@ public class DatabaseDescriptor
         conf.native_transport_max_threads = max_threads;
     }
 
+    public static int getNativeSlowPoolMaxThreads()
+    {
+        return conf.native_slow_pool_max_threads;
+    }
+
+    public static void setNativeSlowPoolMaxThreads(int max_threads)
+    {
+        conf.native_slow_pool_max_threads = max_threads;
+    }
+
     public static Integer getNativeTransportMaxAuthThreads()
     {
         return conf.native_transport_max_auth_threads;

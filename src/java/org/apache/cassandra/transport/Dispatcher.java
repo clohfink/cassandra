@@ -34,6 +34,7 @@ import io.netty.util.AttributeKey;
 import org.apache.cassandra.concurrent.DebuggableTask;
 import org.apache.cassandra.concurrent.LocalAwareExecutorPlus;
 import org.apache.cassandra.config.DatabaseDescriptor;
+import org.apache.cassandra.db.ConsistencyLevel;
 import org.apache.cassandra.exceptions.OverloadedException;
 import org.apache.cassandra.metrics.ClientMetrics;
 import org.apache.cassandra.net.FrameEncoder;
@@ -44,6 +45,8 @@ import org.apache.cassandra.transport.ClientResourceLimits.Overload;
 import org.apache.cassandra.transport.Flusher.FlushItem;
 import org.apache.cassandra.transport.messages.ErrorMessage;
 import org.apache.cassandra.transport.messages.EventMessage;
+import org.apache.cassandra.transport.messages.ExecuteMessage;
+import org.apache.cassandra.transport.messages.QueryMessage;
 import org.apache.cassandra.utils.JVMStabilityInspector;
 import org.apache.cassandra.utils.MonotonicClock;
 import org.apache.cassandra.utils.NoSpamLogger;
@@ -59,6 +62,13 @@ public class Dispatcher implements CQLMessageHandler.MessageConsumer<Message.Req
                                                                              DatabaseDescriptor::setNativeTransportMaxThreads,
                                                                              "transport",
                                                                              "Native-Transport-Requests");
+
+
+    @VisibleForTesting
+    static final LocalAwareExecutorPlus slowQueryPool = SHARED.newExecutor(DatabaseDescriptor.getNativeSlowPoolMaxThreads(),
+                                                                             DatabaseDescriptor::setNativeSlowPoolMaxThreads,
+                                                                             "transport",
+                                                                             "Native-Slow-Requests");
 
     /** CASSANDRA-17812: Rate-limit new client connection setup to avoid overwhelming during bcrypt
      *
@@ -111,6 +121,14 @@ public class Dispatcher implements CQLMessageHandler.MessageConsumer<Message.Req
 
         // Importantly, the authExecutor will handle the AUTHENTICATE message which may be CPU intensive.
         LocalAwareExecutorPlus executor = isAuthQuery ? authExecutor : requestExecutor;
+
+        // do slower queries that cross DCs into different pool so they dont block normal queries
+        if (DatabaseDescriptor.getNativeSlowPoolMaxThreads() > 0 &&
+              ((request instanceof ExecuteMessage && ((ExecuteMessage) request).options.getConsistency() == ConsistencyLevel.EACH_QUORUM) ||
+               (request instanceof QueryMessage && ((QueryMessage) request).options.getConsistency() == ConsistencyLevel.EACH_QUORUM)))
+        {
+            executor = slowQueryPool;
+        }
 
         executor.submit(new RequestProcessor(channel, request, forFlusher, backpressure));
         ClientMetrics.instance.markRequestDispatched();
