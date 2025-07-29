@@ -137,6 +137,10 @@ public class WriteResponseHandlerTest
     public void resetCounters()
     {
         ks.metric.writeFailedIdealCL.dec(ks.metric.writeFailedIdealCL.getCount());
+        
+        // Reset per-DC counters
+        ks.metric.getOrCreateWriteFailedQuorumPerDC("datacenter1").dec(ks.metric.getOrCreateWriteFailedQuorumPerDC("datacenter1").getCount());
+        ks.metric.getOrCreateWriteFailedQuorumPerDC("datacenter2").dec(ks.metric.getOrCreateWriteFailedQuorumPerDC("datacenter2").getCount());
     }
 
     /**
@@ -299,7 +303,6 @@ public class WriteResponseHandlerTest
         long startingCountForWriteFailedIdealCL = ks.metric.writeFailedIdealCL.getCount();
         long startingCountForIdealCLWriteLatency = ks.metric.idealCLWriteLatency.totalLatency.getCount();
 
-
         //Fail in local DC
         awr.onFailure(targets.get(0).endpoint(), RequestFailureReason.TIMEOUT);
         awr.onFailure(targets.get(1).endpoint(), RequestFailureReason.TIMEOUT);
@@ -313,6 +316,139 @@ public class WriteResponseHandlerTest
 
         assertEquals(startingCountForWriteFailedIdealCL, ks.metric.writeFailedIdealCL.getCount());
         assertEquals(startingCountForIdealCLWriteLatency, ks.metric.idealCLWriteLatency.totalLatency.getCount());
+    }
+
+    /**
+     * Validate that per-datacenter latency metrics are recorded when each datacenter achieves quorum
+     * @throws Throwable
+     */
+    @Test
+    public void perDatacenterLatencyTracked() throws Throwable
+    {
+        long startingCountDC1 = ks.metric.getOrCreateQuorumMetWriteLatencyPerDC("datacenter1").latency.getCount();
+        long startingCountDC2 = ks.metric.getOrCreateQuorumMetWriteLatencyPerDC("datacenter2").latency.getCount();
+        
+        // Specify query start time in past to ensure minimum latency measurement
+        AbstractWriteResponseHandler awr = createWriteResponseHandler(ConsistencyLevel.LOCAL_QUORUM, ConsistencyLevel.EACH_QUORUM, new Dispatcher.RequestTime(nanoTime() - DAYS.toNanos(1)));
+
+        // Send responses to DC1 - should achieve quorum (2 out of 3) and record latency immediately
+        awr.onResponse(createDummyMessage(0)); // DC1
+        awr.onResponse(createDummyMessage(1)); // DC1
+        
+        // DC1 should have latency recorded immediately when quorum is achieved
+        assertEquals(startingCountDC1 + 1, ks.metric.getOrCreateQuorumMetWriteLatencyPerDC("datacenter1").latency.getCount());
+        assertEquals(startingCountDC2, ks.metric.getOrCreateQuorumMetWriteLatencyPerDC("datacenter2").latency.getCount());
+
+        // Send responses to DC2 - should achieve quorum (2 out of 3) and record latency immediately
+        awr.onResponse(createDummyMessage(4)); // DC2
+        awr.onResponse(createDummyMessage(5)); // DC2
+        
+        // Now both DCs should have latency recorded since each achieved quorum
+        assertEquals(startingCountDC1 + 1, ks.metric.getOrCreateQuorumMetWriteLatencyPerDC("datacenter1").latency.getCount());
+        assertEquals(startingCountDC2 + 1, ks.metric.getOrCreateQuorumMetWriteLatencyPerDC("datacenter2").latency.getCount());
+        
+        // Verify actual latency values are reasonable (> 1 day in microseconds)
+        assertTrue(TimeUnit.DAYS.toMicros(1) < ks.metric.getOrCreateQuorumMetWriteLatencyPerDC("datacenter1").totalLatency.getCount());
+        assertTrue(TimeUnit.DAYS.toMicros(1) < ks.metric.getOrCreateQuorumMetWriteLatencyPerDC("datacenter2").totalLatency.getCount());
+
+        // Remaining responses expire
+        awr.expired(); // DC1
+        awr.expired(); // DC2
+    }
+
+    /**
+     * Validate that per-datacenter latency is only recorded for DCs that achieve quorum
+     * @throws Throwable
+     */
+    @Test
+    public void perDatacenterLatencyOnlyForSuccessfulDCs() throws Throwable
+    {
+        long startingCountDC1 = ks.metric.getOrCreateQuorumMetWriteLatencyPerDC("datacenter1").latency.getCount();
+        long startingCountDC2 = ks.metric.getOrCreateQuorumMetWriteLatencyPerDC("datacenter2").latency.getCount();
+        
+        // Specify query start time in past to ensure minimum latency measurement
+        AbstractWriteResponseHandler awr = createWriteResponseHandler(ConsistencyLevel.LOCAL_QUORUM, ConsistencyLevel.EACH_QUORUM, new Dispatcher.RequestTime(nanoTime() - DAYS.toNanos(1)));
+
+        // Send responses to DC1 - should achieve quorum (2 out of 3)
+        awr.onResponse(createDummyMessage(0)); // DC1
+        awr.onResponse(createDummyMessage(1)); // DC1
+        
+        // Send only 1 response to DC2 - should NOT achieve quorum (1 out of 3)
+        awr.onResponse(createDummyMessage(4)); // DC2
+        
+        // Expire remaining responses in DC2
+        awr.expired(); // DC2
+        awr.expired(); // DC2
+        
+        // DC1 should have latency recorded since it achieved quorum when global ideal CL was achieved
+        assertEquals(startingCountDC1 + 1, ks.metric.getOrCreateQuorumMetWriteLatencyPerDC("datacenter1").latency.getCount());
+        // DC2 should NOT have latency recorded since it did not achieve quorum
+        assertEquals(startingCountDC2, ks.metric.getOrCreateQuorumMetWriteLatencyPerDC("datacenter2").latency.getCount());
+        
+        // Verify DC1 latency is recorded
+        assertTrue(TimeUnit.DAYS.toMicros(1) < ks.metric.getOrCreateQuorumMetWriteLatencyPerDC("datacenter1").totalLatency.getCount());
+
+        // Remaining response expires
+        awr.expired(); // DC1
+    }
+
+    /**
+     * Validate that per-datacenter failure metrics are recorded when DCs fail to achieve quorum
+     * @throws Throwable
+     */
+    @Test
+    public void perDatacenterFailureMetricsTracked() throws Throwable
+    {
+        long startingFailedDC1 = ks.metric.getOrCreateWriteFailedQuorumPerDC("datacenter1").getCount();
+        long startingFailedDC2 = ks.metric.getOrCreateWriteFailedQuorumPerDC("datacenter2").getCount();
+        
+        AbstractWriteResponseHandler awr = createWriteResponseHandler(ConsistencyLevel.LOCAL_QUORUM, ConsistencyLevel.EACH_QUORUM);
+
+        // Send responses to DC1 - should achieve quorum (2 out of 3)
+        awr.onResponse(createDummyMessage(0)); // DC1
+        awr.onResponse(createDummyMessage(1)); // DC1
+        
+        // Send only 1 response to DC2 - should NOT achieve quorum (1 out of 3)
+        awr.onResponse(createDummyMessage(4)); // DC2
+        
+        // Expire remaining responses to trigger failure
+        awr.expired(); // DC1
+        awr.expired(); // DC2
+        awr.expired(); // DC2
+        
+        // DC1 should NOT have failure recorded since it achieved quorum
+        assertEquals(startingFailedDC1, ks.metric.getOrCreateWriteFailedQuorumPerDC("datacenter1").getCount());
+        // DC2 should have failure recorded since it did not achieve quorum
+        assertEquals(startingFailedDC2 + 1, ks.metric.getOrCreateWriteFailedQuorumPerDC("datacenter2").getCount());
+    }
+
+    /**
+     * Validate that per-datacenter failure metrics are not recorded when request CL is not achieved
+     * @throws Throwable
+     */
+    @Test
+    public void perDatacenterFailureMetricsNotTrackedOnRequestFailure() throws Throwable
+    {
+        long startingFailedDC1 = ks.metric.getOrCreateWriteFailedQuorumPerDC("datacenter1").getCount();
+        long startingFailedDC2 = ks.metric.getOrCreateWriteFailedQuorumPerDC("datacenter2").getCount();
+        
+        AbstractWriteResponseHandler awr = createWriteResponseHandler(ConsistencyLevel.LOCAL_QUORUM, ConsistencyLevel.EACH_QUORUM);
+
+        // Send only 1 response to DC1 - should NOT achieve LOCAL_QUORUM (1 out of 3)
+        awr.onResponse(createDummyMessage(0)); // DC1
+        
+        // Send only 1 response to DC2 - should NOT achieve quorum (1 out of 3)
+        awr.onResponse(createDummyMessage(4)); // DC2
+        
+        // Expire remaining responses to trigger failure
+        awr.expired(); // DC1
+        awr.expired(); // DC1
+        awr.expired(); // DC2
+        awr.expired(); // DC2
+        
+        // Neither DC should have failure recorded since the request CL was not achieved
+        assertEquals(startingFailedDC1, ks.metric.getOrCreateWriteFailedQuorumPerDC("datacenter1").getCount());
+        assertEquals(startingFailedDC2, ks.metric.getOrCreateWriteFailedQuorumPerDC("datacenter2").getCount());
     }
 
 

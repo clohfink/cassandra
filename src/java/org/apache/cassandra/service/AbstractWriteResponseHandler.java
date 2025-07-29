@@ -30,6 +30,8 @@ import org.apache.cassandra.db.ConsistencyLevel;
 
 import org.apache.cassandra.db.Mutation;
 import org.apache.cassandra.locator.EndpointsForToken;
+import org.apache.cassandra.locator.IEndpointSnitch;
+import org.apache.cassandra.locator.Replica;
 import org.apache.cassandra.locator.ReplicaPlan;
 import org.apache.cassandra.locator.ReplicaPlan.ForWrite;
 import org.apache.cassandra.transport.Dispatcher;
@@ -56,6 +58,7 @@ import static java.util.concurrent.TimeUnit.NANOSECONDS;
 import static org.apache.cassandra.utils.Clock.Global.nanoTime;
 import static java.util.stream.Collectors.toList;
 import static org.apache.cassandra.config.DatabaseDescriptor.getCounterWriteRpcTimeout;
+import static org.apache.cassandra.config.DatabaseDescriptor.getEndpointSnitch;
 import static org.apache.cassandra.config.DatabaseDescriptor.getWriteRpcTimeout;
 import static org.apache.cassandra.db.WriteType.COUNTER;
 import static org.apache.cassandra.schema.Schema.instance;
@@ -88,6 +91,13 @@ public abstract class AbstractWriteResponseHandler<T> implements RequestCallback
       * Will be same as "this" if this AWRH is the ideal consistency level
       */
     private AbstractWriteResponseHandler idealCLDelegate;
+    
+    
+    /**
+      * Per-datacenter response counters for ideal CL tracking
+      */
+    private Map<String, AtomicInteger> responsesAndExpirationsPerDC;
+    
 
     /**
      * We don't want to increment the writeFailedIdealCL if we didn't achieve the original requested CL
@@ -108,6 +118,7 @@ public abstract class AbstractWriteResponseHandler<T> implements RequestCallback
         this.hintOnFailure = hintOnFailure;
         this.failureReasonByEndpoint = new ConcurrentHashMap<>();
         this.requestTime = requestTime;
+        this.responsesAndExpirationsPerDC = new ConcurrentHashMap<>();
     }
 
     public void get() throws WriteTimeoutException, WriteFailureException
@@ -159,6 +170,44 @@ public abstract class AbstractWriteResponseHandler<T> implements RequestCallback
     {
         this.idealCLDelegate = handler;
         idealCLDelegate.responsesAndExpirations = new AtomicInteger(replicaPlan.contacts().size());
+        
+        // Initialize per-datacenter delegates based on the contacted replicas
+        setupPerDatacenterDelegates(handler);
+    }
+    
+    /**
+     * Set up per-datacenter ideal CL delegates for each datacenter that has replicas
+     */
+    private void setupPerDatacenterDelegates(AbstractWriteResponseHandler handler)
+    {
+        if (handler == null) return;
+        
+        IEndpointSnitch snitch = getEndpointSnitch();
+        
+        // Collect all datacenters from contacted replicas and count replicas per DC
+        Map<String, Integer> replicasPerDC = new ConcurrentHashMap<>();
+        for (Replica replica : replicaPlan.contacts())
+        {
+            String datacenter = snitch.getDatacenter(replica.endpoint());
+            replicasPerDC.merge(datacenter, 1, Integer::sum);
+        }
+
+        // Set up delegates for each datacenter
+        for (Map.Entry<String, Integer> entry : replicasPerDC.entrySet())
+        {
+            String datacenter = entry.getKey();
+            int replicasInDC = entry.getValue();
+            
+            // Calculate quorum for this datacenter
+            int quorumInDC = (replicasInDC / 2) + 1;
+            
+            
+            // Counter starts at quorum needed, decrements on each response/expiration
+            // When it reaches 0, quorum is achieved for this DC
+            AtomicInteger dcCounter = new AtomicInteger(quorumInDC);
+            handler.responsesAndExpirationsPerDC.put(datacenter, dcCounter);
+            
+        }
     }
 
     /**
@@ -179,6 +228,11 @@ public abstract class AbstractWriteResponseHandler<T> implements RequestCallback
             //Processing of the message was already done since this is the handler for the
             //ideal consistency level. Just decrement the counter.
             decrementResponseOrExpired();
+            // Also decrement per-datacenter counters
+            if (m != null)
+            {
+                decrementResponseOrExpiredPerDC(m.from());
+            }
         }
         else
         {
@@ -191,6 +245,11 @@ public abstract class AbstractWriteResponseHandler<T> implements RequestCallback
 
     protected final void logFailureOrTimeoutToIdealCLDelegate()
     {
+        logFailureOrTimeoutToIdealCLDelegate(null);
+    }
+    
+    protected final void logFailureOrTimeoutToIdealCLDelegate(InetAddressAndPort from)
+    {
         //Tracking ideal CL was not configured
         if (idealCLDelegate == null)
         {
@@ -201,11 +260,20 @@ public abstract class AbstractWriteResponseHandler<T> implements RequestCallback
         if (idealCLDelegate == this)
         {
             decrementResponseOrExpired();
+            // Also decrement per-datacenter counters
+            if (from != null)
+            {
+                decrementResponseOrExpiredPerDC(from);
+            }
         }
         else
         {
             //Have the delegate track the expired response
             idealCLDelegate.decrementResponseOrExpired();
+            if (from != null)
+            {
+                idealCLDelegate.decrementResponseOrExpiredPerDC(from);
+            }
         }
     }
 
@@ -269,7 +337,8 @@ public abstract class AbstractWriteResponseHandler<T> implements RequestCallback
             idealCLDelegate.requestedCLAchieved = true;
             if (idealCLDelegate == this)
             {
-                replicaPlan.keyspace().metric.idealCLWriteLatency.addNano(nanoTime() - requestTime.startedAtNanos());
+                long latencyNanos = nanoTime() - requestTime.startedAtNanos();
+                replicaPlan.keyspace().metric.idealCLWriteLatency.addNano(latencyNanos);
             }
         }
 
@@ -277,6 +346,7 @@ public abstract class AbstractWriteResponseHandler<T> implements RequestCallback
         if (callback != null)
             callback.run();
     }
+    
 
     @Override
     public void onFailure(InetAddressAndPort from, RequestFailureReason failureReason)
@@ -289,7 +359,7 @@ public abstract class AbstractWriteResponseHandler<T> implements RequestCallback
 
         failureReasonByEndpoint.put(from, failureReason);
 
-        logFailureOrTimeoutToIdealCLDelegate();
+        logFailureOrTimeoutToIdealCLDelegate(from);
 
         if (blockFor() + n > candidateReplicaCount())
             signal();
@@ -319,6 +389,57 @@ public abstract class AbstractWriteResponseHandler<T> implements RequestCallback
             if (!condition.isSignalled() && requestedCLAchieved)
             {
                 replicaPlan.keyspace().metric.writeFailedIdealCL.inc();
+            }
+            
+            // Check for datacenter failures after all responses/expirations are processed
+            // This is now safe because the global counter ensures all per-DC operations are complete
+            checkDatacenterFailures();
+        }
+    }
+
+    /**
+     * Decrement the counter for a specific datacenter and track per-datacenter metrics
+     */
+    private final void decrementResponseOrExpiredPerDC(InetAddressAndPort from)
+    {
+        if (from == null) return;
+        
+        IEndpointSnitch snitch = getEndpointSnitch();
+        String datacenter = snitch.getDatacenter(from);
+        
+        AtomicInteger dcCounter = responsesAndExpirationsPerDC.get(datacenter);
+        if (dcCounter != null)
+        {
+            int decrementedValue = dcCounter.decrementAndGet();
+            if (decrementedValue == 0)
+            {
+                // When counter reaches 0, quorum is achieved for this datacenter
+                // Record latency immediately when this DC achieves quorum
+                long latencyNanos = nanoTime() - requestTime.startedAtNanos();
+                replicaPlan.keyspace().metric.getOrCreateQuorumMetWriteLatencyPerDC(datacenter).addNano(latencyNanos);
+            }
+        }
+    }
+    
+    /**
+     * Check if any datacenter failed to achieve quorum and record failures
+     * This is called when all responses/expirations have been processed
+     */
+    private final void checkDatacenterFailures()
+    {
+        // Only record failures if the requested CL was achieved
+        if (!requestedCLAchieved) return;
+        
+        // At this point, all per-DC counters have been decremented so we can safely check failures
+        for (Map.Entry<String, AtomicInteger> entry : responsesAndExpirationsPerDC.entrySet())
+        {
+            String datacenter = entry.getKey();
+            AtomicInteger dcCounter = entry.getValue();
+            
+            // If counter > 0, this DC didn't achieve quorum
+            if (dcCounter.get() > 0)
+            {
+                replicaPlan.keyspace().metric.getOrCreateWriteFailedQuorumPerDC(datacenter).inc();
             }
         }
     }

@@ -17,7 +17,9 @@
  */
 package org.apache.cassandra.metrics;
 
+import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.ToLongFunction;
 
 import com.codahale.metrics.Counter;
@@ -99,6 +101,10 @@ public class KeyspaceMetrics
     public final Counter writeFailedIdealCL;
     /** Ideal CL write latency metrics */
     public final LatencyMetrics idealCLWriteLatency;
+    /** Per-datacenter writes failed to meet quorum **/
+    public final Map<String, Counter> writeFailedQuorumPerDC;
+    /** Per-datacenter quorum met write latency metrics */
+    public final Map<String, LatencyMetrics> quorumMetWriteLatencyPerDC;
     /** Speculative retries **/
     public final Counter speculativeRetries;
     /** Speculative retry occured but still timed out **/
@@ -244,6 +250,8 @@ public class KeyspaceMetrics
         casCommit = createLatencyMetrics("CasCommit");
         writeFailedIdealCL = createKeyspaceCounter("WriteFailedIdealCL");
         idealCLWriteLatency = createLatencyMetrics("IdealCLWrite");
+        writeFailedQuorumPerDC = new ConcurrentHashMap<>();
+        quorumMetWriteLatencyPerDC = new ConcurrentHashMap<>();
 
         speculativeRetries = createKeyspaceCounter("SpeculativeRetries", metric -> metric.speculativeRetries.getCount());
         speculativeFailedRetries = createKeyspaceCounter("SpeculativeFailedRetries", metric -> metric.speculativeFailedRetries.getCount());
@@ -378,6 +386,33 @@ public class KeyspaceMetrics
         LatencyMetrics metric = new LatencyMetrics(factory, name);
         allMetrics.add(() -> metric.release());
         return metric;
+    }
+
+    private Counter createDatacenterCounter(String name, String datacenter)
+    {
+        String metricName = name + "." + datacenter;
+        allMetrics.add(() -> releaseMetric(metricName));
+        return Metrics.counter(factory.createMetricName(metricName));
+    }
+
+    private LatencyMetrics createDatacenterLatencyMetrics(String name, String datacenter)
+    {
+        String metricName = name + "." + datacenter;
+        LatencyMetrics metric = new LatencyMetrics(factory, metricName);
+        allMetrics.add(() -> metric.release());
+        return metric;
+    }
+
+    public Counter getOrCreateWriteFailedQuorumPerDC(String datacenter)
+    {
+        return writeFailedQuorumPerDC.computeIfAbsent(datacenter, 
+            dc -> createDatacenterCounter("WriteFailedQuorum", dc));
+    }
+
+    public LatencyMetrics getOrCreateQuorumMetWriteLatencyPerDC(String datacenter)
+    {
+        return quorumMetWriteLatencyPerDC.computeIfAbsent(datacenter, 
+            dc -> createDatacenterLatencyMetrics("QuorumMetWriteLatency", dc));
     }
 
     private void releaseMetric(String name)
