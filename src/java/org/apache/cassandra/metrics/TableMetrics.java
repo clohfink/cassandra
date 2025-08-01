@@ -47,6 +47,7 @@ import org.apache.cassandra.io.compress.CompressionMetadata;
 import org.apache.cassandra.io.sstable.format.SSTableReader;
 import org.apache.cassandra.io.sstable.metadata.MetadataCollector;
 import org.apache.cassandra.metrics.Sampler.SamplerType;
+import org.apache.cassandra.repair.autorepair.AutoRepairConfig;
 import org.apache.cassandra.schema.Schema;
 import org.apache.cassandra.schema.SchemaConstants;
 import org.apache.cassandra.utils.EstimatedHistogram;
@@ -289,7 +290,15 @@ public class TableMetrics
     public final TableMeter rowIndexSizeAborts;
     public final TableHistogram rowIndexSize;
 
-    private static Pair<Long, Long> totalNonSystemTablesSize(Predicate<SSTableReader> predicate)
+    private static final Predicate<ColumnFamilyStore> INCREMENTAL_REPAIR_ENABLED = 
+        cf -> cf.metadata().params.autoRepair.repairEnabled(AutoRepairConfig.RepairType.INCREMENTAL);
+
+    private static Pair<Long, Long> totalNonSystemTablesSize(Predicate<SSTableReader> sstablePredicate)
+    {
+        return totalNonSystemTablesSize(sstablePredicate, cf -> true);
+    }
+
+    private static Pair<Long, Long> totalNonSystemTablesSize(Predicate<SSTableReader> sstablePredicate, Predicate<ColumnFamilyStore> tablePredicate)
     {
         long total = 0;
         long filtered = 0;
@@ -304,11 +313,11 @@ public class TableMetrics
 
             for (ColumnFamilyStore cf : k.getColumnFamilyStores())
             {
-                if (!SecondaryIndexManager.isIndexColumnFamily(cf.name))
+                if (!SecondaryIndexManager.isIndexColumnFamily(cf.name) && tablePredicate.test(cf))
                 {
                     for (SSTableReader sstable : cf.getSSTables(SSTableSet.CANONICAL))
                     {
-                        if (predicate.test(sstable))
+                        if (sstablePredicate.test(sstable))
                         {
                             filtered += sstable.uncompressedLength();
                         }
@@ -325,7 +334,7 @@ public class TableMetrics
     {
         public Double getValue()
         {
-            Pair<Long, Long> result = totalNonSystemTablesSize(SSTableReader::isRepaired);
+            Pair<Long, Long> result = totalNonSystemTablesSize(SSTableReader::isRepaired, INCREMENTAL_REPAIR_ENABLED);
             double repaired = result.left;
             double total = result.right;
             return total > 0 ? (repaired / total) * 100 : 100.0;
@@ -333,15 +342,15 @@ public class TableMetrics
     });
 
     public static final Gauge<Long> globalBytesRepaired = Metrics.register(GLOBAL_FACTORY.createMetricName("BytesRepaired"),
-                                                                           () -> totalNonSystemTablesSize(SSTableReader::isRepaired).left);
+                                                                           () -> totalNonSystemTablesSize(SSTableReader::isRepaired, INCREMENTAL_REPAIR_ENABLED).left);
 
     public static final Gauge<Long> globalBytesUnrepaired = 
         Metrics.register(GLOBAL_FACTORY.createMetricName("BytesUnrepaired"),
-                         () -> totalNonSystemTablesSize(s -> !s.isRepaired() && !s.isPendingRepair()).left);
+                         () -> totalNonSystemTablesSize(s -> !s.isRepaired() && !s.isPendingRepair(), INCREMENTAL_REPAIR_ENABLED).left);
 
     public static final Gauge<Long> globalBytesPendingRepair = 
         Metrics.register(GLOBAL_FACTORY.createMetricName("BytesPendingRepair"),
-                         () -> totalNonSystemTablesSize(SSTableReader::isPendingRepair).left);
+                         () -> totalNonSystemTablesSize(SSTableReader::isPendingRepair, INCREMENTAL_REPAIR_ENABLED).left);
 
     public final Gauge<Long> unrepairedAge;
 
@@ -983,7 +992,7 @@ public class TableMetrics
                     oldest = Math.min(oldest, sstable.getMinTimestamp());
                 }
             }
-            return Math.max(0, FBUtilities.nowInSeconds() - TimeUnit.MICROSECONDS.toSeconds(oldest));
+            return oldest == Long.MAX_VALUE ? 0 : Math.max(0, FBUtilities.nowInSeconds() - TimeUnit.MICROSECONDS.toSeconds(oldest));
         },
         () -> { // global
              long oldest = Long.MAX_VALUE;
@@ -997,7 +1006,7 @@ public class TableMetrics
 
                  for (ColumnFamilyStore cf : k.getColumnFamilyStores())
                  {
-                     if (!SecondaryIndexManager.isIndexColumnFamily(cf.name))
+                     if (!SecondaryIndexManager.isIndexColumnFamily(cf.name) && INCREMENTAL_REPAIR_ENABLED.test(cf))
                      {
                          for (SSTableReader sstable : cf.getSSTables(SSTableSet.CANONICAL))
                          {
@@ -1009,7 +1018,7 @@ public class TableMetrics
                      }
                  }
              }
-             return Math.max(0, FBUtilities.nowInSeconds() - TimeUnit.MICROSECONDS.toSeconds(oldest));
+             return oldest == Long.MAX_VALUE ? 0 : Math.max(0, FBUtilities.nowInSeconds() - TimeUnit.MICROSECONDS.toSeconds(oldest));
         });
 
         clientTombstoneWarnings = createTableMeter("ClientTombstoneWarnings", cfs.keyspace.metric.clientTombstoneWarnings);
