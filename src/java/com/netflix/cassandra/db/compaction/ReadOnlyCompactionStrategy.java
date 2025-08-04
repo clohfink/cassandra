@@ -241,10 +241,9 @@ public class ReadOnlyCompactionStrategy extends AbstractCompactionStrategy
     
     private static class ReadOnlyCompactionWriter extends DefaultCompactionWriter
     {
-        private int lastTokenRangeIndex = Integer.MIN_VALUE;
         private Directories.DataDirectory currentDirectory;
-        private final List<Token> sortedTokens;
-        private final Token[] tokenArray;
+        private final Token[] sortedTokens;
+        private int currentTokenIndex = 0;
         
         public ReadOnlyCompactionWriter(ColumnFamilyStore cfs,
                                        Directories directories,
@@ -253,8 +252,8 @@ public class ReadOnlyCompactionStrategy extends AbstractCompactionStrategy
         {
             super(cfs, directories, txn, nonExpiredSSTables);
             this.currentDirectory = getDirectories().getWriteableLocation(getExpectedWriteSize());
-            this.sortedTokens = StorageService.instance.getTokenMetadata().sortedTokens();
-            this.tokenArray = sortedTokens.toArray(new Token[0]);
+            List<Token> tokenList = StorageService.instance.getTokenMetadata().sortedTokens();
+            this.sortedTokens = tokenList.toArray(new Token[0]);
         }
         
         @Override
@@ -262,19 +261,18 @@ public class ReadOnlyCompactionStrategy extends AbstractCompactionStrategy
         {
             try {
                 Token partitionToken = partition.partitionKey().getToken();
-                int tokenRangeIndex = Arrays.binarySearch(tokenArray, partitionToken);
-                
-                // binarySearch returns negative value if not found, convert to insertion point
-                if (tokenRangeIndex < 0) {
-                    tokenRangeIndex = -(tokenRangeIndex + 1);
+                int previousTokenIndex = currentTokenIndex;
+
+                while (currentTokenIndex < sortedTokens.length && 
+                       partitionToken.compareTo(sortedTokens[currentTokenIndex]) > 0) {
+                    currentTokenIndex++;
                 }
                 
-                // If the partition has moved to a different token range, switch to a new SSTable
-                if (tokenRangeIndex != lastTokenRangeIndex && lastTokenRangeIndex != Integer.MIN_VALUE) {
+                // If we crossed a token boundary, switch to a new SSTable
+                if (currentTokenIndex != previousTokenIndex) {
                     switchCompactionLocation(currentDirectory);
                 }
                 
-                lastTokenRangeIndex = tokenRangeIndex;
                 return super.realAppend(partition);
             } catch (Exception e) {
                 logger.error("Error during partition append in ReadOnlyCompactionWriter", e);
