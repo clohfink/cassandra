@@ -1,0 +1,12 @@
+builds:
+  analyze-failure:
+    - enabled: true
+      comment-pr: true
+      channel-resolver-spel: "#root.authorSlackId"
+pr-open:
+  code-quality:
+    enabled: true
+  generate-pr-description:
+    enabled: true
+    keep-updated: true
+    prompt-suffix: "Keep it as short as possible, focus on the major theme."
