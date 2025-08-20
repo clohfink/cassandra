@@ -55,12 +55,19 @@ public class ReadOnlyCompactionStrategy extends AbstractCompactionStrategy
 {
     private static final Logger logger = LoggerFactory.getLogger(ReadOnlyCompactionStrategy.class);
     
+    private static final String SIZE_THRESHOLD_PROPERTY = "cassandra.readonly_compaction.size_threshold_bytes";
+    public static final long DEFAULT_SIZE_THRESHOLD_BYTES = 10 * 1024L * 1024L * 1024L; // 10GB
+    public static final long SIZE_THRESHOLD_BYTES = Long.getLong(SIZE_THRESHOLD_PROPERTY, DEFAULT_SIZE_THRESHOLD_BYTES);
     
+    private static final String MAX_SIZE_KEY = "sstable_size_in_mb";
+    
+    private final long maxSizeMb;
+
     public ReadOnlyCompactionStrategy(ColumnFamilyStore cfs, Map<String, String> options)
     {
         super(cfs, options);
-        logger.debug("ReadOnlyCompactionStrategy initialized for {}.{}",
-                    cfs.keyspace.getName(), cfs.name);
+        String maxSizeOption = options.get(MAX_SIZE_KEY);
+        this.maxSizeMb = maxSizeOption != null ? Long.parseLong(maxSizeOption) : SIZE_THRESHOLD_BYTES / (1024L * 1024L);
     }
 
     @Override
@@ -68,18 +75,18 @@ public class ReadOnlyCompactionStrategy extends AbstractCompactionStrategy
     {
         if (!isActive)
             return null;
-            
+
         Collection<SSTableReader> sstables = getOverlappingSSTables();
         if (sstables.size() < 2)
             return null;
-            
+
         logger.debug("Found {} overlapping SSTables for background compaction", sstables.size());
-        
+
         LifecycleTransaction txn = cfs.getTracker().tryModify(sstables, OperationType.COMPACTION);
         if (txn == null)
             return null;
-            
-        return new ReadOnlyCompactionTask(cfs, txn, gcBefore);
+
+        return new ReadOnlyCompactionTask(cfs, txn, gcBefore, this);
     }
 
     @Override
@@ -98,7 +105,7 @@ public class ReadOnlyCompactionStrategy extends AbstractCompactionStrategy
         if (txn == null)
             return Collections.emptyList();
             
-        return Collections.singleton(new ReadOnlyCompactionTask(cfs, txn, gcBefore));
+        return Collections.singleton(new ReadOnlyCompactionTask(cfs, txn, gcBefore, this));
     }
 
     @Override
@@ -113,7 +120,7 @@ public class ReadOnlyCompactionStrategy extends AbstractCompactionStrategy
         if (txn == null)
             return null;
             
-        return new ReadOnlyCompactionTask(cfs, txn, gcBefore);
+        return new ReadOnlyCompactionTask(cfs, txn, gcBefore, this);
     }
 
     @Override
@@ -126,7 +133,7 @@ public class ReadOnlyCompactionStrategy extends AbstractCompactionStrategy
     @Override
     public long getMaxSSTableBytes()
     {
-        return Long.MAX_VALUE; // Allow large SSTables for read-only workloads
+        return maxSizeMb * 1024L * 1024L;
     }
     
     @Override
@@ -219,14 +226,37 @@ public class ReadOnlyCompactionStrategy extends AbstractCompactionStrategy
     
     public static Map<String, String> validateOptions(Map<String, String> options) throws ConfigurationException
     {
-        return AbstractCompactionStrategy.validateOptions(options);
+        Map<String, String> uncheckedOptions = AbstractCompactionStrategy.validateOptions(options);
+        
+        String maxSizeOption = options.get(MAX_SIZE_KEY);
+        if (maxSizeOption != null)
+        {
+            try
+            {
+                long maxSize = Long.parseLong(maxSizeOption);
+                if (maxSize <= 0)
+                {
+                    throw new ConfigurationException(String.format("%s must be positive: %d", MAX_SIZE_KEY, maxSize));
+                }
+            }
+            catch (NumberFormatException e)
+            {
+                throw new ConfigurationException(String.format("%s is not a parsable long for %s", maxSizeOption, MAX_SIZE_KEY), e);
+            }
+            uncheckedOptions.remove(MAX_SIZE_KEY);
+        }
+        
+        return uncheckedOptions;
     }
     
     private static class ReadOnlyCompactionTask extends CompactionTask
     {
-        public ReadOnlyCompactionTask(ColumnFamilyStore cfs, LifecycleTransaction txn, int gcBefore)
+        private final ReadOnlyCompactionStrategy strategy;
+        
+        public ReadOnlyCompactionTask(ColumnFamilyStore cfs, LifecycleTransaction txn, int gcBefore, ReadOnlyCompactionStrategy strategy)
         {
             super(cfs, txn, gcBefore);
+            this.strategy = strategy;
         }
         
         @Override
@@ -235,7 +265,7 @@ public class ReadOnlyCompactionStrategy extends AbstractCompactionStrategy
                                                               LifecycleTransaction txn,
                                                               Set<SSTableReader> nonExpiredSSTables)
         {
-            return new ReadOnlyCompactionWriter(cfs, directories, txn, nonExpiredSSTables);
+            return new ReadOnlyCompactionWriter(cfs, directories, txn, nonExpiredSSTables, strategy.maxSizeMb * 1024L * 1024L);
         }
     }
     
@@ -245,17 +275,21 @@ public class ReadOnlyCompactionStrategy extends AbstractCompactionStrategy
         private final Token[] sortedTokens;
         private int currentTokenIndex = 0;
         
+        private final long maxSize;
+        
         public ReadOnlyCompactionWriter(ColumnFamilyStore cfs,
                                        Directories directories,
                                        LifecycleTransaction txn,
-                                       Set<SSTableReader> nonExpiredSSTables)
+                                       Set<SSTableReader> nonExpiredSSTables,
+                                       long maxSize)
         {
             super(cfs, directories, txn, nonExpiredSSTables);
+            this.maxSize = maxSize;
             this.currentDirectory = getDirectories().getWriteableLocation(getExpectedWriteSize());
             List<Token> tokenList = StorageService.instance.getTokenMetadata().sortedTokens();
             this.sortedTokens = tokenList.toArray(new Token[0]);
         }
-        
+
         @Override
         public boolean realAppend(UnfilteredRowIterator partition)
         {
@@ -267,12 +301,12 @@ public class ReadOnlyCompactionStrategy extends AbstractCompactionStrategy
                        partitionToken.compareTo(sortedTokens[currentTokenIndex]) > 0) {
                     currentTokenIndex++;
                 }
-                
-                // If we crossed a token boundary, switch to a new SSTable
-                if (currentTokenIndex != previousTokenIndex) {
+
+                boolean sizeLimitExceeded = sstableWriter.currentWriter().getEstimatedOnDiskBytesWritten() > maxSize;
+
+                if (currentTokenIndex != previousTokenIndex || sizeLimitExceeded) {
                     switchCompactionLocation(currentDirectory);
                 }
-                
                 return super.realAppend(partition);
             } catch (Exception e) {
                 logger.error("Error during partition append in ReadOnlyCompactionWriter", e);

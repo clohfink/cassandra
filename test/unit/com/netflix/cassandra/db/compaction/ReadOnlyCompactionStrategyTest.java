@@ -21,9 +21,12 @@ import java.nio.ByteBuffer;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ThreadLocalRandom;
 
 import org.junit.Test;
 
@@ -32,13 +35,16 @@ import org.apache.cassandra.db.ColumnFamilyStore;
 import org.apache.cassandra.db.compaction.CompactionManager;
 import org.apache.cassandra.dht.Murmur3Partitioner.LongToken;
 import org.apache.cassandra.dht.Token;
+import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.io.sstable.format.SSTableReader;
 import org.apache.cassandra.service.StorageService;
 import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.FBUtilities;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 
 public class ReadOnlyCompactionStrategyTest extends CQLTester
 {
@@ -76,23 +82,13 @@ public class ReadOnlyCompactionStrategyTest extends CQLTester
         
         // Get the column family store and wait for any automatic compactions to complete
         ColumnFamilyStore cfs = getCurrentColumnFamilyStore();
-        while (CompactionManager.instance.isCompacting(Collections.singletonList(cfs), sstable -> true))
-        {
-            try { Thread.sleep(100); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
-        }
+        waitForCompactionCompletion(cfs);
         
         int sstableCountBefore = cfs.getLiveSSTables().size();
         assertTrue("Should have multiple SSTables before maximal compaction", sstableCountBefore >= 2);
         
         // Force a maximal compaction to trigger the token-based splitting
-        CompactionManager.instance.submitMaximal(cfs, cfs.gcBefore((int)(System.currentTimeMillis() / 1000)), false);
-        Thread.sleep(100);
-        
-        // Wait for maximal compaction to complete
-        while (CompactionManager.instance.isCompacting(Collections.singletonList(cfs), sstable -> true))
-        {
-            try { Thread.sleep(100); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
-        }
+        submitMaximalAndWaitForCompletion(cfs);
         
         // Verify SSTables were created (should be split based on token ranges)
         int sstableCountAfter = cfs.getLiveSSTables().size();
@@ -162,10 +158,7 @@ public class ReadOnlyCompactionStrategyTest extends CQLTester
         ColumnFamilyStore cfs = getCurrentColumnFamilyStore();
         
         // Wait for any ongoing compactions to complete before checking
-        while (CompactionManager.instance.isCompacting(Collections.singletonList(cfs), sstable -> true))
-        {
-            try { Thread.sleep(100); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
-        }
+        waitForCompactionCompletion(cfs);
         
         int sstableCountBefore = cfs.getLiveSSTables().size();
         
@@ -177,10 +170,7 @@ public class ReadOnlyCompactionStrategyTest extends CQLTester
         Thread.sleep(100);
         
         // Wait for compaction to complete
-        while (CompactionManager.instance.isCompacting(Collections.singletonList(cfs), sstable -> true))
-        {
-            try { Thread.sleep(100); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
-        }
+        waitForCompactionCompletion(cfs);
         
         // Verify that compaction has reduced to minimal SSTables per token range
         int sstableCountAfter = cfs.getLiveSSTables().size();
@@ -244,11 +234,11 @@ public class ReadOnlyCompactionStrategyTest extends CQLTester
     }
     
     @Test
-    public void testOverlapDetectionEdgeCases() throws Throwable
+    public void testOverlapDetectionAdjacentNonOverlapping() throws Throwable
     {
         createTable("CREATE TABLE %s (k blob, v int, PRIMARY KEY (k)) WITH compaction = {'class': 'com.netflix.cassandra.db.compaction.ReadOnlyCompactionStrategy', 'enabled': 'false'}");
         
-        // Test Case 1: Adjacent non-overlapping ranges
+        // Test adjacent non-overlapping ranges
         createSSTableWithTokenRange(1000L, 2000L, 1);  // [1000, 2000]
         createSSTableWithTokenRange(2001L, 3000L, 2);  // [2001, 3000] - no overlap
         
@@ -257,29 +247,53 @@ public class ReadOnlyCompactionStrategyTest extends CQLTester
         
         Collection<SSTableReader> overlapping = strategy.getOverlappingSSTables();
         assertEquals("Adjacent non-overlapping ranges should not be detected as overlapping", 0, overlapping.size());
+    }
+    
+    @Test
+    public void testOverlapDetectionTouchingRanges() throws Throwable
+    {
+        createTable("CREATE TABLE %s (k blob, v int, PRIMARY KEY (k)) WITH compaction = {'class': 'com.netflix.cassandra.db.compaction.ReadOnlyCompactionStrategy', 'enabled': 'false'}");
         
-        // Test Case 2: Exactly touching ranges (boundary case)
-        clearTable();
+        // Test exactly touching ranges (boundary case)
         createSSTableWithTokenRange(1000L, 2000L, 3);  // [1000, 2000]
         createSSTableWithTokenRange(2000L, 3000L, 4);  // [2000, 3000] - touching at 2000
         
-        overlapping = strategy.getOverlappingSSTables();
-        assertTrue("Touching ranges should be detected as overlapping", overlapping.size() >= 2);
+        ColumnFamilyStore cfs = getCurrentColumnFamilyStore();
+        ReadOnlyCompactionStrategy strategy = (ReadOnlyCompactionStrategy) cfs.getCompactionStrategyManager().getStrategies().get(0).get(0);
         
-        // Test Case 3: Complete containment
-        clearTable();
+        Collection<SSTableReader> overlapping = strategy.getOverlappingSSTables();
+        assertTrue("Touching ranges should be detected as overlapping", overlapping.size() >= 2);
+    }
+    
+    @Test
+    public void testOverlapDetectionCompleteContainment() throws Throwable
+    {
+        createTable("CREATE TABLE %s (k blob, v int, PRIMARY KEY (k)) WITH compaction = {'class': 'com.netflix.cassandra.db.compaction.ReadOnlyCompactionStrategy', 'enabled': 'false'}");
+        
+        // Test complete containment
         createSSTableWithTokenRange(1000L, 5000L, 5);  // [1000, 5000] - outer range
         createSSTableWithTokenRange(2000L, 3000L, 6);  // [2000, 3000] - completely contained
         
-        overlapping = strategy.getOverlappingSSTables();
-        assertEquals("Completely contained ranges should be detected as overlapping", 2, overlapping.size());
+        ColumnFamilyStore cfs = getCurrentColumnFamilyStore();
+        ReadOnlyCompactionStrategy strategy = (ReadOnlyCompactionStrategy) cfs.getCompactionStrategyManager().getStrategies().get(0).get(0);
         
-        // Test Case 4: Partial overlap (standard case)
-        clearTable();
+        Collection<SSTableReader> overlapping = strategy.getOverlappingSSTables();
+        assertEquals("Completely contained ranges should be detected as overlapping", 2, overlapping.size());
+    }
+    
+    @Test
+    public void testOverlapDetectionPartialOverlap() throws Throwable
+    {
+        createTable("CREATE TABLE %s (k blob, v int, PRIMARY KEY (k)) WITH compaction = {'class': 'com.netflix.cassandra.db.compaction.ReadOnlyCompactionStrategy', 'enabled': 'false'}");
+        
+        // Test partial overlap (standard case)
         createSSTableWithTokenRange(1000L, 3000L, 7);  // [1000, 3000]
         createSSTableWithTokenRange(2000L, 4000L, 8);  // [2000, 4000] - overlaps 2000-3000
         
-        overlapping = strategy.getOverlappingSSTables();
+        ColumnFamilyStore cfs = getCurrentColumnFamilyStore();
+        ReadOnlyCompactionStrategy strategy = (ReadOnlyCompactionStrategy) cfs.getCompactionStrategyManager().getStrategies().get(0).get(0);
+        
+        Collection<SSTableReader> overlapping = strategy.getOverlappingSSTables();
         assertEquals("Partially overlapping ranges should be detected", 2, overlapping.size());
     }
     
@@ -304,10 +318,7 @@ public class ReadOnlyCompactionStrategyTest extends CQLTester
         ColumnFamilyStore cfs = getCurrentColumnFamilyStore();
         
         // Wait for any ongoing compactions to complete
-        while (CompactionManager.instance.isCompacting(Collections.singletonList(cfs), sstable -> true))
-        {
-            try { Thread.sleep(100); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
-        }
+        waitForCompactionCompletion(cfs);
         
         ReadOnlyCompactionStrategy strategy = (ReadOnlyCompactionStrategy) cfs.getCompactionStrategyManager().getStrategies().get(0).get(0);
         Collection<SSTableReader> overlapping = strategy.getOverlappingSSTables();
@@ -362,5 +373,196 @@ public class ReadOnlyCompactionStrategyTest extends CQLTester
         execute("TRUNCATE %s");
         ColumnFamilyStore cfs = getCurrentColumnFamilyStore();
         cfs.truncateBlocking();
+    }
+    
+    private void waitForCompactionCompletion(ColumnFamilyStore cfs) throws InterruptedException
+    {
+        while (CompactionManager.instance.isCompacting(Collections.singletonList(cfs), sstable -> true))
+        {
+            try { Thread.sleep(100); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+        }
+    }
+    
+    private void submitMaximalAndWaitForCompletion(ColumnFamilyStore cfs) throws InterruptedException
+    {
+        CompactionManager.instance.submitMaximal(cfs, cfs.gcBefore((int)(System.currentTimeMillis() / 1000)), false);
+        Thread.sleep(100);
+        waitForCompactionCompletion(cfs);
+    }
+    
+    @Test
+    public void testSstableSizeInMbValidOption1024MB() throws Throwable
+    {
+        Map<String, String> options = new HashMap<>();
+        options.put("sstable_size_in_mb", "1024"); // 1GB in MB
+        Map<String, String> remaining = ReadOnlyCompactionStrategy.validateOptions(options);
+        assertTrue("Valid sstable_size_in_mb should be accepted", remaining.isEmpty());
+    }
+    
+    @Test
+    public void testSstableSizeInMbValidOption10240MB() throws Throwable
+    {
+        Map<String, String> options = new HashMap<>();
+        options.put("sstable_size_in_mb", "10240"); // 10GB in MB
+        Map<String, String> remaining = ReadOnlyCompactionStrategy.validateOptions(options);
+        assertTrue("Valid sstable_size_in_mb should be accepted", remaining.isEmpty());
+    }
+    
+    @Test
+    public void testSstableSizeInMbInvalidZero() throws Throwable
+    {
+        Map<String, String> options = new HashMap<>();
+        options.put("sstable_size_in_mb", "0");
+        try 
+        {
+            ReadOnlyCompactionStrategy.validateOptions(options);
+            fail("Zero sstable_size_in_mb should be rejected");
+        }
+        catch (ConfigurationException e)
+        {
+            assertTrue("Error should mention sstable_size_in_mb must be positive", 
+                      e.getMessage().contains("sstable_size_in_mb must be positive"));
+        }
+    }
+    
+    @Test
+    public void testSstableSizeInMbInvalidNegative() throws Throwable
+    {
+        Map<String, String> options = new HashMap<>();
+        options.put("sstable_size_in_mb", "-1000");
+        try 
+        {
+            ReadOnlyCompactionStrategy.validateOptions(options);
+            fail("Negative sstable_size_in_mb should be rejected");
+        }
+        catch (ConfigurationException e)
+        {
+            assertTrue("Error should mention sstable_size_in_mb must be positive", 
+                      e.getMessage().contains("sstable_size_in_mb must be positive"));
+        }
+    }
+    
+    @Test
+    public void testSstableSizeInMbInvalidNonNumeric() throws Throwable
+    {
+        Map<String, String> options = new HashMap<>();
+        options.put("sstable_size_in_mb", "not_a_number");
+        try 
+        {
+            ReadOnlyCompactionStrategy.validateOptions(options);
+            fail("Non-numeric sstable_size_in_mb should be rejected");
+        }
+        catch (ConfigurationException e)
+        {
+            assertTrue("Error should mention parsing failure", 
+                      e.getMessage().contains("not a parsable long"));
+        }
+    }
+    
+    @Test
+    public void testSstableSizeInMbInvalidFloatingPoint() throws Throwable
+    {
+        Map<String, String> options = new HashMap<>();
+        options.put("sstable_size_in_mb", "1.5");
+        try 
+        {
+            ReadOnlyCompactionStrategy.validateOptions(options);
+            fail("Floating point sstable_size_in_mb should be rejected");
+        }
+        catch (ConfigurationException e)
+        {
+            assertTrue("Error should mention parsing failure", 
+                      e.getMessage().contains("not a parsable long"));
+        }
+    }
+    
+    @Test
+    public void testSstableSizeInMbOptionParsing() throws Throwable
+    {
+        // Test that sstable_size_in_mb is correctly parsed and used by the strategy
+        createTable("CREATE TABLE %s (k blob, v int, PRIMARY KEY (k)) " +
+                   "WITH compaction = {'class': 'com.netflix.cassandra.db.compaction.ReadOnlyCompactionStrategy', " +
+                   "'sstable_size_in_mb': '1'}"); // 1MB
+        
+        ColumnFamilyStore cfs = getCurrentColumnFamilyStore();
+        ReadOnlyCompactionStrategy strategy = (ReadOnlyCompactionStrategy) cfs.getCompactionStrategyManager().getStrategies().get(0).get(0);
+        
+        // Verify strategy was created successfully with sstable_size_in_mb option
+        assertNotNull("Strategy should be created with sstable_size_in_mb option", strategy);
+        
+        // Insert some data to verify the strategy works
+        for (int i = 0; i < 10; i++)
+        {
+            ByteBuffer key = LongToken.keyForToken(new LongToken(i * 1000L));
+            String hexKey = ByteBufferUtil.bytesToHex(key);
+            execute("INSERT INTO %s (k, v) VALUES (0x" + hexKey + ", ?)", i);
+        }
+        
+        cfs.forceBlockingFlush(ColumnFamilyStore.FlushReason.UNIT_TESTS);
+        
+        // Verify data can be read back correctly
+        assertRows(execute("SELECT COUNT(*) FROM %s"), row(10L));
+    }
+    
+    @Test
+    public void testSstableSizeInMbOptionDefault() throws Throwable
+    {
+        // Test that strategy works without sstable_size_in_mb option (uses default)
+        createTable("CREATE TABLE %s (k blob, v int, PRIMARY KEY (k)) " +
+                   "WITH compaction = {'class': 'com.netflix.cassandra.db.compaction.ReadOnlyCompactionStrategy'}");
+        
+        ColumnFamilyStore cfs = getCurrentColumnFamilyStore();
+        ReadOnlyCompactionStrategy strategy = (ReadOnlyCompactionStrategy) cfs.getCompactionStrategyManager().getStrategies().get(0).get(0);
+        
+        // Verify strategy was created successfully without sstable_size_in_mb option
+        assertNotNull("Strategy should be created without sstable_size_in_mb option", strategy);
+        assertEquals(ReadOnlyCompactionStrategy.SIZE_THRESHOLD_BYTES, strategy.getMaxSSTableBytes());
+    }
+    
+    @Test
+    public void testSstableSizeInMbControlsSSTableSplitting() throws Throwable
+    {
+        // Create table with a very small sstable_size_in_mb to force splitting 
+        createTable("CREATE TABLE %s (k blob, v blob, PRIMARY KEY (k)) " +
+                   "WITH compaction = {'class': 'com.netflix.cassandra.db.compaction.ReadOnlyCompactionStrategy', " +
+                   "'sstable_size_in_mb': '1', 'enabled': 'false'} AND " + // 1MB 
+                    "compression = {'chunk_length_in_kb': '32', 'class': 'org.apache.cassandra.io.compress.NoopCompressor'}");
+        
+        // Create large value data to ensure we exceed the size threshold (1MB each to exceed 1MiB limit)
+        byte[] largeValue = new byte[1024 * 1024]; // 1MB per value
+        ByteBuffer largeValueBuffer = ByteBuffer.wrap(largeValue);
+        
+        // Insert enough data to create multiple SSTables when split by size
+        for (int i = 0; i < 10; i++)
+        {
+            ThreadLocalRandom.current().nextBytes(largeValue);
+            ByteBuffer key = LongToken.keyForToken(new LongToken(1000 + i));
+            String hexKey = ByteBufferUtil.bytesToHex(key);
+            execute("INSERT INTO %s (k, v) VALUES (0x" + hexKey + ", ?)", largeValueBuffer);
+            
+            // Flush each insert to create separate SSTables
+            ColumnFamilyStore cfs = getCurrentColumnFamilyStore();
+            cfs.forceBlockingFlush(ColumnFamilyStore.FlushReason.UNIT_TESTS);
+        }
+        
+        ColumnFamilyStore cfs = getCurrentColumnFamilyStore();
+        
+        // Wait for any ongoing compactions to complete
+        waitForCompactionCompletion(cfs);
+        
+        int sstableCountBefore = cfs.getLiveSSTables().size();
+        assertTrue("Should have multiple SSTables before compaction", sstableCountBefore >= 2);
+        
+        // Force a maximal compaction to trigger size-based splitting
+        submitMaximalAndWaitForCompletion(cfs);
+        
+        int sstableCountAfter = cfs.getLiveSSTables().size();
+
+        // We should get multiple small SSTables after compaction
+        logger.info("SSTable count after compaction: {}", sstableCountAfter);
+        assertTrue("Small sstable_size_in_mb should result in multiple SSTables after compaction", sstableCountAfter > 2);
+        
+        // Verify all data is still accessible after compaction with size limits
+        assertRows(execute("SELECT COUNT(*) FROM %s"), row(10L));
     }
 }
