@@ -164,21 +164,41 @@ public class FBUtilities
         {
             if (DatabaseDescriptor.getListenAddress() == null)
             {
-                try
+                // First try EC2_LOCAL_IPV4 environment variable
+                String ec2LocalIp = System.getenv("EC2_LOCAL_IPV4");
+                if (ec2LocalIp != null && !ec2LocalIp.isEmpty())
                 {
-                    localInetAddress = InetAddress.getLocalHost();
-                    logger.info("InetAddress.getLocalHost() was used to resolve listen_address to {}, double check this is "
-                                + "correct. Please check your node's config and set the listen_address in cassandra.yaml accordingly if applicable.",
-                                localInetAddress);
+                    try
+                    {
+                        localInetAddress = InetAddress.getByName(ec2LocalIp);
+                        logger.info("Using EC2_LOCAL_IPV4 ({}) for listen_address", localInetAddress);
+                    }
+                    catch (UnknownHostException e)
+                    {
+                        logger.warn("Failed to resolve EC2_LOCAL_IPV4 ({}), falling back to InetAddress.getLocalHost()", ec2LocalIp, e);
+                    }
                 }
-                catch(UnknownHostException e)
+                
+                // Fall back to getLocalHost if EC2_LOCAL_IPV4 is not set or failed
+                if (localInetAddress == null)
                 {
-                    logger.info("InetAddress.getLocalHost() could not resolve the address for the hostname ({}), please "
-                                + "check your node's config and set the listen_address in cassandra.yaml. Falling back to {}",
-                                e,
-                                InetAddress.getLoopbackAddress());
-                    // CASSANDRA-15901 fallback for misconfigured nodes
-                    localInetAddress = InetAddress.getLoopbackAddress();
+                    logger.warn("EC2_LOCAL_IPV4 environment variable is set but empty, falling back to InetAddress.getLocalHost()");
+                    try
+                    {
+                        localInetAddress = InetAddress.getLocalHost();
+                        logger.info("InetAddress.getLocalHost() was used to resolve listen_address to {}, double check this is "
+                                    + "correct. Please check your node's config and set the listen_address in cassandra.yaml accordingly if applicable.",
+                                    localInetAddress);
+                    }
+                    catch(UnknownHostException e)
+                    {
+                        logger.error("InetAddress.getLocalHost() could not resolve the address for the hostname ({}), please "
+                                    + "check your node's config and set the listen_address in cassandra.yaml. Falling back to {}",
+                                    e,
+                                    InetAddress.getLoopbackAddress());
+                        // CASSANDRA-15901 fallback for misconfigured nodes
+                        localInetAddress = InetAddress.getLoopbackAddress();
+                    }
                 }
             }
             else
