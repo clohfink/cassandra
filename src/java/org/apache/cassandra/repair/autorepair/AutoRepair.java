@@ -268,7 +268,7 @@ public class AutoRepair
             }
             else
             {
-                logger.info("Waiting for my turn...");
+                logger.debug("Waiting for my turn...");
             }
         }
         catch (Exception e)

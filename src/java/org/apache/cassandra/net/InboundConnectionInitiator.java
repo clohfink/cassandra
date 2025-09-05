@@ -397,7 +397,7 @@ public class InboundConnectionInitiator
             if (reportingExclusion)
                 logger.debug("Excluding internode exception for {}; address contained in internode_error_reporting_exclusions", remoteAddress, cause);
             else
-                logger.error("Failed to properly handshake with peer {}. Closing the channel.", remoteAddress, cause);
+                logger.debug("Failed to properly handshake with peer {}. Closing the channel.", remoteAddress, cause);
 
             try
             {

@@ -430,7 +430,7 @@ public class AutoRepairUtils
             String nodeDC = DatabaseDescriptor.getEndpointSnitch().getDatacenter(node);
             if (AutoRepairService.instance.getAutoRepairConfig().getIgnoreDCs(repairType).contains(nodeDC))
             {
-                logger.info("Ignore node {} because its datacenter is {}", node, nodeDC);
+                logger.debug("Ignore node {} because its datacenter is {}", node, nodeDC);
                 continue;
             }
             /*
@@ -754,9 +754,9 @@ public class AutoRepairUtils
         try
         {
             Set<InetAddressAndPort> allNodesInRing = StorageService.instance.getTokenMetadata().getAllEndpoints();
-            logger.info("Total nodes in ring {}", allNodesInRing.size());
+            logger.debug("Total nodes in ring {}", allNodesInRing.size());
             TreeSet<UUID> hostIdsInCurrentRing = getHostIdsInCurrentRing(repairType, allNodesInRing);
-            logger.info("Total nodes qualified for repair {}", hostIdsInCurrentRing.size());
+            logger.debug("Total nodes qualified for repair {}", hostIdsInCurrentRing.size());
 
             List<AutoRepairHistory> autoRepairHistories = getAutoRepairHistory(repairType);
             Set<UUID> autoRepairHistoryIds = new HashSet<>();
@@ -801,7 +801,7 @@ public class AutoRepairUtils
             {
                 if (!autoRepairHistoryIds.contains(hostId))
                 {
-                    logger.info("{} for repair type {} doesn't exist in the auto repair history table, insert a new record.", repairType, hostId);
+                    logger.debug("{} for repair type {} doesn't exist in the auto repair history table, insert a new record.", repairType, hostId);
                     insertNewRepairHistory(repairType, hostId, currentTimeMillis(), currentTimeMillis());
                 }
             }
@@ -843,13 +843,13 @@ public class AutoRepairUtils
 
             int parallelRepairNumber = getMaxNumberOfNodeRunAutoRepair(repairType,
                                                                        autoRepairHistories == null ? 0 : autoRepairHistories.size());
-            logger.info("Will run repairs concurrently on {} node(s)", parallelRepairNumber);
+            logger.debug("Will run repairs concurrently on {} node(s)", parallelRepairNumber);
             if (currentRepairStatus == null || parallelRepairNumber > currentRepairStatus.hostIdsWithOnGoingRepair.size())
             {
                 // more repairs can be run, I might be the new one
                 if (autoRepairHistories != null)
                 {
-                    logger.info("Auto repair history table has {} records", autoRepairHistories.size());
+                    logger.debug("Auto repair history table has {} records", autoRepairHistories.size());
                 }
                 else
                 {
@@ -907,7 +907,7 @@ public class AutoRepairUtils
                     }
 
                     // log which node is next, which is helpful for debugging
-                    logger.info("Next node to be repaired for repair type {}: {} ({})", repairType,
+                    logger.debug("Next node to be repaired for repair type {}: {} ({})", repairType,
                                 getBroadcastAddress(nodeToBeRepaired.hostId),
                                 nodeToBeRepaired);
                 }
@@ -928,7 +928,7 @@ public class AutoRepairUtils
         }
         catch (Exception e)
         {
-            logger.error("Exception while deciding node's turn:", e);
+            logger.info("Unable to determine if it's node's turn: {}", e.getMessage());
         }
         return NOT_MY_TURN;
     }
@@ -986,11 +986,11 @@ public class AutoRepairUtils
             boolean applied = resultSet.one().getBoolean(ModificationStatement.CAS_RESULT_COLUMN.toString());
             if (applied)
             {
-                logger.info("Successfully inserted a new auto repair history record for host id: {}", hostId);
+                logger.debug("Successfully inserted a new auto repair history record for host id: {}", hostId);
             }
             else
             {
-                logger.info("Record exists, no need to insert again for host id: {}", hostId);
+                logger.debug("Record exists, no need to insert again for host id: {}", hostId);
             }
         }
         catch (Exception e)
@@ -1027,7 +1027,7 @@ public class AutoRepairUtils
             hostIds.add(hostId);
             if (hostId != null)
             {
-                logger.info("Add host {} to the priority list", hostId);
+                logger.debug("Add host {} to the priority list", hostId);
             }
         }
         if (!hostIds.isEmpty())
@@ -1043,7 +1043,7 @@ public class AutoRepairUtils
 
     static void removePriorityStatus(RepairType repairType, UUID hostId)
     {
-        logger.info("Remove host {} from priority list", hostId);
+        logger.debug("Remove host {} from priority list", hostId);
         delStatementPriorityStatus.execute(QueryState.forInternalCalls(),
                                            QueryOptions.forInternalCalls(internalQueryCL,
                                                                          Lists.newArrayList(ByteBufferUtil.bytes(hostId),
