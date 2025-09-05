@@ -40,7 +40,6 @@ import org.apache.cassandra.config.CassandraRelevantProperties;
 import org.apache.cassandra.io.FSError;
 import org.apache.cassandra.io.FSReadError;
 import org.apache.cassandra.io.FSWriteError;
-import org.apache.cassandra.service.StorageService;
 import org.apache.cassandra.utils.NoSpamLogger;
 
 import static java.nio.file.StandardOpenOption.*;
@@ -69,12 +68,7 @@ public final class PathUtils
     private static final Logger logger = LoggerFactory.getLogger(PathUtils.class);
     private static final NoSpamLogger nospam1m = NoSpamLogger.getLogger(logger, 1, TimeUnit.MINUTES);
 
-    private static Consumer<Path> onDeletion = path -> {
-        if (StorageService.instance.isDaemonSetupCompleted())
-            setDeletionListener(ignore -> {});
-        else
-            logger.trace("Deleting file during startup: {}", path);
-    };
+    private static Consumer<Path> onDeletion = path -> {};
 
     public static FileChannel newReadChannel(Path path) throws NoSuchFileException
     {

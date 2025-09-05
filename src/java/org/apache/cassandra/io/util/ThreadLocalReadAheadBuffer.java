@@ -1,0 +1,157 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.cassandra.io.util;
+
+import java.nio.ByteBuffer;
+import java.util.HashMap;
+import java.util.Map;
+import io.netty.util.concurrent.FastThreadLocal;
+import org.apache.cassandra.io.compress.BufferType;
+import org.apache.cassandra.io.sstable.CorruptSSTableException;
+
+public final class ThreadLocalReadAheadBuffer
+{
+    private static class Block {
+        ByteBuffer buffer = null;
+        int index = -1;
+    }
+
+    private final ChannelProxy channel;
+
+    private final BufferType bufferType;
+
+    private static final FastThreadLocal<Map<String, Block>> blockMap = new FastThreadLocal<Map<String, Block>>() {
+        @Override
+        protected Map<String, Block> initialValue()
+        {
+            return new HashMap<>();
+        }
+    };
+
+    private final int bufferSize;
+
+    private final long channelSize;
+
+    public ThreadLocalReadAheadBuffer(ChannelProxy channel, int bufferSize, BufferType bufferType)
+    {
+        this.channel = channel;
+        this.bufferSize = bufferSize;
+        this.bufferType = bufferType;
+        channelSize = channel.size();
+    }
+
+    public boolean hasBuffer()
+    {
+        return block().buffer != null;
+    }
+
+    public void allocateBuffer()
+    {
+        getBlock();
+    }
+
+    private Block getBlock()
+    {
+        Block block = block();
+        if (block.buffer == null)
+        {
+            block.buffer = bufferType.allocate(bufferSize);
+            block.buffer.clear();
+        }
+        return block;
+    }
+
+    private Block block()
+    {
+        return blockMap.get().computeIfAbsent(channel.filePath(), k -> new Block());
+    }
+
+    private void fill(Block block, long position)
+    {
+        ByteBuffer blockBuffer = block.buffer;
+        long realPosition = Math.min(channelSize, position);
+        int blockNo = (int) (realPosition / bufferSize);
+        long blockPosition = blockNo * (long) bufferSize;
+
+        long remaining = channelSize - blockPosition;
+        int sizeToRead = (int) Math.min(remaining, bufferSize);
+        if (block.index != blockNo)
+        {
+            blockBuffer.flip();
+            blockBuffer.limit(sizeToRead);
+            if (channel.read(blockBuffer, blockPosition) != sizeToRead)
+                throw new CorruptSSTableException(null, channel.filePath());
+
+            block.index = blockNo;
+        }
+
+        blockBuffer.flip();
+        blockBuffer.limit(sizeToRead);
+        blockBuffer.position((int) (realPosition - blockPosition));
+    }
+
+    private int read(Block block, ByteBuffer dest, int length)
+    {
+        ByteBuffer blockBuffer = block.buffer;
+        ByteBuffer tmp = blockBuffer.duplicate();
+        tmp.limit(tmp.position() + length);
+        dest.put(tmp);
+        blockBuffer.position(blockBuffer.position() + length);
+
+        return length;
+    }
+
+    public void read(ByteBuffer target, long offset, int length)
+    {
+        int copied = 0;
+        Block block = getBlock();
+        while (copied < length)
+        {
+            fill(block, offset + copied);
+            int leftToRead = length - copied;
+            if (block.buffer.remaining() >= leftToRead)
+                copied += read(block, target, leftToRead);
+            else
+                copied += read(block, target, block.buffer.remaining());
+        }
+    }
+
+    public void clear(boolean deallocate)
+    {
+        Block block = block();
+        block.index = -1;
+
+        ByteBuffer blockBuffer = block.buffer;
+        if (blockBuffer != null)
+        {
+            blockBuffer.clear();
+            if (deallocate)
+            {
+                FileUtils.clean(blockBuffer);
+                block.buffer = null;
+            }
+        }
+    }
+
+    public void close()
+    {
+        clear(true);
+        blockMap.get().remove(channel.filePath());
+    }
+}
