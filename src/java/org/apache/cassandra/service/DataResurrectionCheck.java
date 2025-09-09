@@ -161,7 +161,7 @@ public class DataResurrectionCheck implements StartupCheck
 
         if (!heartbeatFile.exists())
         {
-            LOGGER.debug("Heartbeat file {} not found! Skipping heartbeat startup check.", heartbeatFile.absolutePath());
+            LOGGER.info("Heartbeat file {} not found! Skipping heartbeat startup check.", heartbeatFile.absolutePath());
             return;
         }
 
@@ -199,7 +199,9 @@ public class DataResurrectionCheck implements StartupCheck
                     continue;
 
                 long gcGraceMillis = ((long) userTable.gcPeriod) * 1000;
-                if (heartbeatMillis + gcGraceMillis < currentTimeMillis)
+                long maxHintWindowMillis = DatabaseDescriptor.getMaxHintWindow();
+                long effectiveGraceMillis = Math.min(gcGraceMillis, maxHintWindowMillis);
+                if (heartbeatMillis + effectiveGraceMillis < currentTimeMillis)
                     violations.add(Pair.create(keyspace, userTable.table));
             }
         }
@@ -234,6 +236,9 @@ public class DataResurrectionCheck implements StartupCheck
 
             ScheduledExecutors.scheduledTasks.scheduleAtFixedRate(() ->
             {
+                if (!StorageService.instance.isGossipRunning() ||
+                    !CassandraDaemon.instance.setupCompleted())
+                    return;
                 Heartbeat heartbeat = new Heartbeat(Instant.ofEpochMilli(Clock.Global.currentTimeMillis()));
                 try
                 {

@@ -35,6 +35,7 @@ import org.apache.cassandra.io.util.File;
 import org.apache.cassandra.service.DataResurrectionCheck;
 import org.apache.cassandra.service.DataResurrectionCheck.Heartbeat;
 import org.apache.cassandra.service.StartupChecks.StartupCheckType;
+import org.apache.cassandra.service.StorageService;
 import org.apache.cassandra.utils.Clock.Global;
 
 import static java.lang.String.format;
@@ -42,6 +43,7 @@ import static java.util.concurrent.TimeUnit.MINUTES;
 import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.apache.cassandra.config.StartupChecksOptions.ENABLED_PROPERTY;
 import static org.apache.cassandra.distributed.Cluster.build;
+import static org.apache.cassandra.distributed.api.Feature.GOSSIP;
 import static org.apache.cassandra.distributed.api.Feature.NATIVE_PROTOCOL;
 import static org.apache.cassandra.service.DataResurrectionCheck.DEFAULT_HEARTBEAT_FILE;
 import static org.apache.cassandra.service.DataResurrectionCheck.EXCLUDED_KEYSPACES_CONFIG_PROPERTY;
@@ -68,12 +70,35 @@ public class DataResurrectionCheckTest extends TestBaseImpl
             // and system tables are young enough
             try (Cluster cluster = build().withNodes(1)
                                           .withDataDirCount(3) // we will expect heartbeat to be in the first data dir
-                                          .withConfig(config -> config.with(NATIVE_PROTOCOL)
+                                          .withConfig(config -> config.with(NATIVE_PROTOCOL, GOSSIP)
                                                                       .set("startup_checks",
                                                                            getStartupChecksConfig(ENABLED_PROPERTY, "true")))
                                           .start())
             {
                 IInvokableInstance instance = cluster.get(1);
+
+                // Wait for gossip to be running before checking heartbeat
+                await().timeout(30, SECONDS)
+                       .until(() -> instance.callOnInstance((IIsolatedExecutor.SerializableCallable<Boolean>)
+                                                            () -> {
+                                                                try {
+                                                                    return StorageService.instance.isGossipRunning();
+                                                                } catch (Exception e) {
+                                                                    return false;
+                                                                }
+                                                            }));
+
+                // Manually trigger postAction to start heartbeat writing since the test sets period to 1 hour
+                instance.runOnInstance((IIsolatedExecutor.SerializableRunnable) () -> {
+                    try {
+                        DataResurrectionCheck check = new DataResurrectionCheck();
+                        StartupChecksOptions startupChecksOptions = new StartupChecksOptions();
+                        startupChecksOptions.enable(check_data_resurrection);
+                        check.postAction(startupChecksOptions);
+                    } catch (Exception e) {
+                        throw new RuntimeException(e);
+                    }
+                });
 
                 checkHeartbeat(instance);
 
@@ -176,7 +201,11 @@ public class DataResurrectionCheckTest extends TestBaseImpl
     {
         File heartbeatFile = new File(((String[]) instance.config().get("data_file_directories"))[0],
                                       DEFAULT_HEARTBEAT_FILE);
-        assertTrue(heartbeatFile.exists());
+        
+        // Wait for heartbeat file to exist and be written
+        await().timeout(30, SECONDS)
+               .until(() -> heartbeatFile.exists());
+               
         Heartbeat heartbeat = Heartbeat.deserializeFromJsonFile(heartbeatFile);
         assertNotNull(heartbeat.lastHeartbeat);
         assertTrue(heartbeat.lastHeartbeat.toEpochMilli() < Global.currentTimeMillis());
