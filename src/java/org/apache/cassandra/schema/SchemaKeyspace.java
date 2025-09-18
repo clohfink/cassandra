@@ -50,6 +50,7 @@ import org.apache.cassandra.transport.ProtocolVersion;
 import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.FBUtilities;
 import org.apache.cassandra.utils.Simulate;
+import org.apache.cassandra.gms.Gossiper;
 
 import static java.lang.String.format;
 
@@ -430,7 +431,8 @@ public final class SchemaKeyspace
         ColumnFilter.Builder builder = ColumnFilter.allRegularColumnsBuilder(partition.metadata(), false);
         for (ColumnMetadata column : filter.fetchedColumns())
         {
-            if (!column.name.toString().equals("cdc") && !column.name.toString().equals("auto_repair"))
+            if (!column.name.toString().equals("cdc") &&
+                (!column.name.toString().equals("auto_repair") || !Gossiper.instance.hasPreAutorepair()))
                 builder.add(column);
         }
 
@@ -567,6 +569,15 @@ public final class SchemaKeyspace
         // in mixed operation with pre-4.1 versioned node during upgrades.
         if (params.memtable != MemtableParams.DEFAULT)
             builder.add("memtable", params.memtable.configurationKey());
+
+        // As above, only add the auto_repair column if the scheduler is enabled
+        // to avoid RTE in pre-5.1 versioned node during upgrades
+        if (DatabaseDescriptor.getRawConfig() != null &&
+            DatabaseDescriptor.getAutoRepairConfig().isAutoRepairSchedulingEnabled() &&
+            !Gossiper.instance.hasPreAutorepair())
+        {
+            builder.add("auto_repair", params.autoRepair.asMap());
+        }
     }
 
     private static void addAlterTableToSchemaMutation(TableMetadata oldTable, TableMetadata newTable, Mutation.SimpleBuilder builder)

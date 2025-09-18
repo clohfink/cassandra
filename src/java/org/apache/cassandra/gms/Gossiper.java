@@ -258,6 +258,34 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
 
     private final Supplier<CassandraVersion> upgradeFromVersionMemoized = ExpiringMemoizingSupplier.memoizeWithExpiration(upgradeFromVersionSupplier, 1, TimeUnit.MINUTES);
 
+    final Supplier<ExpiringMemoizingSupplier.ReturnValue<Boolean>> hasPreAutorepairSupplier = () ->
+    {
+        CassandraVersion targetVersion = new CassandraVersion("4.1.8.75");
+        
+        for (InetAddressAndPort addr : Gossiper.instance.getLiveMembers())
+        {
+            String versionString = getReleaseVersionString(addr);
+            if (versionString == null)
+                continue;
+                
+            try
+            {
+                CassandraVersion version = new CassandraVersion(versionString);
+                if (version.compareTo(targetVersion) < 0)
+                    return new ExpiringMemoizingSupplier.Memoized<>(true);
+            }
+            catch (Throwable t)
+            {
+                logger.error("Failed to check release version '" + versionString + "'", t);
+                // If we can't parse the version, assume it's old
+                return new ExpiringMemoizingSupplier.Memoized<>(true);
+            }
+        }
+        return new ExpiringMemoizingSupplier.Memoized<>(false);
+    };
+
+    private final Supplier<Boolean> hasPreAutorepairMemoized = ExpiringMemoizingSupplier.memoizeWithExpiration(hasPreAutorepairSupplier, 1, TimeUnit.MINUTES);
+
     @VisibleForTesting
     public void expireUpgradeFromVersion()
     {
@@ -2454,6 +2482,13 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
                // however if we discovered only nodes at current version so far (in particular only this node),
                //hasNodeWithUnknownVersion but still there are nodes with unknown version, we also want to report that the cluster may have nodes at 3.x
                hasNodeWithUnknownVersion);
+    }
+
+    public boolean hasPreAutorepair()
+    {
+        Boolean cachedResult = hasPreAutorepairMemoized.get();
+        logger.info("Using cached hasPreAutorepair result: {}", cachedResult);
+        return cachedResult != null ? cachedResult : false;
     }
 
     /**
