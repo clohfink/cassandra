@@ -158,6 +158,7 @@ public class NodeTool
                 GetTraceProbability.class,
                 GossipInfo.class,
                 Import.class,
+                IncrementalRepairStats.class,
                 Info.class,
                 InvalidateCounterCache.class,
                 InvalidateCredentialsCache.class,

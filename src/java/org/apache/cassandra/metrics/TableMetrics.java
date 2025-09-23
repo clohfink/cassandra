@@ -984,6 +984,8 @@ public class TableMetrics
         });
         unrepairedAge = createTableGauge("UnrepairedAgeInSeconds", () ->
         {
+            if (!INCREMENTAL_REPAIR_ENABLED.test(cfs))
+                return 0L;
             long oldest = Long.MAX_VALUE;
             for (SSTableReader sstable : cfs.getSSTables(SSTableSet.CANONICAL))
             {

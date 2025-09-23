@@ -1838,6 +1838,7 @@ public class NodeProbe implements AutoCloseable
                 case "BytesRepaired":
                 case "BytesUnrepaired":
                 case "BytesPendingRepair":
+                case "UnrepairedAgeInSeconds":
                 case "RecentBloomFilterFalsePositives":
                 case "RecentBloomFilterFalseRatio":
                 case "SnapshotsSize":

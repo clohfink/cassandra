@@ -110,7 +110,7 @@ public class TokenService
             }
             catch (Exception e)
             {
-                logger.error("Failed to fetch data from region: {}, trying next region...", currentRegion, e);
+                logger.error("Failed to fetch {} from region: {}, trying next region...", endpoint, currentRegion, e);
             }
         }
 
