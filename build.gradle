@@ -91,6 +91,7 @@ ospackage {
         "${project.ext.cass_home_dir}/bin/cassandra.in.sh")
 
     link("${project.ext.cass_home_dir}/conf", '/etc/cassandra')
+    postInstall file('./postInstall.sh')
 }
 
 java {
