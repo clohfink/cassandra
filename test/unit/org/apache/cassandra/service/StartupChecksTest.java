@@ -182,18 +182,34 @@ public class StartupChecksTest
             @Override
             List<TableGCPeriod> getTablesGcPeriods(String userKeyspace)
             {
-                return singletonList(new TableGCPeriod("def", 10));
+                return singletonList(new TableGCPeriod("def", 15));
             }
         };
 
-        Heartbeat heartbeat = new Heartbeat(Instant.ofEpochMilli(Clock.Global.currentTimeMillis()));
-        heartbeat.serializeToJsonFile(heartbeatFile);
+        int originalHintWindow = DatabaseDescriptor.getMaxHintWindow();
+        try
+        {
+            // Data resurrection test should fail after the MAX of max hint window
+            // and gc_grace_seconds.
+            DatabaseDescriptor.setMaxHintWindow(10 * 1000);
 
-        Thread.sleep(15 * 1000);
+            Heartbeat heartbeat = new Heartbeat(Instant.ofEpochMilli(Clock.Global.currentTimeMillis()));
+            heartbeat.serializeToJsonFile(heartbeatFile);
 
-        startupChecks.withTest(check);
+            startupChecks.withTest(check);
+            Thread.sleep(6 * 1000);
+            verifySuccess(startupChecks);
 
-        verifyFailure(startupChecks, "Invalid tables: abc.def");
+            Thread.sleep(6 * 1000);
+            verifySuccess(startupChecks);
+
+            Thread.sleep(6 * 1000);
+            verifyFailure(startupChecks, "Invalid tables: abc.def");
+        }
+        finally
+        {
+            DatabaseDescriptor.setMaxHintWindow(originalHintWindow);
+        }
     }
 
     private void copyInvalidLegacySSTables(Path targetDir) throws IOException
@@ -204,6 +220,17 @@ public class StartupChecksTest
         for (File f : legacySSTableRoot.tryList())
             Files.copy(f.toPath(), targetDir.resolve(f.name()));
 
+    }
+
+    private void verifySuccess(StartupChecks tests) {
+        try
+        {
+            tests.verify(options);
+        }
+        catch (StartupException e)
+        {
+            fail("Failed startup check with error: " + e.getMessage());
+        }
     }
 
     private void verifyFailure(StartupChecks tests, String message)

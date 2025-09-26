@@ -200,7 +200,7 @@ public class DataResurrectionCheck implements StartupCheck
 
                 long gcGraceMillis = ((long) userTable.gcPeriod) * 1000;
                 long maxHintWindowMillis = DatabaseDescriptor.getMaxHintWindow();
-                long effectiveGraceMillis = Math.min(gcGraceMillis, maxHintWindowMillis);
+                long effectiveGraceMillis = Math.max(gcGraceMillis, maxHintWindowMillis);
                 if (heartbeatMillis + effectiveGraceMillis < currentTimeMillis)
                     violations.add(Pair.create(keyspace, userTable.table));
             }
