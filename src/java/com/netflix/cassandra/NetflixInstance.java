@@ -34,6 +34,7 @@ public class NetflixInstance
     private int id;
     private String hostIP;
     private String hostName;
+    private String key;
 
     // Constructors
     public NetflixInstance()
@@ -41,7 +42,7 @@ public class NetflixInstance
     }
 
     public NetflixInstance(long updateTime, long createdTime, String app, String instanceId, String availabilityZone,
-                           String token, String region, int id, String hostIP, String hostName)
+                           String token, String region, int id, String hostIP, String hostName, String key)
     {
         this.updateTime = updateTime;
         this.createdTime = createdTime;
@@ -53,6 +54,7 @@ public class NetflixInstance
         this.id = id;
         this.hostIP = hostIP;
         this.hostName = hostName;
+        this.key = key;
     }
 
     // Getters and Setters
@@ -156,6 +158,16 @@ public class NetflixInstance
         this.hostName = hostName;
     }
 
+    public String getKey()
+    {
+        return key;
+    }
+
+    public void setKey(String key)
+    {
+        this.key = key;
+    }
+
     // equals(), hashCode() and toString() methods
     @Override
     public boolean equals(Object o)
@@ -167,13 +179,13 @@ public class NetflixInstance
                Objects.equals(app, that.app) && Objects.equals(instanceId, that.instanceId) &&
                Objects.equals(availabilityZone, that.availabilityZone) && Objects.equals(token, that.token) &&
                Objects.equals(region, that.region) && Objects.equals(hostIP, that.hostIP) &&
-               Objects.equals(hostName, that.hostName);
+               Objects.equals(hostName, that.hostName) && Objects.equals(key, that.key);
     }
 
     @Override
     public int hashCode()
     {
-        return Objects.hash(updateTime, createdTime, app, instanceId, availabilityZone, token, region, id, hostIP, hostName);
+        return Objects.hash(updateTime, createdTime, app, instanceId, availabilityZone, token, region, id, hostIP, hostName, key);
     }
 
     @Override
@@ -190,6 +202,7 @@ public class NetflixInstance
                ", id=" + id +
                ", hostIP='" + hostIP + '\'' +
                ", hostName='" + hostName + '\'' +
+               ", key='" + key + '\'' +
                '}';
     }
 }

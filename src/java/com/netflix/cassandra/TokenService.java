@@ -104,8 +104,8 @@ public class TokenService
             try
             {
                 String urlStr = BASE_URL_TEMPLATE.replace("{region}", currentRegion)
-                                                 .replace("{environment}", env);
-                logger.info("Fetching service response from region: {}", currentRegion);
+                                                 .replace("{environment}", env) + endpoint;
+                logger.info("Fetching {}", urlStr);
                 return fetchServiceResponse(urlStr);
             }
             catch (Exception e)
@@ -165,12 +165,34 @@ public class TokenService
 
         // Check the response code to ensure the request was successful
         int responseCode = conn.getResponseCode();
+
         if (responseCode != 200)
         {
-            logger.error("Failed to get data from service: HTTP error code {}", responseCode);
-            throw new RuntimeException("Failed to get data from service: HTTP error code " + responseCode);
-        }
+            String responseMessage = conn.getResponseMessage();
+            String errorBody = "";
 
+            // Try to read error response body
+            try (BufferedReader errorReader = new BufferedReader(new InputStreamReader(conn.getErrorStream())))
+            {
+                String line;
+                StringBuilder errorResponse = new StringBuilder();
+                while ((line = errorReader.readLine()) != null)
+                {
+                    errorResponse.append(line);
+                }
+                errorBody = errorResponse.toString();
+            }
+            catch (Exception e)
+            {
+                // Error stream might be null or unreadable
+            }
+
+            logger.error("Failed to get data from service: HTTP {} - {} - {}",
+                         responseCode, responseMessage, errorBody);
+            throw new RuntimeException("Failed to get data from service: HTTP " +
+                                     responseCode + " - " + responseMessage +
+                                     (errorBody.isEmpty() ? "" : " - " + errorBody));
+        }
         // Read the response from the service
         BufferedReader in = new BufferedReader(new InputStreamReader(conn.getInputStream()));
         String inputLine;
@@ -179,6 +201,7 @@ public class TokenService
         while ((inputLine = in.readLine()) != null)
             response.append(inputLine);
         in.close();
+
         return response.toString();
     }
 }

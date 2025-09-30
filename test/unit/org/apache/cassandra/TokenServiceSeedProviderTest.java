@@ -56,13 +56,13 @@ public class TokenServiceSeedProviderTest
         instances = new ArrayList<>();
         instances.add(new NetflixInstance(1728398107613L, 1728397893251L, "cass_perf_cl_large",
                                           "i-123456789", "us-east-1a", "-7173733804634027806", "us-east-1",
-                                          -1670265060, "100.107.12.161", "ip-100-107-12-161.ec2.internal"));
+                                          -1670265060, "100.107.12.161", "ip-100-107-12-161.ec2.internal", null));
         instances.add(new NetflixInstance(1728398107614L, 1728397893252L, "cass_perf_cl_large",
                                           "i-987654321", "us-east-1b", "-7173733804634027807", "us-east-1",
-                                          -1670265061, "100.107.12.162", "ip-100-107-12-162.ec2.internal"));
+                                          -1670265061, "100.107.12.162", "ip-100-107-12-162.ec2.internal", null));
         instances.add(new NetflixInstance(1728398107615L, 1728397893253L, "cass_perf_cl_large",
                                           "new_slot", "us-east-1c", "-7173733804634027808", "us-east-1",
-                                          -1670265062, "100.107.12.163", "ip-100-107-12-163.ec2.internal"));
+                                          -1670265062, "100.107.12.163", "ip-100-107-12-163.ec2.internal", null));
     }
 
     @Test
@@ -128,7 +128,7 @@ public class TokenServiceSeedProviderTest
         // Mock an instance with an invalid IP
         instances.add(new NetflixInstance(1728398107616L, 1728397893254L, "cass_perf_cl_large",
                                           "i-invalid-ip", "us-east-1d", "-7173733804634027809", "us-east-1",
-                                          -1670265063, "invalid-ip", "ip-invalid-ip"));
+                                          -1670265063, "invalid-ip", "ip-invalid-ip", null));
 
         // Test to ensure that only valid IPs are included
         List<InetAddressAndPort> seeds = filterSeeds(instances, currentInstanceId, isAutoBootstrap);
@@ -144,10 +144,10 @@ public class TokenServiceSeedProviderTest
         // Add another instance from the same AZ "us-east-1a"
         instances.add(new NetflixInstance(1728398107617L, 1728397893255L, "cass_perf_cl_large",
                                           "i-111111111", "us-east-1a", "-7173733804634027810", "us-east-1",
-                                          -1670265064, "100.107.12.164", "ip-100-107-12-164.ec2.internal"));
+                                          -1670265064, "100.107.12.164", "ip-100-107-12-164.ec2.internal", null));
         instances.add(new NetflixInstance(1728398107627L, 1728397893295L, "cass_perf_cl_large",
                                           "i-111111111", "us-east-1a", "-7173733804634027810", "us-east-1",
-                                          -1670265065, "100.107.12.165", "ip-100-107-12-165.ec2.internal"));
+                                          -1670265065, "100.107.12.165", "ip-100-107-12-165.ec2.internal", null));
 
         // Test that only one instance per availability zone is selected
         List<InetAddressAndPort> seeds = filterSeeds(instances, currentInstanceId, isAutoBootstrap);
