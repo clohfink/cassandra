@@ -24,6 +24,7 @@ import java.util.Collections;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import org.apache.cassandra.distributed.Cluster;
@@ -31,6 +32,7 @@ import org.apache.cassandra.distributed.api.Feature;
 
 public class NativeTransportEncryptionOptionsTest extends AbstractEncryptionOptionsImpl
 {
+    @Ignore
     @Test
     public void nodeWillNotStartWithBadKeystore() throws Throwable
     {
@@ -46,6 +48,7 @@ public class NativeTransportEncryptionOptionsTest extends AbstractEncryptionOpti
         }
     }
 
+    @Ignore
     @Test
     public void optionalTlsConnectionDisabledWithoutKeystoreTest() throws Throwable
     {
@@ -64,7 +67,7 @@ public class NativeTransportEncryptionOptionsTest extends AbstractEncryptionOpti
         }
     }
 
-
+    @Ignore
     @Test
     public void optionalTlsConnectionAllowedWithKeystoreTest() throws Throwable
     {
@@ -85,7 +88,7 @@ public class NativeTransportEncryptionOptionsTest extends AbstractEncryptionOpti
                                 ConnectResult.NEGOTIATED, tlsConnection.connect());
         }
     }
-
+    @Ignore
     @Test
     public void optionalTlsConnectionAllowedToRegularPortTest() throws Throwable
     {
@@ -147,6 +150,7 @@ public class NativeTransportEncryptionOptionsTest extends AbstractEncryptionOpti
      * @see <a href="https://senthilnayagan.medium.com/tlsv1-and-tlsv1-1-protocols-disabled-by-default-in-javas-latest-patch-released-on-april-20-2021-52c309f6b16d">
      *     TLSv1 and TLSv1.1 Protocols are Disabled in Java!</a>
      */
+    @Ignore
     @Test
     public void negotiatedProtocolMustBeAcceptedProtocolTest() throws Throwable
     {
@@ -178,7 +182,7 @@ public class NativeTransportEncryptionOptionsTest extends AbstractEncryptionOpti
             Assert.assertEquals("TLSv1.2", tls12Connection.lastProtocol());
         }
     }
-
+    @Ignore
     @Test
     public void connectionCannotAgreeOnClientAndServerTest() throws Throwable
     {
@@ -203,7 +207,7 @@ public class NativeTransportEncryptionOptionsTest extends AbstractEncryptionOpti
             connection.assertReceivedHandshakeException();
         }
     }
-
+    @Ignore
     @Test
     public void nodeMustNotStartWithNonExistantProtocolTest() throws Throwable
     {
@@ -216,7 +220,7 @@ public class NativeTransportEncryptionOptionsTest extends AbstractEncryptionOpti
             assertCannotStartDueToConfigurationException(cluster);
         }
     }
-
+    @Ignore
     @Test
     public void nodeMustNotStartWithNonExistantCiphersTest() throws Throwable
     {

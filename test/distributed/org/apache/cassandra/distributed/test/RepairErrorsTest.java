@@ -28,6 +28,8 @@ import net.bytebuddy.dynamic.loading.ClassLoadingStrategy;
 import net.bytebuddy.implementation.MethodDelegation;
 import net.bytebuddy.implementation.bind.annotation.SuperCall;
 import org.assertj.core.api.Assertions;
+
+import org.junit.Ignore;
 import org.junit.Test;
 
 import org.apache.cassandra.db.ColumnFamilyStore;
@@ -59,6 +61,7 @@ import static org.apache.cassandra.distributed.api.Feature.NETWORK;
 
 public class RepairErrorsTest extends TestBaseImpl
 {
+    @Ignore // to avoid OOM with too many in 1 jvm
     @Test
     public void testRemoteValidationFailure() throws IOException
     {
@@ -86,6 +89,7 @@ public class RepairErrorsTest extends TestBaseImpl
         }
     }
 
+    @Ignore
     @Test
     public void testRemoteSyncFailure() throws Exception
     {

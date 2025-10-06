@@ -72,7 +72,8 @@ public class DataResurrectionCheckTest extends TestBaseImpl
                                           .withDataDirCount(3) // we will expect heartbeat to be in the first data dir
                                           .withConfig(config -> config.with(NATIVE_PROTOCOL, GOSSIP)
                                                                       .set("startup_checks",
-                                                                           getStartupChecksConfig(ENABLED_PROPERTY, "true")))
+                                                                           getStartupChecksConfig(ENABLED_PROPERTY, "true"))
+                                                                      .set("max_hint_window", "1ms"))
                                           .start())
             {
                 IInvokableInstance instance = cluster.get(1);

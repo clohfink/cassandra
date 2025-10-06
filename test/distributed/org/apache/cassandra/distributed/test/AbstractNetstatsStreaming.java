@@ -122,7 +122,6 @@ public abstract class AbstractNetstatsStreaming extends TestBaseImpl
         public static List<Pair<ReceivingStastistics, SendingStatistics>> parse(final NetstatResults results)
         {
             final Set<String> outputs = new LinkedHashSet<>();
-
             results.netstatOutputs.stream()
                                   .map(NodeToolResult::getStdout)
                                   .filter(output -> !output.contains("Not sending any streams"))
@@ -144,7 +143,8 @@ public abstract class AbstractNetstatsStreaming extends TestBaseImpl
                                                            .filter(line -> !line.isEmpty())
                                                            // sometimes logs are mangled into output
                                                            .filter(line -> Stream.of("DEBUG", "INFO", "ERROR", "WARN").noneMatch(line::contains))
-                                                           .filter(line -> Stream.of("Mode:", "Read", "Attempted", "Mismatch", "Pool", "Large", "Small", "Gossip").noneMatch(line::startsWith))
+                                                           .filter(line -> Stream.of("Mode:", "Read", "Attempted", "Mismatch", "Pool", "Large", "Small", "Gossip", "Repair").noneMatch(line::startsWith))
+                                                           .filter(line -> !line.matches("\\s*/\\d+\\.\\d+\\.\\d+\\.\\d+.*")) // Filter repair session IP lines like "/127.0.0.2" or "    /127.0.0.2"
                                                            .collect(toList());
 
                 for (final String outputLine : sanitisedOutput)

@@ -1,22 +1,21 @@
 #!/bin/bash
-BASTION="awspersistence.test.netflix.net"
-NUM_RUNNING="'sudo jps | grep CassandraDaemon | wc -l'"
-RUN_BUILD=1
 
 function usage {
-    echo "test_locally.sh <app name>"
+    echo "Usage: test_locally.sh [-s] <app name>"
     echo
-    echo "Executed from the Cassandra directory will build a nf-cassandra-4.0.16.jar, upload it to s3 "
-    echo "and live upgrade Cassandra on the destination cluster. Note this only "
-    echo "works in test, do not use this on prod! and it only replaces cassandra.jar file, if you have any other deps, "
-    echo "this method is not suggested"
+    echo "Deploy and test a locally built Cassandra JAR on Netflix infrastructure"
     echo
-    echo "Options"
-    echo "  -s: Don't build and test a fresh jar"
+    echo "Arguments:"
+    echo "  app name    Netflix application name to deploy to"
     echo
-    echo "Example usage:"
-    echo "./test_locally.sh cass_perf_vchella"
-    echo "./test_locally.sh -s cass_perf_vchella"
+    echo "Options:"
+    echo "  -s          Skip build (use existing JAR in build/)"
+    echo
+    echo "This script:"
+    echo "  1. Builds the Cassandra JAR (unless -s specified)"
+    echo "  2. Finds all instances for the specified app"
+    echo "  3. Uploads the JAR to instances in batches"
+    echo "  4. Restarts Cassandra with the new JAR on all instances"
 }
 
 while getopts ":s" opt; do
@@ -40,44 +39,60 @@ fi
 
 set -euf -o pipefail
 
-echo ">>> Setting up virtualenv for nflx-python-libs and aws sdk"
-if [ ! -d "./venv" ]; then
-    virtualenv venv
-fi
-venv/bin/pip install awscli
-venv/bin/pip install -i https://smartiproxy.mgmt.netflix.net/pypi nflx-python-libs
+ant jar
 
-# Otherwise you can "test" with a really old deb by accident
-if [ $RUN_BUILD == 1 ]; then
-    echo ">>> Building fresh Cassandra artifacts, skip with -s"
-    echo ">>>"  ant realclean build artifacts
-    ant realclean build artifacts
-fi
-
-tmp="$(find ./build/dist/lib -name 'nf-cassandra-4*.jar')"
-CASSANDRA_JAR=$(basename $tmp)
-if [ -z $CASSANDRA_JAR ]; then
-    echo ">>> No Cassandra Jar found"
+# Extract the actual JAR version from the build directory
+CASSANDRA_JAR=$(find build -name "nf-cassandra-*.jar" -type f | head -1 | xargs basename 2>/dev/null || echo "")
+if [ -z "$CASSANDRA_JAR" ] || [ ! -f "build/$CASSANDRA_JAR" ]; then
+    echo ">>> No Cassandra JAR found in build/ directory"
     exit 1
 fi
-tmp_jar=`echo $CASSANDRA_JAR | cut -f 3 -d "-"`
-CASSANDRA_JAR_VERSION=${tmp_jar%.*}
-echo "Extracted Cassandra Version: $CASSANDRA_JAR_VERSION"
+echo ">>> Using JAR: $CASSANDRA_JAR"
 
-S3URL="s3://crossaccess.netflix.test/cde/binaries/CDE-NFCASS-PATCH/$CASSANDRA_JAR"
+INSTS=$(newt instance-lookup "$APP" | awk 'NR > 2 {print $10}' | grep -E '^i.*')
 
-echo ">>> Getting credentials"
-echo ">>>" newt --app-type awscreds refresh -r awstest_cde
-newt --app-type awscreds refresh -r awstest_cde
+# Process instances in batches of 3
+batch_size=4
+inst_array=($INSTS)
+total_instances=${#inst_array[@]}
 
-echo ">>> Copying local NfCassandra jar to s3"
-echo ">>>" venv/bin/aws s3 cp "build/${CASSANDRA_JAR}" "${S3URL}"
-venv/bin/aws s3 cp "build/${CASSANDRA_JAR}" "${S3URL}"
+pids=()
+for ((i=0; i<total_instances; i+=batch_size)); do
+    # Process batch of up to 3 instances
+    for ((j=i; j<i+batch_size && j<total_instances; j++)); do
+        inst=${inst_array[j]}
+        scp "build/$CASSANDRA_JAR" "$inst:~" &
+        pids+=($!)
+        sleep 5 # need sleep cause if done in parallel too much the %instance magic will not work
+    done
 
-echo ">>> Executing bolt from local machine"
-echo ">>>" nflx-bolt-run cass_patch_nfcassandra.sh $APP --pack cass --instances-parallel --zones-parallel --regions-parallel --params '&-v='$CASSANDRA_JAR_VERSION'&-r&-f'
-NETFLIX_STACK=test NETFLIX_APP=binary_upgrade EC2_REGION=us-west-2 NETFLIX_ENVIRONMENT=test venv/bin/nflx-bolt-run cass_patch_nfcassandra.sh $APP --pack cass --instances-parallel --zones-parallel --regions-parallel --params '&-v='$CASSANDRA_JAR_VERSION'&-r&-f'
+    # Wait for current batch to complete before starting next batch
+    if ((i+batch_size < total_instances)); then
+        echo ">>> Waiting for batch $(((i/batch_size)+1)) to complete..."
+        batch_failed=0
+        for ((k=${#pids[@]}-batch_size; k<${#pids[@]}; k++)); do
+            if ! wait "${pids[k]}"; then
+                batch_failed=1
+            fi
+        done
+        if ((batch_failed)); then
+            echo ">>> Some uploads in batch $(((i/batch_size)+1)) failed"
+        fi
+    fi
+done
 
-echo ">>> Checking if Cassandra started up, you should see 1s next to each machine"
-echo ">>>" ssh -t awspersistence.test.netflix.net -- /apps/pae/nflx-python-libs/bin/yolo --all-parallel -z $APP ssh "${NUM_RUNNING}"
-ssh -t "$BASTION" -- /apps/pae/nflx-python-libs/bin/yolo --all-parallel -z $APP ssh "${NUM_RUNNING}"
+echo ">>> Waiting for all SCP uploads to complete..."
+failed=0
+for pid in "${pids[@]}"; do
+    if ! wait "$pid"; then
+        failed=1
+    fi
+done
+
+yolo2 --instances-parallel test $APP "
+  sudo kill -9 \`cat /run/cassandra/cassandra.pid\` 2>/dev/null || true
+  sudo rm /apps/nfcassandra_server/lib/nf-cassandra*.jar
+  sleep 10
+  sudo mv ~/$CASSANDRA_JAR /apps/nfcassandra_server/lib/
+  curl -s http://127.0.0.1:8080/Priam/REST/v1/cassadmin/start
+"

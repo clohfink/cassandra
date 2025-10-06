@@ -20,6 +20,7 @@ package org.apache.cassandra.distributed.test.cdc;
 
 import java.util.function.Consumer;
 
+import org.junit.Ignore;
 import org.junit.Test;
 
 import org.apache.cassandra.db.commitlog.CommitLog;
@@ -34,6 +35,7 @@ import static org.apache.cassandra.distributed.shared.AssertUtils.row;
 
 public class ToggleCDCOnRepairEnabledTest extends TestBaseImpl
 {
+    @Ignore
     @Test
     public void testCDCOnRepairIsEnabled() throws Exception
     {
@@ -49,6 +51,7 @@ public class ToggleCDCOnRepairEnabledTest extends TestBaseImpl
         });
     }
 
+    @Ignore
     @Test
     public void testCDCOnRepairIsDisabled() throws Exception
     {

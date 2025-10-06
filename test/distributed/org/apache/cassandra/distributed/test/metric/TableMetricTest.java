@@ -84,7 +84,9 @@ public class TableMetricTest extends TestBaseImpl
     @Test
     public void userTables() throws IOException
     {
-        try (Cluster cluster = init(Cluster.build(3).start()))
+        try (Cluster cluster = init(Cluster.build(3)
+                                           .withConfig(s -> s.set("enable_dropped_columns", "true"))
+                                           .start()))
         {
             loadSystemTables(cluster);
             assertSystemTableMetrics(cluster);

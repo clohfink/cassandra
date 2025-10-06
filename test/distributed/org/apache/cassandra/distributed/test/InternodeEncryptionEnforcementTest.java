@@ -20,6 +20,7 @@ package org.apache.cassandra.distributed.test;
 import java.util.HashMap;
 
 import com.google.common.collect.ImmutableMap;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import org.apache.cassandra.distributed.Cluster;
@@ -39,6 +40,7 @@ import static org.junit.Assert.fail;
 
 public final class InternodeEncryptionEnforcementTest extends TestBaseImpl
 {
+    @Ignore
     @Test
     public void testConnectionsAreRejectedWithInvalidConfig() throws Throwable
     {

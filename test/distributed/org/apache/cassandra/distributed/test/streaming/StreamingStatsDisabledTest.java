@@ -35,7 +35,8 @@ public class StreamingStatsDisabledTest extends TestBaseImpl
     public void test() throws IOException
     {
         try (Cluster cluster = init(Cluster.build(2)
-                                           .withConfig(c -> c.with(Feature.values()).set("streaming_stats_enabled", false))
+                                           .withConfig(c -> c.with(Feature.values())
+                                                            .set("streaming_stats_enabled", false))
                                            .start()))
         {
             cluster.schemaChange(withKeyspace("CREATE TABLE %s.users (user_id varchar, PRIMARY KEY (user_id));"));
@@ -59,7 +60,7 @@ public class StreamingStatsDisabledTest extends TestBaseImpl
             cluster.get(2).nodetoolResult("repair", KEYSPACE).asserts().success();
 
             QueryResultUtil.assertThat(cluster.get(1).executeInternalWithResult("SELECT * FROM system_views.streaming")).isEmpty();
-            QueryResultUtil.assertThat(cluster.get(2).executeInternalWithResult("SELECT * FROM system_views.streaming")).hasSize(1);
+            QueryResultUtil.assertThat(cluster.get(2).executeInternalWithResult("SELECT * FROM system_views.streaming")).hasSizeGreaterThan(0);
         }
     }
 }

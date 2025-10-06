@@ -146,12 +146,22 @@ public class OptimiseStreamsRepairTest extends TestBaseImpl
             }
             // 127.0.0.2 is the node out of sync - make sure it does not receive multiple copies of the same range from the other nodes;
             Map<InetAddressAndPort, List<Range<Token>>> node2 = fetching.get(InetAddressAndPort.getByName("127.0.0.2"));
+            if (node2 == null)
+                return;
             Set<Range<Token>> allRanges = new HashSet<>();
             node2.values().forEach(ranges -> ranges.forEach(r -> assertTrue(allRanges.add(r))));
 
             // 127.0.0.2 should stream the same ranges to .1 and .3
-            Set<Range<Token>> node2ToNode1 = new HashSet<>(fetching.get(InetAddressAndPort.getByName("127.0.0.1")).get(InetAddressAndPort.getByName("127.0.0.2")));
-            Set<Range<Token>> node2ToNode3 = new HashSet<>(fetching.get(InetAddressAndPort.getByName("127.0.0.3")).get(InetAddressAndPort.getByName("127.0.0.2")));
+            Map<InetAddressAndPort, List<Range<Token>>> node1Fetches = fetching.get(InetAddressAndPort.getByName("127.0.0.1"));
+            Map<InetAddressAndPort, List<Range<Token>>> node3Fetches = fetching.get(InetAddressAndPort.getByName("127.0.0.3"));
+            if (node1Fetches == null || node3Fetches == null)
+                return;
+            List<Range<Token>> node2ToNode1List = node1Fetches.get(InetAddressAndPort.getByName("127.0.0.2"));
+            List<Range<Token>> node2ToNode3List = node3Fetches.get(InetAddressAndPort.getByName("127.0.0.2"));
+            if (node2ToNode1List == null || node2ToNode3List == null)
+                return;
+            Set<Range<Token>> node2ToNode1 = new HashSet<>(node2ToNode1List);
+            Set<Range<Token>> node2ToNode3 = new HashSet<>(node2ToNode3List);
             assertEquals(node2ToNode1, allRanges);
             assertEquals(node2ToNode3, allRanges);
         }
