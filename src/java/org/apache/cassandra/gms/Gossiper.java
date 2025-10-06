@@ -34,6 +34,15 @@ import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
 import javax.annotation.Nullable;
+import javax.management.openmbean.CompositeData;
+import javax.management.openmbean.CompositeDataSupport;
+import javax.management.openmbean.CompositeType;
+import javax.management.openmbean.OpenDataException;
+import javax.management.openmbean.OpenType;
+import javax.management.openmbean.SimpleType;
+import javax.management.openmbean.TabularData;
+import javax.management.openmbean.TabularDataSupport;
+import javax.management.openmbean.TabularType;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Throwables;
@@ -46,9 +55,14 @@ import com.google.common.hash.Hasher;
 import com.google.common.hash.Hashing;
 import com.google.common.util.concurrent.Uninterruptibles;
 
-import org.apache.cassandra.concurrent.*;
 import org.apache.cassandra.concurrent.FutureTask;
+import org.apache.cassandra.concurrent.ScheduledExecutorPlus;
+import org.apache.cassandra.utils.Clock;
+import org.apache.cassandra.utils.concurrent.AsyncPromise;
+import org.apache.cassandra.utils.concurrent.Future;
+import org.apache.cassandra.utils.concurrent.FutureCombiner;
 import org.apache.cassandra.config.CassandraRelevantProperties;
+import org.apache.cassandra.exceptions.RequestFailureReason;
 import org.apache.cassandra.locator.InetAddressAndPort;
 import org.apache.cassandra.net.NoPayload;
 import org.apache.cassandra.net.Verb;
@@ -107,6 +121,31 @@ import static org.apache.cassandra.utils.Clock.Global.nanoTime;
 public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
 {
     public static final String MBEAN_NAME = "org.apache.cassandra.net:type=Gossiper";
+
+    private static final String[] PING_RESULT_ITEM_NAMES = {"endpoint", "response_time", "status", "reason"};
+    private static final CompositeType PING_RESULT_TYPE;
+    private static final TabularType PING_RESULT_TABULAR_TYPE;
+    static {
+        try {
+            PING_RESULT_TYPE = new CompositeType(
+                "PingResult",
+                "Ping result for a single node",
+                PING_RESULT_ITEM_NAMES,
+                new String[]{"Node endpoint", "Response time", "Status", "Reason"},
+                new OpenType<?>[]{SimpleType.STRING, SimpleType.LONG, SimpleType.STRING, SimpleType.STRING}
+            );
+            PING_RESULT_TABULAR_TYPE = new TabularType(
+                "PingResults",
+                "Ping results for all nodes",
+                PING_RESULT_TYPE,
+                new String[]{"endpoint"}
+            );
+        } catch (OpenDataException e) {
+            throw new RuntimeException("Failed to initialize PingResult CompositeType", e);
+        }
+    }
+
+    private static final long PING_TIMEOUT_NS = 5 * 1000000000L;
 
     public static class Props
     {
@@ -1410,6 +1449,101 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
             }
         }
 
+    }
+
+    /**
+     * Pings all nodes in the cluster and returns timing information for each node.
+     * Used by JMX for cluster health monitoring.
+     *
+     * @return TabularData of endpoint addresses containing:
+     *         - response_time (Long): Ping response time in nanoseconds
+     *         - status (String): Node status ("UP" or "DOWN")
+     *         - reason (String): Failure reason if DOWN, null otherwise
+     */
+    public TabularData pingAllNodesWithTiming() throws OpenDataException
+    {
+        Set<InetAddressAndPort> allNodes = new HashSet<>(getLiveMembers());
+        allNodes.addAll(getUnreachableMembers());
+        allNodes.addAll(endpointStateMap.keySet());
+
+        ConcurrentHashMap<InetAddressAndPort, Object[]> results = new ConcurrentHashMap<>();
+        List<Future<NoPayload>> futures = new ArrayList<>();
+
+        for (InetAddressAndPort node : allNodes)
+        {
+            AsyncPromise<NoPayload> promise = new AsyncPromise<>();
+            futures.add(promise);
+
+            if (!Objects.equals(getBroadcastAddressAndPort(), node.getHostAddressAndPort()))
+            {
+                long startTime = Clock.Global.nanoTime();
+
+                RequestCallback<NoPayload> callback = new RequestCallback<NoPayload>()
+                {
+                    @Override
+                    public void onResponse(Message<NoPayload> response)
+                    {
+                        long responseTime = Clock.Global.nanoTime() - startTime;
+                        results.put(node, new Object[]{node.getHostAddressAndPort(), responseTime, "UP", null});
+                        promise.trySuccess(null);
+                    }
+
+                    @Override
+                    public void onFailure(InetAddressAndPort from, RequestFailureReason reason)
+                    {
+                        long responseTime = Clock.Global.nanoTime() - startTime;
+                        results.put(node, new Object[]{node.getHostAddressAndPort(), responseTime, "DOWN", reason.toString()});
+                        promise.trySuccess(null);
+                    }
+
+                    @Override
+                    public boolean invokeOnFailure()
+                    {
+                        return true;
+                    }
+                };
+
+                Message<NoPayload> echoMessage = Message.out(ECHO_REQ, noPayload);
+                MessagingService.instance().sendWithCallback(echoMessage, node, callback);
+            }
+            else
+            {
+                results.put(node, new Object[]{node.getHostAddressAndPort(), 0L, "UP", null});
+                promise.trySuccess(null);
+            }
+        }
+
+        try
+        {
+            Future<List<NoPayload>> allDone = FutureCombiner.allOf(futures);
+            allDone.get(PING_TIMEOUT_NS, TimeUnit.NANOSECONDS);
+        }
+        catch (InterruptedException | ExecutionException | TimeoutException e)
+        {
+            logger.debug("Some nodes did not respond within timeout", e);
+        }
+
+        for (InetAddressAndPort node : allNodes)
+        {
+            if (!results.containsKey(node) && !Objects.equals(getBroadcastAddressAndPort(), node.getHostAddressAndPort()))
+            {
+                results.put(node, new Object[]{node.getHostAddressAndPort(), PING_TIMEOUT_NS, "DOWN", "Timeout"});
+            }
+        }
+
+        // Convert results to JMX TabularData
+        TabularData tabularData = new TabularDataSupport(PING_RESULT_TABULAR_TYPE);
+        for (Object[] data : results.values())
+        {
+            CompositeData compositeData = new CompositeDataSupport(
+                PING_RESULT_TYPE,
+                PING_RESULT_ITEM_NAMES,
+                data
+            );
+            tabularData.put(compositeData);
+        }
+
+        return tabularData;
     }
 
     private void markAlive(final InetAddressAndPort addr, final EndpointState localState)

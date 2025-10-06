@@ -174,6 +174,7 @@ public class NodeTool
                 Move.class,
                 NetStats.class,
                 PauseHandoff.class,
+                Ping.class,
                 ProfileLoad.class,
                 ProxyHistograms.class,
                 RangeKeySample.class,

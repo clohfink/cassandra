@@ -20,6 +20,8 @@ package org.apache.cassandra.gms;
 import java.net.UnknownHostException;
 import java.util.List;
 import java.util.Map;
+import javax.management.openmbean.OpenDataException;
+import javax.management.openmbean.TabularData;
 
 public interface GossiperMBean
 {
@@ -47,5 +49,7 @@ public interface GossiperMBean
     public int getTokenOwnershipHash();
 
     public int getSchemaVersionCount();
+
+    public TabularData pingAllNodesWithTiming() throws OpenDataException;
 
 }
