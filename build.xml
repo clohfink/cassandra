@@ -738,7 +738,7 @@
            </dependency>
           <dependency groupId="io.netty" artifactId="netty-bom" version="4.1.112.Final" type="pom" scope="provided"/>
           <dependency groupId="io.netty" artifactId="netty-all" version="4.1.112.Final" />
-          <dependency groupId="io.netty" artifactId="netty-tcnative-boringssl-static" version="2.0.36.Final"/>
+          <dependency groupId="io.netty" artifactId="netty-tcnative-boringssl-static" version="2.0.69.Final"/>
           <dependency groupId="net.openhft" artifactId="chronicle-queue" version="${chronicle-queue.version}">
             <exclusion groupId="com.sun" artifactId="tools" />
           </dependency>
