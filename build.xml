@@ -1007,45 +1007,8 @@
         <dependency groupId="netflix" artifactId="metatron-ipc-common-shaded" version="1.468.0"/>
         <dependency groupId="com.github.luben" artifactId="zstd-jni" version="1.5.0-4"/>
         <dependency groupId="com.amazonaws" artifactId="aws-java-sdk-core" version="1.12.129"/>
-        <dependency groupId="software.amazon.awssdk" artifactId="s3" version="2.27.21">
-          <exclusion groupId="io.netty" artifactId="netty-buffer"/>
-          <exclusion groupId="io.netty" artifactId="netty-codec"/>
-          <exclusion groupId="io.netty" artifactId="netty-codec-http"/>
-          <exclusion groupId="io.netty" artifactId="netty-codec-http2"/>
-          <exclusion groupId="io.netty" artifactId="netty-handler"/>
-          <exclusion groupId="io.netty" artifactId="netty-handler-proxy"/>
-          <exclusion groupId="io.netty" artifactId="netty-resolver"/>
-          <exclusion groupId="io.netty" artifactId="netty-transport"/>
-          <exclusion groupId="io.netty" artifactId="netty-transport-native-epoll"/>
-          <exclusion groupId="io.netty" artifactId="netty-transport-native-unix-common"/>
-          <exclusion groupId="io.netty" artifactId="netty-common"/>
-        </dependency>
-        <dependency groupId="software.amazon.awssdk.crt" artifactId="aws-crt" version="0.30.11">
-          <exclusion groupId="io.netty" artifactId="netty-buffer"/>
-          <exclusion groupId="io.netty" artifactId="netty-codec"/>
-          <exclusion groupId="io.netty" artifactId="netty-codec-http"/>
-          <exclusion groupId="io.netty" artifactId="netty-codec-http2"/>
-          <exclusion groupId="io.netty" artifactId="netty-handler"/>
-          <exclusion groupId="io.netty" artifactId="netty-handler-proxy"/>
-          <exclusion groupId="io.netty" artifactId="netty-resolver"/>
-          <exclusion groupId="io.netty" artifactId="netty-transport"/>
-          <exclusion groupId="io.netty" artifactId="netty-transport-native-epoll"/>
-          <exclusion groupId="io.netty" artifactId="netty-transport-native-unix-common"/>
-          <exclusion groupId="io.netty" artifactId="netty-common"/>
-        </dependency>
-        <dependency groupId="software.amazon.awssdk" artifactId="netty-nio-client" version="2.27.21">
-          <exclusion groupId="io.netty" artifactId="netty-buffer"/>
-          <exclusion groupId="io.netty" artifactId="netty-codec"/>
-          <exclusion groupId="io.netty" artifactId="netty-codec-http"/>
-          <exclusion groupId="io.netty" artifactId="netty-codec-http2"/>
-          <exclusion groupId="io.netty" artifactId="netty-handler"/>
-          <exclusion groupId="io.netty" artifactId="netty-handler-proxy"/>
-          <exclusion groupId="io.netty" artifactId="netty-resolver"/>
-          <exclusion groupId="io.netty" artifactId="netty-transport"/>
-          <exclusion groupId="io.netty" artifactId="netty-transport-native-epoll"/>
-          <exclusion groupId="io.netty" artifactId="netty-transport-native-unix-common"/>
-          <exclusion groupId="io.netty" artifactId="netty-common"/>
-        </dependency>
+        <dependency groupId="software.amazon.awssdk" artifactId="s3" version="2.27.21" />
+        <dependency groupId="software.amazon.awssdk.crt" artifactId="aws-crt" version="0.30.11" />
       </artifact:pom>
     </target>
 
