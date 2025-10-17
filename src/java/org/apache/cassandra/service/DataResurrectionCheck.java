@@ -173,7 +173,7 @@ public class DataResurrectionCheck implements StartupCheck
         }
         catch (IOException ex)
         {
-            throw new StartupException(ERR_WRONG_DISK_STATE, "Failed to deserialize heartbeat file " + heartbeatFile);
+            throw new StartupException(ERR_WRONG_DISK_STATE, "Failed to deserialize heartbeat file " + heartbeatFile, ex);
         }
 
         if (heartbeat.lastHeartbeat == null)
