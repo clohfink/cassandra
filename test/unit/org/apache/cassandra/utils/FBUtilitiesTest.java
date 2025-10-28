@@ -23,7 +23,9 @@ import java.net.InetAddress;
 import java.nio.ByteBuffer;
 import java.nio.charset.CharacterCodingException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.Map;
 import java.util.Optional;
 import java.util.TreeMap;
@@ -46,9 +48,13 @@ import org.apache.cassandra.dht.*;
 
 import org.apache.cassandra.config.Config;
 import org.apache.cassandra.config.DatabaseDescriptor;
+import org.apache.cassandra.io.util.File;
+import org.apache.cassandra.io.util.FileUtils;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
 public class FBUtilitiesTest
@@ -253,5 +259,68 @@ public class FBUtilitiesTest
         }
         if (error != null)
             throw error;
+    }
+
+    @Test
+    public void testSerializeToJsonFileAtomic() throws Exception
+    {
+        File tempDir = new File(Files.createTempDirectory("fbutil-test").toString());
+        File outputFile = new File(tempDir, "test.json");
+
+        try
+        {
+            Map<String, String> testData = new TreeMap<>();
+            testData.put("key1", "value1");
+            testData.put("key2", "value2");
+
+            FBUtilities.serializeToJsonFileAtomic(testData, outputFile);
+
+            assertTrue(outputFile.exists());
+            Map<String, String> deserialized = FBUtilities.fromJsonMap(
+                new String(Files.readAllBytes(outputFile.toJavaIOFile().toPath())));
+            assertEquals(testData, deserialized);
+
+            File tempFile = new File(outputFile.path() + ".tmp");
+            assertFalse(tempFile.exists());
+
+            testData.put("key1", "value3");
+            FBUtilities.serializeToJsonFileAtomic(testData, outputFile);
+            deserialized = FBUtilities.fromJsonMap(
+                new String(Files.readAllBytes(outputFile.toJavaIOFile().toPath())));
+            assertEquals(testData, deserialized);
+            assertEquals(2, deserialized.size());
+
+            tempFile = new File(outputFile.path() + ".tmp");
+            assertFalse(tempFile.exists());
+        }
+        finally
+        {
+            FileUtils.deleteRecursive(tempDir);
+        }
+    }
+
+    @Test
+    public void testSerializeToJsonFileAtomicFailCleanUp() throws Exception
+    {
+        File tempDir = new File(Files.createTempDirectory("fbutilstest").toString());
+        File outputFile = new File(tempDir, "nothere/test.json");
+
+        try
+        {
+            try
+            {
+                FBUtilities.serializeToJsonFileAtomic(Collections.emptyMap(), outputFile);
+                fail("Should have thrown IOException for nonexistent directory");
+            }
+            catch (IOException expected)
+            {
+                File tempFile = new File(outputFile.path() + ".tmp");
+                assertFalse(tempFile.exists());
+            }
+        }
+        finally
+        {
+            FileUtils.deleteRecursive(tempDir);
+        }
     }
 }

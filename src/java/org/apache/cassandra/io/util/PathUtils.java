@@ -264,7 +264,7 @@ public final class PathUtils
             if (e instanceof FileNotFoundException | e instanceof NoSuchFileException)
                 return;
 
-            throw propagateUnchecked(e, file, true);
+            throw propagateUnchecked(String.format("Failed to delete %s", file.getFileName()), e, file, true);
         }
     }
 

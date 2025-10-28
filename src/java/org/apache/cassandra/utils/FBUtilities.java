@@ -905,6 +905,26 @@ public class FBUtilities
         }
     }
 
+    public static void serializeToJsonFileAtomic(Object object, File outputFile) throws IOException
+    {
+        // Try to write then perform atomic move so that file can't be corrupted
+        // by process crash in the middle of the write.
+        File tempFile = new File(outputFile.path() + ".tmp");
+        try
+        {
+            try (FileOutputStreamPlus out = tempFile.newOutputStream(OVERWRITE))
+            {
+                jsonMapper.writeValue((OutputStream) out, object);
+            }
+            tempFile.move(outputFile);
+        }
+        catch (IOException ex)
+        {
+            tempFile.deleteIfExists();
+            throw ex;
+        }
+    }
+
     public static <T> T deserializeFromJsonFile(Class<T> tClass, File file) throws IOException
     {
         try (FileInputStreamPlus in = file.newInputStream())

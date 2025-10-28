@@ -86,7 +86,7 @@ public class DataResurrectionCheck implements StartupCheck
 
         public void serializeToJsonFile(File outputFile) throws IOException
         {
-            FBUtilities.serializeToJsonFile(this, outputFile);
+            FBUtilities.serializeToJsonFileAtomic(this, outputFile);
         }
 
         public static Heartbeat deserializeFromJsonFile(File file) throws IOException
