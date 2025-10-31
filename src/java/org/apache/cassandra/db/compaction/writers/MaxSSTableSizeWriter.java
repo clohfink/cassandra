@@ -19,6 +19,8 @@ package org.apache.cassandra.db.compaction.writers;
 
 import java.util.Set;
 
+import java.util.List;
+
 import org.apache.cassandra.db.ColumnFamilyStore;
 import org.apache.cassandra.db.Directories;
 import org.apache.cassandra.db.RowIndexEntry;
@@ -26,9 +28,11 @@ import org.apache.cassandra.db.SerializationHeader;
 import org.apache.cassandra.db.compaction.OperationType;
 import org.apache.cassandra.db.rows.UnfilteredRowIterator;
 import org.apache.cassandra.db.lifecycle.LifecycleTransaction;
+import org.apache.cassandra.dht.Token;
 import org.apache.cassandra.io.sstable.format.SSTableReader;
 import org.apache.cassandra.io.sstable.format.SSTableWriter;
 import org.apache.cassandra.io.sstable.metadata.MetadataCollector;
+import org.apache.cassandra.service.StorageService;
 
 public class MaxSSTableSizeWriter extends CompactionAwareWriter
 {
@@ -37,6 +41,8 @@ public class MaxSSTableSizeWriter extends CompactionAwareWriter
     private final long estimatedSSTables;
     private final Set<SSTableReader> allSSTables;
     private Directories.DataDirectory sstableDirectory;
+    private final Token[] sortedTokens;
+    private int currentTokenIndex = 0;
 
     public MaxSSTableSizeWriter(ColumnFamilyStore cfs,
                                 Directories directories,
@@ -63,6 +69,9 @@ public class MaxSSTableSizeWriter extends CompactionAwareWriter
 
         long totalSize = getTotalWriteSize(nonExpiredSSTables, estimatedTotalKeys, cfs, txn.opType());
         estimatedSSTables = Math.max(1, totalSize / maxSSTableSize);
+
+        List<Token> tokenList = StorageService.instance.getTokenMetadata().sortedTokens();
+        this.sortedTokens = tokenList.toArray(new Token[0]);
     }
 
     /**
@@ -81,11 +90,21 @@ public class MaxSSTableSizeWriter extends CompactionAwareWriter
 
     protected boolean realAppend(UnfilteredRowIterator partition)
     {
-        RowIndexEntry rie = sstableWriter.append(partition);
-        if (sstableWriter.currentWriter().getEstimatedOnDiskBytesWritten() > maxSSTableSize)
-        {
+        Token partitionToken = partition.partitionKey().getToken();
+        int previousTokenIndex = currentTokenIndex;
+
+        // Advance currentTokenIndex to the appropriate position for this partition
+        while (currentTokenIndex < sortedTokens.length &&
+               partitionToken.compareTo(sortedTokens[currentTokenIndex]) > 0)
+            currentTokenIndex++;
+
+        boolean sizeLimitExceeded = sstableWriter.currentWriter().getEstimatedOnDiskBytesWritten() > maxSSTableSize;
+        boolean tokenBoundaryChanged = currentTokenIndex != previousTokenIndex;
+
+        // Switch to a new SSTable if we've crossed a token boundary or exceeded size limit
+        if (tokenBoundaryChanged || sizeLimitExceeded)
             switchCompactionLocation(sstableDirectory);
-        }
+        RowIndexEntry rie = sstableWriter.append(partition);
         return rie != null;
     }
 

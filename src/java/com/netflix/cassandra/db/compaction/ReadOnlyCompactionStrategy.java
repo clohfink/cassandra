@@ -29,13 +29,11 @@ import org.apache.cassandra.db.compaction.AbstractCompactionTask;
 import org.apache.cassandra.db.compaction.CompactionTask;
 import org.apache.cassandra.db.compaction.OperationType;
 import org.apache.cassandra.db.compaction.writers.CompactionAwareWriter;
-import org.apache.cassandra.db.compaction.writers.DefaultCompactionWriter;
-import org.apache.cassandra.db.rows.UnfilteredRowIterator;
+import org.apache.cassandra.db.compaction.writers.MaxSSTableSizeWriter;
 import org.apache.cassandra.db.lifecycle.LifecycleTransaction;
 import org.apache.cassandra.dht.Token;
 import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.io.sstable.format.SSTableReader;
-import org.apache.cassandra.service.StorageService;
 
 /**
  * Netflix-specific compaction strategy designed for read-only tables.
@@ -265,60 +263,7 @@ public class ReadOnlyCompactionStrategy extends AbstractCompactionStrategy
                                                               LifecycleTransaction txn,
                                                               Set<SSTableReader> nonExpiredSSTables)
         {
-            return new ReadOnlyCompactionWriter(cfs, directories, txn, nonExpiredSSTables, strategy.maxSizeMb * 1024L * 1024L);
-        }
-    }
-    
-    private static class ReadOnlyCompactionWriter extends DefaultCompactionWriter
-    {
-        private Directories.DataDirectory currentDirectory;
-        private final Token[] sortedTokens;
-        private int currentTokenIndex = 0;
-        
-        private final long maxSize;
-        
-        public ReadOnlyCompactionWriter(ColumnFamilyStore cfs,
-                                       Directories directories,
-                                       LifecycleTransaction txn,
-                                       Set<SSTableReader> nonExpiredSSTables,
-                                       long maxSize)
-        {
-            super(cfs, directories, txn, nonExpiredSSTables);
-            this.maxSize = maxSize;
-            this.currentDirectory = getDirectories().getWriteableLocation(getExpectedWriteSize());
-            List<Token> tokenList = StorageService.instance.getTokenMetadata().sortedTokens();
-            this.sortedTokens = tokenList.toArray(new Token[0]);
-        }
-
-        @Override
-        public boolean realAppend(UnfilteredRowIterator partition)
-        {
-            try {
-                Token partitionToken = partition.partitionKey().getToken();
-                int previousTokenIndex = currentTokenIndex;
-
-                while (currentTokenIndex < sortedTokens.length && 
-                       partitionToken.compareTo(sortedTokens[currentTokenIndex]) > 0) {
-                    currentTokenIndex++;
-                }
-
-                boolean sizeLimitExceeded = sstableWriter.currentWriter().getEstimatedOnDiskBytesWritten() > maxSize;
-
-                if (currentTokenIndex != previousTokenIndex || sizeLimitExceeded) {
-                    switchCompactionLocation(currentDirectory);
-                }
-                return super.realAppend(partition);
-            } catch (Exception e) {
-                logger.error("Error during partition append in ReadOnlyCompactionWriter", e);
-                throw e;
-            }
-        }
-        
-        @Override
-        public void switchCompactionLocation(Directories.DataDirectory directory)
-        {
-            this.currentDirectory = directory;
-            super.switchCompactionLocation(directory);
+            return new MaxSSTableSizeWriter(cfs, directories, txn, nonExpiredSSTables, strategy.maxSizeMb * 1024L * 1024L, 0);
         }
     }
 }
