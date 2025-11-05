@@ -29,6 +29,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.regex.Pattern;
 
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableList;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -47,6 +48,9 @@ public class ResourcesMetrics
     private static final MetricNameFactory factory = new DefaultNameFactory("Resources");
     private static final String SCHEDSTAT = System.getProperty("cassandra.schedstat_file", "/proc/schedstat");
     private static final String PSI = System.getProperty("cassandra.pressure_dir", "/proc/pressure");
+    // Why /mnt? We want to measure the entire volume that data is stored on— not just the data directory
+    // /mnt should point to that device, independent of ephemeral vs. EBS.
+    private static final String DISK_USAGE_ROOT = System.getProperty("cassandra.disk_usage_root", "/mnt");
     public static final SchedStatReader schedStatReader = new SchedStatReader(SCHEDSTAT);
     public static final PSIReader psiReader = new PSIReader(PSI);
     public static final Gauge<Long> schedulingDelay = Metrics.register(
@@ -64,11 +68,18 @@ public class ResourcesMetrics
 
     public static double getDiskUtilization()
     {
-        File root = new File(System.getProperty("cassandra.disk_usage_root", "/"));
+        return getDiskUtilization(DISK_USAGE_ROOT);
+    }
+
+    @VisibleForTesting
+    static double getDiskUtilization(String path)
+    {
+        File root = new File(path);
         long total = root.toJavaIOFile().getTotalSpace();
         long free = root.toJavaIOFile().getUsableSpace();
-        return total > 0 ? (double)(total - free) / total : 0.0;
+        return total > 0 ? (double) (total - free) / total : 0.0;
     }
+
     public static final Gauge<Double> psiGauge = Metrics.register(
     factory.createMetricName("CpuPSI"),
     () -> psiReader.getMetrics().getPressure(PSIMeasurement.PressureType.CPU)
