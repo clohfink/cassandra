@@ -2,6 +2,7 @@ ViewComplexTTLTest
 ViewComplexLivenessTest
 CommitLogSegmentManagerCDCTest
 CassandrastressTest
+CompactionStressTest
 AbstractTypeTest
 AtomicBTreePartitionMemtableAccountingTest
 CompactionControllerTest
