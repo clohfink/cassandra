@@ -92,7 +92,7 @@ if ! ( [[ "$(docker images -q ${image_name} 2>/dev/null)" != "" ]] ) ; then
   if ! ( docker pull -q ${image_name} >/dev/null 2>/dev/null ) ; then
     # Create build images containing the build tool-chain, Java and an Apache Cassandra git working directory, with retry
     echo "Building docker image..."
-    until docker build -t ${image_name} -f docker/${dockerfile} .  ; do
+    until docker build --build-arg java_version=${java_version} -t ${image_name} -f docker/${dockerfile} .  ; do
       echo "docker build failed… trying again in 10s… "
       sleep 10
     done
@@ -158,20 +158,22 @@ case "${target}" in
     ;;
 esac
 
+if [ "$java_version" -ge 21 ]; then
+    ANT_OPTS="$ANT_OPTS -Djava.security.manager=allow"
+fi
+
 # the docker container's env
 # when we start running dtests we'll need this
 #ANT_OPTS="-Dtesttag.extra=_$(arch)_python${python_version/./-}"
 #docker_envs="--env JAVA_VERSION=${java_version} --env ANT_OPTS=\"${ANT_OPTS}\""
 #docker_envs="--env JAVA_VERSION=${java_version}"
 #docker_envs="--env TEST_SCRIPT=${test_script} --env JAVA_VERSION=${java_version}"
-docker_envs="--env TEST_SCRIPT=${test_script} --env JAVA_VERSION=${java_version} --env ANT_OPTS=\"${ANT_OPTS}\""
 
 split_str="0_0"
 if [[ "${split_chunk}" =~ ^[0-9]+/[0-9]+$ ]]; then
     split_str="${split_chunk/\//_}"
 fi
 
-echo "Docker env vars: ${docker_envs}"
 
 # git worktrees need their original working directory (in its original path)
 if [ -f ${cassandra_dir}/.git ] ; then
@@ -200,7 +202,7 @@ docker_command="source \${CASSANDRA_DIR}/.build/docker/_set_java.sh ${java_versi
 METATRON_DIR=/metatron
 docker_metatron_flags="--volume "$METATRON_DIR":/metatron --volume /run/metatron:/run/metatron"
 # start the container, timeout after 4 hours
-docker_id=$(docker run --name ${container_name} ${docker_flags} ${docker_metatron_flags} ${docker_envs} ${docker_mounts} ${docker_volume_opt} ${image_name} sleep 4h)
+docker_id=$(docker run --name ${container_name} ${docker_flags} ${docker_metatron_flags} --env TEST_SCRIPT=${test_script} --env JAVA_VERSION=${java_version} --env ANT_OPTS="${ANT_OPTS}" ${docker_mounts} ${docker_volume_opt} ${image_name} sleep 4h)
 
 echo "Running container ${container_name} ${docker_id}"
 

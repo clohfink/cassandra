@@ -26,6 +26,7 @@ import org.junit.BeforeClass;
 import org.apache.cassandra.config.DataStorageSpec;
 import org.apache.cassandra.config.DatabaseDescriptor;
 
+import static org.apache.cassandra.config.DataStorageSpec.DataStorageUnit.BYTES;
 import static org.apache.cassandra.config.DataStorageSpec.DataStorageUnit.KIBIBYTES;
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -42,8 +43,10 @@ public class LocalReadSizeWarningTest extends AbstractClientSizeWarning
             // disable coordinator version
             DatabaseDescriptor.setCoordinatorReadSizeWarnThreshold(null);
             DatabaseDescriptor.setCoordinatorReadSizeFailThreshold(null);
-
-            DatabaseDescriptor.setLocalReadSizeWarnThreshold(new DataStorageSpec.LongBytesBound(1, KIBIBYTES));
+            //JDK 21 with ZGC doesn't have compressedoops. That inflates a bit recoreded read bytes so the alert fires when it shouldn't
+            //Cassandra 5.0 on JDK 21 with ZGC is fine with previous limit because there are different changes in place that reduce the total read bytes
+            //namely empty static rows are not counted in the total number
+            DatabaseDescriptor.setLocalReadSizeWarnThreshold(new DataStorageSpec.LongBytesBound(1150, BYTES));
             DatabaseDescriptor.setLocalReadSizeFailThreshold(new DataStorageSpec.LongBytesBound(2, KIBIBYTES));
         }));
     }

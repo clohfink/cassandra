@@ -94,8 +94,14 @@ ospackage {
     postInstall file('./postInstall.sh')
 }
 
+//nebula disables debian indexing by default since 9.1.1. We now need to explicitly enable it to make our deb discoverable
+tasks.named('buildDebPublish').configure {
+    enableIndexing = true
+}
+
 java {
     toolchain {
-        languageVersion = JavaLanguageVersion.of(11)
+        //this selection controlls which JDK is installed on the machine toghether with cassandra package
+        languageVersion = JavaLanguageVersion.of(21)
     }
 }

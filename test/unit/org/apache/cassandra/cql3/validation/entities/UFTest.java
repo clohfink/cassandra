@@ -93,55 +93,55 @@ public class UFTest extends CQLTester
         String functionName = shortFunctionName(f);
         registerFunction(f, "double, double");
 
-        assertSchemaChange("CREATE OR REPLACE FUNCTION " + f + "(state double, val double) " +
-                           "RETURNS NULL ON NULL INPUT " +
-                           "RETURNS double " +
-                           "LANGUAGE javascript " +
-                           "AS '\"string\";';",
-                           Change.CREATED,
-                           Target.FUNCTION,
-                           KEYSPACE, functionName,
-                           "double", "double");
+        assertSchemaChange("CREATE OR REPLACE FUNCTION " + f + "(state double, val double)" +
+                        "RETURNS NULL ON NULL INPUT " +
+                        "RETURNS double " +
+                        "LANGUAGE java " +
+                        "AS ' return Double.valueOf(Math.max(state, val)); ';",
+                Change.CREATED,
+                Target.FUNCTION,
+                KEYSPACE, functionName,
+                "double", "double");
 
         registerFunction(f, "int, int");
 
         assertSchemaChange("CREATE OR REPLACE FUNCTION " + f + "(state int, val int) " +
-                           "RETURNS NULL ON NULL INPUT " +
-                           "RETURNS int " +
-                           "LANGUAGE javascript " +
-                           "AS '\"string\";';",
-                           Change.CREATED,
-                           Target.FUNCTION,
-                           KEYSPACE, functionName,
-                           "int", "int");
+                        "RETURNS NULL ON NULL INPUT " +
+                        "RETURNS int " +
+                        "LANGUAGE java " +
+                        "AS ' return Integer.valueOf(Math.max(state, val));';",
+                Change.CREATED,
+                Target.FUNCTION,
+                KEYSPACE, functionName,
+                "int", "int");
 
         assertSchemaChange("CREATE OR REPLACE FUNCTION " + f + "(state int, val int) " +
-                           "RETURNS NULL ON NULL INPUT " +
-                           "RETURNS int " +
-                           "LANGUAGE javascript " +
-                           "AS '\"string1\";';",
-                           Change.UPDATED,
-                           Target.FUNCTION,
-                           KEYSPACE, functionName,
-                           "int", "int");
+                        "RETURNS NULL ON NULL INPUT " +
+                        "RETURNS int " +
+                        "LANGUAGE java " +
+                        "AS ' return Integer.valueOf(Math.min(state, val));';",
+                Change.UPDATED,
+                Target.FUNCTION,
+                KEYSPACE, functionName,
+                "int", "int");
 
         assertSchemaChange("DROP FUNCTION " + f + "(double, double)",
-                           Change.DROPPED, Target.FUNCTION,
-                           KEYSPACE, functionName,
-                           "double", "double");
+                Change.DROPPED, Target.FUNCTION,
+                KEYSPACE, functionName,
+                "double", "double");
 
         // The function with nested tuple should be created without throwing InvalidRequestException. See CASSANDRA-15857
         String fl = createFunctionName(KEYSPACE);
         registerFunction(fl, "list<tuple<int, int>>, double");
 
         assertSchemaChange("CREATE OR REPLACE FUNCTION " + fl + "(state list<tuple<int, int>>, val double) " +
-                           "RETURNS NULL ON NULL INPUT " +
-                           "RETURNS double " +
-                           "LANGUAGE javascript " +
-                           "AS '\"string\";';",
-                           Change.CREATED, Target.FUNCTION,
-                           KEYSPACE, shortFunctionName(fl),
-                           "list<tuple<int, int>>", "double");
+                        "RETURNS NULL ON NULL INPUT " +
+                        "RETURNS double " +
+                        "LANGUAGE java " +
+                        "AS ' return val;';",
+                Change.CREATED, Target.FUNCTION,
+                KEYSPACE, shortFunctionName(fl),
+                "list<tuple<int, int>>", "double");
     }
 
     @Test
@@ -330,11 +330,11 @@ public class UFTest extends CQLTester
         // a function that we'll drop and verify that statements which use it to
         // provide a DelayedValue are removed from the cache in QueryProcessor
         String function = createFunction(KEYSPACE_PER_TEST, "double",
-                                        "CREATE FUNCTION %s ( input double ) " +
-                                        "CALLED ON NULL INPUT " +
-                                        "RETURNS double " +
-                                        "LANGUAGE javascript " +
-                                        "AS 'input'");
+                "CREATE FUNCTION %s ( input double ) " +
+                        "CALLED ON NULL INPUT " +
+                        "RETURNS double " +
+                        "LANGUAGE java " +
+                        "AS 'return Double.valueOf(Math.log(input.doubleValue()));'");
         Assert.assertEquals(1, Schema.instance.getFunctions(parseFunctionName(function)).size());
 
         List<ResultMessage.Prepared> prepared = new ArrayList<>();
@@ -795,9 +795,8 @@ public class UFTest extends CQLTester
         assertInvalidMessage("Duplicate argument names for given function",
                              "CREATE OR REPLACE FUNCTION " + KEYSPACE + ".scrinv(val double, val text) " +
                              "RETURNS NULL ON NULL INPUT " +
-                             "RETURNS text " +
-                             "LANGUAGE javascript\n" +
-                             "AS '\"foo bar\";';");
+                             "RETURNS double " +
+                             "LANGUAGE java AS 'return Math.max(input, input)';");
     }
 
     @Test

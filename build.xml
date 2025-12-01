@@ -42,14 +42,23 @@
     <!-- netflix added -->
     <property name="checkstyle.version.java8" value="8.40"/>
     <property name="checkstyle.version.java11" value="9.3"/>
+    <property name="checkstyle.version.java21" value="9.3"/>
     <condition property="checkstyle.version" value="${checkstyle.version.java8}">
         <equals arg1="${ant.java.version}" arg2="1.8"/>
     </condition>
     <condition property="checkstyle.version" value="${checkstyle.version.java11}">
-        <not>
-            <equals arg1="${ant.java.version}" arg2="1.8"/>
-        </not>
+        <equals arg1="${ant.java.version}" arg2="11"/>
     </condition>
+    <condition property="checkstyle.version" value="${checkstyle.version.java21}">
+        <equals arg1="${ant.java.version}" arg2="21"/>
+    </condition>
+    <fail description="Checkstyle version could not be detected from JDK version">
+        <condition>
+            <not>
+                <isset property="checkstyle.version"/>
+            </not>
+        </condition>
+    </fail>
 
     <!-- directory details -->
     <property name="basedir" value="."/>
@@ -226,21 +235,26 @@
         </and>
     </condition>
 
-    <property name="byteman.version" value="4.0.6"/>
-    <property name="jamm.version" value="0.3.2"/>
-    <property name="ecj.version" value="4.6.1"/>
+    <property name="byteman.version" value="4.0.25"/>
+    <property name="jamm.version" value="0.4.0"/>
+    <property name="ecj.version" value="3.33.0"/>
     <property name="ohc.version" value="0.5.1"/>
-    <property name="asm.version" value="9.1"/>
+    <property name="asm.version" value="9.9"/>
     <property name="allocation-instrumenter.version" value="3.1.0"/>
     <property name="bytebuddy.version" value="1.10.10"/>
     <property name="jflex.version" value="1.8.2"/>
 
     <!-- https://mvnrepository.com/artifact/net.openhft/chronicle-bom/1.16.23 -->
-    <property name="chronicle-queue.version" value="5.20.123" />
-    <property name="chronicle-core.version" value="2.20.126" />
-    <property name="chronicle-bytes.version" value="2.20.111" />
-    <property name="chronicle-wire.version" value="2.20.117" />
-    <property name="chronicle-threads.version" value="2.20.111" />
+    <!-- chronicle libraries are in early access version because the main release became
+    paid library, we are using the most mature ea version witch should be identical with following
+    final release, there is no official final version available that support JDK 21 -->
+    <property name="chronicle-queue.version" value="5.24ea27" />
+    <property name="chronicle-core.version" value="2.24ea28" />
+    <property name="chronicle-bytes.version" value="2.24ea20" />
+    <property name="chronicle-wire.version" value="2.24ea27" />
+    <property name="chronicle-threads.version" value="2.24ea14" />
+    <property name="chronicle-affinity.version" value="3.23.3" />
+    <property name="chronicle-posix.version" value="2.24ea6" />
 
     <property name="dtest-api.version" value="0.0.16" />
 
@@ -300,11 +314,15 @@
         <equals arg1="${ant.java.version}" arg2="1.8"/>
     </condition>
     <condition property="java.version.11">
-        <not><isset property="java.version.8"/></not>
+        <equals arg1="${ant.java.version}" arg2="11"/>
+    </condition>
+    <condition property="java.version.21">
+        <equals arg1="${ant.java.version}" arg2="21"/>
     </condition>
     <fail><condition><not><or>
         <isset property="java.version.8"/>
         <isset property="java.version.11"/>
+        <isset property="java.version.21"/>
     </or></not></condition></fail>
 
     <resources id="_jvm11_arg_items">
@@ -339,14 +357,90 @@
         <string>--add-opens java.base/jdk.internal.module=ALL-UNNAMED</string>
         <string>--add-opens java.base/jdk.internal.util.jar=ALL-UNNAMED</string>
         <string>--add-opens jdk.management/com.sun.management.internal=ALL-UNNAMED</string>
+    </resources>
+    <pathconvert property="_jvm11_args_concat" refid="_jvm11_arg_items" pathsep=" "/>
+
+    <resources id="_jvm21_arg_items">
+        <string>-Djdk.attach.allowAttachSelf=true</string>
+        <string>-Djava.security.manager=allow</string>
+        <!-- this will block move to JDK 25, there is code modifing final variables that requires this flag-->
+        <string>-Djdk.reflect.useDirectMethodHandle=false</string>
+
+        <string>-XX:+UseZGC</string>
+        <string>-XX:+ZGenerational</string>
+        <!-- compressedoops is disabled with zgc anyvay but jamm is making wrong assumption that it is enabled
+        and computes pointer size incorrection without explicit flag-->
+        <string>-XX:-UseCompressedOops</string>
+
+        <!-- the list is long becaue most of the things are accessed by jamm when it calculates
+        memory size of a object tree and accesses a lot of internals-->
+        <string>--add-exports java.base/jdk.internal.misc=ALL-UNNAMED</string>
+        <string>--add-exports java.rmi/sun.rmi.registry=ALL-UNNAMED</string>
+        <string>--add-exports java.rmi/sun.rmi.transport.tcp=ALL-UNNAMED</string>
+        <string>--add-exports=java.base/jdk.internal.ref=ALL-UNNAMED</string>
+        <string>--add-exports=java.base/sun.nio.ch=ALL-UNNAMED</string>
+        <string>--add-exports=jdk.unsupported/sun.misc=ALL-UNNAMED</string>
+        <string>--add-exports=jdk.compiler/com.sun.tools.javac.file=ALL-UNNAMED</string>
+        <string>--add-opens java.base/java.lang.module=ALL-UNNAMED</string>
+        <string>--add-opens java.base/jdk.internal.loader=ALL-UNNAMED</string>
+        <string>--add-opens java.base/jdk.internal.ref=ALL-UNNAMED</string>
+        <string>--add-opens java.base/jdk.internal.reflect=ALL-UNNAMED</string>
+        <string>--add-opens java.base/jdk.internal.vm=ALL-UNNAMED</string>
+        <string>--add-opens java.base/java.lang.reflect=ALL-UNNAMED</string>
+        <string>--add-opens java.base/java.lang.invoke=ALL-UNNAMED</string>
+        <string>--add-opens java.base/jdk.internal.math=ALL-UNNAMED</string>
+        <string>--add-opens java.base/jdk.internal.module=ALL-UNNAMED</string>
+        <string>--add-opens java.base/java.io=ALL-UNNAMED</string>
+        <string>--add-opens java.base/sun.nio.ch=ALL-UNNAMED</string>
+        <string>--add-opens java.base/sun.nio.fs=ALL-UNNAMED</string>
+        <string>--add-opens java.base/java.util=ALL-UNNAMED</string>
+        <string>--add-opens java.base/java.util.jar=ALL-UNNAMED</string>
+        <string>--add-opens java.base/java.util.zip=ALL-UNNAMED</string>
+        <string>--add-opens java.logging/java.util.logging=ALL-UNNAMED</string>
+        <string>--add-opens java.base/java.util.concurrent=ALL-UNNAMED</string>
+        <string>--add-opens java.base/java.util.concurrent.atomic=ALL-UNNAMED</string>
+        <string>--add-opens java.base/java.util.concurrent.locks=ALL-UNNAMED</string>
+        <string>--add-opens jdk.management/com.sun.management.internal=ALL-UNNAMED</string>
+        <string>--add-opens java.base/java.lang=ALL-UNNAMED</string>
+        <string>--add-opens java.base/java.lang.ref=ALL-UNNAMED</string>
+        <string>--add-opens java.base/java.nio=ALL-UNNAMED</string>
+        <string>--add-opens java.base/java.nio.channels.spi=ALL-UNNAMED</string>
+        <string>--add-opens java.base/java.nio.file.attribute=ALL-UNNAMED</string>
+        <string>--add-opens java.base/java.math=ALL-UNNAMED</string>
+        <string>--add-opens java.base/java.nio.charset=ALL-UNNAMED</string>
+        <string>--add-opens java.base/java.net=ALL-UNNAMED</string>
+        <string>--add-opens java.base/java.security=ALL-UNNAMED</string>
+        <string>--add-opens java.base/sun.security.x509=ALL-UNNAMED</string>
+        <string>--add-opens java.base/sun.security.util=ALL-UNNAMED</string>
+        <string>--add-opens java.base/sun.reflect.generics.repository=ALL-UNNAMED</string>
+        <string>--add-opens java.base/sun.reflect.generics.tree=ALL-UNNAMED</string>
+        <string>--add-opens java.base/sun.net.www.protocol.jar=ALL-UNNAMED</string>
+        <string>--add-opens java.base/sun.util.locale=ALL-UNNAMED</string>
+        <string>--add-opens java.base/sun.util.locale.provider=ALL-UNNAMED</string>
+        <string>--add-opens java.base/com.sun.crypto.provider=ALL-UNNAMED</string>
+        <string>--add-opens java.rmi/sun.rmi.transport.tcp=ALL-UNNAMED</string>
+        <string>--add-opens=jdk.compiler/com.sun.tools.javac=ALL-UNNAMED</string>
+        <string>--add-opens=java.management/javax.management=ALL-UNNAMED</string>
 
     </resources>
-    <pathconvert property="_jvm_args_concat" refid="_jvm11_arg_items" pathsep=" "/>
-    <condition property="java11-jvmargs" value="${_jvm_args_concat}" else="">
-        <not>
-            <equals arg1="${ant.java.version}" arg2="1.8"/>
-        </not>
+    <pathconvert property="_jvm21_args_concat" refid="_jvm21_arg_items" pathsep=" "/>
+
+    <condition property="java-jvmargs" value="">
+        <equals arg1="${ant.java.version}" arg2="1.8"/>
     </condition>
+    <condition property="java-jvmargs" value="${_jvm11_args_concat}">
+        <equals arg1="${ant.java.version}" arg2="11"/>
+    </condition>
+    <condition property="java-jvmargs" value="${_jvm21_args_concat}">
+        <equals arg1="${ant.java.version}" arg2="21"/>
+    </condition>
+    <fail description="JVM arguments could not be determined from JDK version">
+        <condition>
+            <not>
+                <isset property="java-jvmargs"/>
+            </not>
+        </condition>
+    </fail>
 
     <!--
       JVM arguments for tests.
@@ -373,33 +467,55 @@
         <string>-Dio.netty.tryReflectionSetAccessible=true</string>
     </resources>
     <pathconvert property="_jvm11_test_arg_items_concat" refid="_jvm11_test_arg_items" pathsep=" "/>
-    <condition property="_std-test-jvmargs" value="${_jvm11_test_arg_items_concat}" else="${_jvm8_test_arg_items_concat}">
-        <not>
-            <equals arg1="${ant.java.version}" arg2="1.8"/>
-        </not>
+    <resources id="_jvm21_test_arg_items">
+    </resources>
+    <pathconvert property="_jvm21_test_arg_items_concat" refid="_jvm21_test_arg_items" pathsep=" "/>
+    <condition property="_std-test-jvmargs" value="${_jvm8_test_arg_items_concat}">
+        <equals arg1="${ant.java.version}" arg2="1.8"/>
     </condition>
+    <condition property="_std-test-jvmargs" value="${_jvm11_test_arg_items_concat}">
+        <equals arg1="${ant.java.version}" arg2="11"/>
+    </condition>
+    <condition property="_std-test-jvmargs" value="${_jvm21_test_arg_items_concat}">
+        <equals arg1="${ant.java.version}" arg2="21"/>
+    </condition>
+    <fail description="JVM arguments for tests could not be determined from JDK version">
+        <condition>
+            <not>
+                <isset property="_std-test-jvmargs"/>
+            </not>
+        </condition>
+    </fail>
 
     <!-- needed to compile org.apache.cassandra.utils.JMXServerUtils -->
-    <condition property="jdk11-javac-exports" value="--add-exports java.rmi/sun.rmi.registry=ALL-UNNAMED --add-exports java.rmi/sun.rmi.transport.tcp=ALL-UNNAMED --add-exports java.base/sun.nio.ch=ALL-UNNAMED" else="">
+    <condition property="jdk9plus-javac-exports" value="--add-exports java.rmi/sun.rmi.registry=ALL-UNNAMED --add-exports java.rmi/sun.rmi.transport.tcp=ALL-UNNAMED --add-exports java.base/sun.nio.ch=ALL-UNNAMED --add-exports java.base/jdk.internal.ref=ALL-UNNAMED" else="">
         <not>
             <equals arg1="${ant.java.version}" arg2="1.8"/>
         </not>
     </condition>
-    <condition property="jdk11-javadoc-exports" value="${jdk11-javac-exports} --frames" else="">
+    <condition property="jdk9plus-javadoc-exports" value="${jdk9plus-javac-exports} --frames" else="">
         <not>
             <equals arg1="${ant.java.version}" arg2="1.8"/>
         </not>
     </condition>
 
-    <condition property="build.java.11">
-        <istrue value="${use.jdk11}"/>
-    </condition>
-
-    <condition property="source.version" value="8" else="11">
+    <condition property="source.version" value="8">
         <equals arg1="${java.version.8}" arg2="true"/>
     </condition>
-    <condition property="target.version" value="8" else="11">
+    <condition property="target.version" value="8">
         <equals arg1="${java.version.8}" arg2="true"/>
+    </condition>
+    <condition property="source.version" value="11">
+        <equals arg1="${java.version.11}" arg2="true"/>
+    </condition>
+    <condition property="target.version" value="11">
+        <equals arg1="${java.version.11}" arg2="true"/>
+    </condition>
+    <condition property="source.version" value="21">
+        <equals arg1="${java.version.21}" arg2="true"/>
+    </condition>
+    <condition property="target.version" value="21">
+        <equals arg1="${java.version.21}" arg2="true"/>
     </condition>
 
     <!--
@@ -430,7 +546,7 @@
         windowtitle="${ant.project.name} API" classpathref="cassandra.classpath"
         bottom="Copyright &amp;copy; 2009- The Apache Software Foundation"
         useexternalfile="yes" encoding="UTF-8" failonerror="false"
-        maxmemory="256m" additionalparam="${jdk11-javadoc-exports}">
+        maxmemory="256m" additionalparam="${jdk9plus-javadoc-exports}">
         <filesets/>
       </javadoc>
       <fail message="javadoc failed">
@@ -443,60 +559,10 @@
     </sequential>
   </macrodef>
 
-    <target name="validate-build-conf">
-        <condition property="use-jdk11">
-            <or>
-                <isset property="build.java.11"/>
-                <istrue value="${env.CASSANDRA_USE_JDK11}"/>
-                <not>
-                    <isset property="env.CASSANDRA_USE_JDK11"/>
-                </not>
-            </or>
-        </condition>
-        <fail message="Inconsistent JDK11 options set">
-            <condition>
-                    <and>
-                        <istrue value="${env.CASSANDRA_USE_JDK11}"/>
-                        <isset property="use.jdk11"/>
-                        <not>
-                            <istrue value="${use.jdk11}"/>
-                        </not>
-                    </and>
-            </condition>
-                </fail>
-        <fail message="Inconsistent JDK11 options set">
-            <condition>
-                    <and>
-                        <isset property="env.CASSANDRA_USE_JDK11"/>
-                        <not>
-                            <istrue value="${env.CASSANDRA_USE_JDK11}"/>
-                        </not>
-                        <istrue value="${use.jdk11}"/>
-                    </and>
-            </condition>
-        </fail>
-        <fail message="-Duse.jdk11=true or $CASSANDRA_USE_JDK11=true cannot be set when building from java 8">
-            <condition>
-                <not><or>
-                    <not><isset property="java.version.8"/></not>
-                    <not><isset property="use-jdk11"/></not>
-                </or></not>
-            </condition>
-        </fail>
-        <fail message="-Duse.jdk11=true or $CASSANDRA_USE_JDK11=true must be set when building from java 11">
-            <condition>
-                <not><or>
-                    <isset property="java.version.8"/>
-                    <isset property="use-jdk11"/>
-                </or></not>
-            </condition>
-        </fail>
-    </target>
-
     <!--
         Setup the output directories.
     -->
-    <target name="init" depends="validate-build-conf">
+    <target name="init">
         <fail unless="is.source.artifact"
             message="Not a source artifact, stopping here." />
         <mkdir dir="${build.classes.main}"/>
@@ -546,7 +612,8 @@
       <echo>Building Grammar ${build.src.antlr}/Cql.g  ...</echo>
       <java classname="org.antlr.Tool"
             classpathref="cql3-grammar.classpath"
-            failonerror="true">
+            failonerror="true"
+            fork="true">
          <arg value="-Xconversiontimeout" />
          <arg value="10000" />
          <arg value="${build.src.antlr}/Cql.g" />
@@ -736,9 +803,27 @@
           <dependency groupId="io.airlift" artifactId="airline" version="0.8">
             <exclusion groupId="com.google.code.findbugs" artifactId="jsr305" />
            </dependency>
-           <dependency groupId="io.netty" artifactId="netty-bom" version="4.1.58.Final" type="pom" scope="provided"/>
-           <dependency groupId="io.netty" artifactId="netty-all" version="4.1.58.Final" />
-          <dependency groupId="io.netty" artifactId="netty-tcnative-boringssl-static" version="2.0.36.Final"/>
+          <dependency groupId="io.netty" artifactId="netty-bom" version="4.1.119.Final" type="pom" scope="provided"/>
+          <dependency groupId="io.netty" artifactId="netty-all" version="4.1.119.Final">
+            <exclusion groupId="io.netty" artifactId="netty-codec-dns"/>
+            <exclusion groupId="io.netty" artifactId="netty-codec-haproxy"/>
+            <exclusion groupId="io.netty" artifactId="netty-codec-http2"/>
+            <exclusion groupId="io.netty" artifactId="netty-codec-http"/>
+            <exclusion groupId="io.netty" artifactId="netty-codec-memcache"/>
+            <exclusion groupId="io.netty" artifactId="netty-codec-mqtt"/>
+            <exclusion groupId="io.netty" artifactId="netty-codec-redis"/>
+            <exclusion groupId="io.netty" artifactId="netty-codec-smtp"/>
+            <exclusion groupId="io.netty" artifactId="netty-codec-socks"/>
+            <exclusion groupId="io.netty" artifactId="netty-codec-stomp"/>
+            <exclusion groupId="io.netty" artifactId="netty-codec-xml"/>
+            <exclusion groupId="io.netty" artifactId="netty-transport-udt"/>
+            <exclusion groupId="io.netty" artifactId="netty-transport-sctp"/>
+            <exclusion groupId="io.netty" artifactId="netty-transport-rxtx"/>
+            <exclusion groupId="io.netty" artifactId="netty-resolver-dns"/>
+            <exclusion groupId="io.netty" artifactId="netty-resolver-dns-classes-macos"/>
+          </dependency>
+          <dependency groupId="io.netty" artifactId="netty-transport-native-epoll" version="4.1.119.Final" classifier="linux-x86_64"/>
+          <dependency groupId="io.netty" artifactId="netty-tcnative-boringssl-static" version="2.0.70.Final"/>
           <dependency groupId="net.openhft" artifactId="chronicle-queue" version="${chronicle-queue.version}">
             <exclusion groupId="com.sun" artifactId="tools" />
           </dependency>
@@ -751,12 +836,17 @@
           </dependency>
           <dependency groupId="net.openhft" artifactId="chronicle-wire" version="${chronicle-wire.version}">
             <exclusion groupId="net.openhft" artifactId="compiler" />
+            <exclusion groupId="net.openhft" artifactId="affinity" />
           </dependency>
           <dependency groupId="net.openhft" artifactId="chronicle-threads" version="${chronicle-threads.version}">
             <exclusion groupId="net.openhft" artifactId="affinity" />
             <!-- Exclude JNA here, as we want to avoid breaking consumers of the cassandra-all jar -->
             <exclusion groupId="net.java.dev.jna" artifactId="jna" />
             <exclusion groupId="net.java.dev.jna" artifactId="jna-platform" />
+          </dependency>
+          <dependency groupId="net.openhft" artifactId="affinity" version="${chronicle-affinity.version}">
+          </dependency>
+          <dependency groupId="net.openhft" artifactId="posix" version="${chronicle-posix.version}">
           </dependency>
           <dependency groupId="com.google.code.findbugs" artifactId="jsr305" version="2.0.2"/>
           <dependency groupId="com.clearspring.analytics" artifactId="stream" version="2.5.2">
@@ -771,7 +861,7 @@
             <exclusion groupId="com.github.jnr" artifactId="jnr-ffi"/>
             <exclusion groupId="com.github.jnr" artifactId="jnr-posix"/>
           </dependency>
-          <dependency groupId="org.eclipse.jdt.core.compiler" artifactId="ecj" version="${ecj.version}" />
+          <dependency groupId="org.eclipse.jdt" artifactId="ecj" version="${ecj.version}" />
           <dependency groupId="org.caffinitas.ohc" artifactId="ohc-core" version="${ohc.version}">
             <exclusion groupId="org.slf4j" artifactId="slf4j-api"/>
           </dependency>
@@ -818,6 +908,9 @@
             <exclusion groupId="org.hamcrest" artifactId="hamcrest"/>
           </dependency>
           <dependency groupId="org.hamcrest" artifactId="hamcrest" version="2.2" scope="test"/>
+          <dependency groupId="org.bouncycastle" artifactId="bcpkix-jdk18on" version="1.78" scope="test"/>
+          <dependency groupId="org.bouncycastle" artifactId="bcprov-jdk18on" version="1.78" scope="test"/>
+          <dependency groupId="org.bouncycastle" artifactId="bcutil-jdk18on" version="1.78" scope="test"/>
           <dependency groupId="com.github.seancfoley" artifactId="ipaddress" version="5.3.3" />
           <dependency groupId="netflix" artifactId="metatron-ipc-common-shaded" version="1.468.0" />
           <dependency groupId="com.github.luben" artifactId="zstd-jni" version="1.5.0-4"/>
@@ -902,6 +995,9 @@
         <dependency groupId="org.junit" artifactId="junit-bom" type="pom"/>
         <dependency groupId="org.awaitility" artifactId="awaitility"/>
         <dependency groupId="org.hamcrest" artifactId="hamcrest"/>
+        <dependency groupId="org.bouncycastle" artifactId="bcpkix-jdk18on"/>
+        <dependency groupId="org.bouncycastle" artifactId="bcprov-jdk18on"/>
+        <dependency groupId="org.bouncycastle" artifactId="bcutil-jdk18on"/>
         <!-- coverage debs -->
         <dependency groupId="org.jacoco" artifactId="org.jacoco.agent"/>
         <dependency groupId="org.jacoco" artifactId="org.jacoco.ant"/>
@@ -964,13 +1060,15 @@
 
         <dependency groupId="io.netty" artifactId="netty-bom"  type="pom"  />
         <dependency groupId="io.netty" artifactId="netty-all"/>
+        <dependency groupId="io.netty" artifactId="netty-transport-native-epoll" classifier="linux-x86_64"/>
         <dependency groupId="net.openhft" artifactId="chronicle-queue"/>
         <dependency groupId="net.openhft" artifactId="chronicle-core"/>
         <dependency groupId="net.openhft" artifactId="chronicle-bytes"/>
         <dependency groupId="net.openhft" artifactId="chronicle-wire"/>
         <dependency groupId="net.openhft" artifactId="chronicle-threads"/>
+        <dependency groupId="net.openhft" artifactId="affinity"/>
         <dependency groupId="org.fusesource" artifactId="sigar"/>
-        <dependency groupId="org.eclipse.jdt.core.compiler" artifactId="ecj"/>
+        <dependency groupId="org.eclipse.jdt" artifactId="ecj"/>
         <dependency groupId="org.caffinitas.ohc" artifactId="ohc-core"/>
         <dependency groupId="org.caffinitas.ohc" artifactId="ohc-core-j8"/>
         <dependency groupId="com.github.ben-manes.caffeine" artifactId="caffeine" />
@@ -1039,7 +1137,7 @@
         <jvmarg value="-Dcassandra.reads.thresholds.coordinator.defensive_checks_enabled=true" /> <!-- enable defensive checks -->
         <jvmarg value="-javaagent:${build.lib}/jamm-${jamm.version}.jar" />
         <jvmarg value="-ea"/>
-        <jvmarg line="${java11-jvmargs}"/>
+        <jvmarg line="${java-jvmargs}"/>
       </java>
     </target>
 
@@ -1060,7 +1158,7 @@
             <src path="${build.src.java}"/>
             <src path="${build.src.gen-java}"/>
             <compilerarg value="-XDignore.symbol.file"/>
-            <compilerarg line="${jdk11-javac-exports}"/>
+            <compilerarg line="${jdk9plus-javac-exports}"/>
             <classpath>
                 <path refid="cassandra.classpath"/>
             </classpath>
@@ -1513,7 +1611,7 @@
          </fileset>
      </classpath>
      <compilerarg value="-XDignore.symbol.file"/>
-     <compilerarg line="${jdk11-javac-exports}"/>
+     <compilerarg line="${jdk9plus-javac-exports}"/>
      <src path="${test.anttasks.src}"/>
      <src path="${test.unit.src}"/>
      <src path="${test.long.src}"/>
@@ -1554,7 +1652,7 @@
                     <pathelement location="${fqltool.test.classes}"/>
                     <pathelement location="${stress.test.classes}"/>
                 </classpath>
-                <jvmarg line="${java11-jvmargs}"/>
+                <jvmarg line="${java-jvmargs}"/>
                 <jvmarg value="-DscanClassPath=@{scanClassPath}"/>
                 <jvmarg value="-DpackageName=@{packageName}"/>
                 <jvmarg value="-DannotationName=@{annotationName}"/>
@@ -1657,7 +1755,7 @@
         <jvmarg value="-Dcassandra.test.flush_local_schema_changes=${cassandra.test.flush_local_schema_changes}"/>
         <jvmarg value="-Dcassandra.test.messagingService.nonGracefulShutdown=${cassandra.test.messagingService.nonGracefulShutdown}"/>
         <jvmarg value="-Dcassandra.use_nix_recursive_delete=${cassandra.use_nix_recursive_delete}"/>
-        <jvmarg line="${java11-jvmargs}"/>
+        <jvmarg line="${java-jvmargs}"/>
         <!-- disable shrinks in quicktheories CASSANDRA-15554 -->
         <jvmarg value="-DQT_SHRINKS=0"/>
         <jvmarg line="${_std-test-jvmargs}" />
@@ -1804,13 +1902,6 @@
     ant testsome -Dtest.name=org.apache.cassandra.service.StorageServiceServerTest -Dtest.methods=testRegularMode,testGetAllRangesEmpty
   -->
     <target name="testsome" depends="maybe-build-test" description="Execute specific unit tests">
-
-        <!-- Add the illegal-access=permit argument if Java version is not 1.8 -->
-        <condition property="illegal.access.arg" value="--illegal-access=permit">
-            <not>
-                <equals arg1="${ant.java.version}" arg2="1.8"/>
-            </not>
-        </condition>
 
         <testmacro inputdir="${test.unit.src}" timeout="${test.timeout}">
             <test unless:blank="${test.methods}" name="${test.name}" methods="${test.methods}" outfile="build/test/output/TEST-${test.name}-${test.methods}"/>
@@ -2244,18 +2335,38 @@
   </target>
 
   <target name="_maybe_update_idea_to_java11" if="java.version.11">
-    <replace file="${eclipse.project.name}.iml" token="JDK_1_8" value="JDK_11"/>
-    <replace file=".idea/misc.xml" token="JDK_1_8" value="JDK_11"/>
-    <replace file=".idea/misc.xml" token="1.8" value="11"/>
+        <replace file="${eclipse.project.name}.iml" token="JDK_1_8" value="JDK_11"/>
+        <replace file=".idea/misc.xml" token="JDK_1_8" value="JDK_11"/>
+        <replace file=".idea/misc.xml" token="1.8" value="11"/>
+        <replaceregexp file=".idea/workspace.xml"
+                       match="name=&quot;VM_PARAMETERS&quot; value=&quot;(.*)"
+                       replace="name=&quot;VM_PARAMETERS&quot; value=&quot;\1 ${java-jvmargs}"
+                       byline="true"/>
+
+        <echo file=".idea/compiler.xml"><![CDATA[<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="JavacSettings">
+    <option name="ADDITIONAL_OPTIONS_STRING" value="--add-exports java.rmi/sun.rmi.registry=ALL-UNNAMED --add-exports java.rmi/sun.rmi.transport.tcp=ALL-UNNAMED --add-exports java.rmi/sun.rmi.transport=ALL-UNNAMED" />
+  </component>
+</project>]]></echo>
+    </target>
+
+  <target name="_maybe_update_idea_to_java21" if="java.version.21">
+    <replace file="${eclipse.project.name}.iml" token="JDK_1_8" value="JDK_21"/>
+    <replace file=".idea/misc.xml" token="JDK_1_8" value="JDK_21"/>
+    <replace file=".idea/misc.xml" token="1.8" value="21"/>
     <replaceregexp file=".idea/workspace.xml"
                    match="name=&quot;VM_PARAMETERS&quot; value=&quot;(.*)"
-                   replace="name=&quot;VM_PARAMETERS&quot; value=&quot;\1 ${java11-jvmargs}"
+                   replace="name=&quot;VM_PARAMETERS&quot; value=&quot;\1 ${java-jvmargs}"
                    byline="true"/>
 
       <echo file=".idea/compiler.xml"><![CDATA[<?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
+  <component name="CompilerConfiguration">
+    <option name="USE_RELEASE_OPTION" value="false" />
+  </component>
   <component name="JavacSettings">
-    <option name="ADDITIONAL_OPTIONS_STRING" value="--add-exports java.rmi/sun.rmi.registry=ALL-UNNAMED --add-exports java.rmi/sun.rmi.transport.tcp=ALL-UNNAMED --add-exports java.rmi/sun.rmi.transport=ALL-UNNAMED" />
+    <option name="ADDITIONAL_OPTIONS_STRING" value="--add-exports java.rmi/sun.rmi.registry=ALL-UNNAMED --add-exports java.rmi/sun.rmi.transport.tcp=ALL-UNNAMED --add-exports java.rmi/sun.rmi.transport=ALL-UNNAMED --add-exports java.base/sun.nio.ch=ALL-UNNAMED --add-exports java.base/jdk.internal.ref=ALL-UNNAMED" />
   </component>
 </project>]]></echo>
   </target>
@@ -2280,6 +2391,7 @@
   </component>
 </project>]]></echo>
       <antcall target="_maybe_update_idea_to_java11"/>
+      <antcall target="_maybe_update_idea_to_java21"/>
   </target>
 
   <!-- Generate Eclipse project description files -->

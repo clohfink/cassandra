@@ -21,20 +21,16 @@ package org.apache.cassandra.utils;
 
 import java.nio.ByteBuffer;
 
-import org.github.jamm.MemoryLayoutSpecification;
 import org.github.jamm.MemoryMeter;
+import static org.github.jamm.MemoryMeterStrategy.MEMORY_LAYOUT;
+import static org.github.jamm.utils.ArrayMeasurementUtils.computeArraySize;
 
 /**
  * A convenience class for wrapping access to MemoryMeter
  */
 public class ObjectSizes
 {
-    private static final MemoryMeter meter = new MemoryMeter().withGuessing(MemoryMeter.Guess.FALLBACK_UNSAFE)
-                                                              .ignoreKnownSingletons();
-
-    private static final MemoryMeter omitSharedMeter = new MemoryMeter().omitSharedBufferOverhead()
-                                                              .withGuessing(MemoryMeter.Guess.FALLBACK_UNSAFE)
-                                                              .ignoreKnownSingletons();
+    private static final MemoryMeter meter = MemoryMeter.builder().withGuessing(MemoryMeter.Guess.INSTRUMENTATION_AND_SPECIFICATION, MemoryMeter.Guess.UNSAFE).build();
 
     private static final long EMPTY_HEAP_BUFFER_SIZE = measure(ByteBufferUtil.EMPTY_BYTE_BUFFER);
     private static final long EMPTY_BYTE_ARRAY_SIZE = measure(new byte[0]);
@@ -50,10 +46,7 @@ public class ObjectSizes
      */
     public static long sizeOfArray(byte[] bytes)
     {
-        if (bytes == null)
-            return 0;
-
-        return sizeOfArray(bytes.length, 1);
+        return meter.measureArray(bytes);
     }
 
     /**
@@ -64,10 +57,7 @@ public class ObjectSizes
      */
     public static long sizeOfArray(long[] longs)
     {
-        if (longs == null)
-            return 0;
-
-        return sizeOfArray(longs.length, 8);
+        return meter.measureArray(longs);
     }
 
     /**
@@ -78,10 +68,7 @@ public class ObjectSizes
      */
     public static long sizeOfArray(int[] ints)
     {
-        if (ints == null)
-            return 0;
-
-        return sizeOfArray(ints.length, 4);
+        return meter.measureArray(ints);
     }
 
     /**
@@ -92,7 +79,7 @@ public class ObjectSizes
      */
     public static long sizeOfReferenceArray(int length)
     {
-        return sizeOfArray(length, MemoryLayoutSpecification.SPEC.getReferenceSize());
+        return sizeOfArray(length, MEMORY_LAYOUT.getReferenceSize());
     }
 
     /**
@@ -103,15 +90,12 @@ public class ObjectSizes
      */
     public static long sizeOfArray(Object[] objects)
     {
-        if (objects == null)
-            return 0;
-
-        return sizeOfReferenceArray(objects.length);
+        return meter.measureArray(objects);
     }
 
-    private static long sizeOfArray(int length, long elementSize)
+    private static long sizeOfArray(int length, int elementSize)
     {
-        return MemoryLayoutSpecification.sizeOfArray(length, elementSize);
+        return computeArraySize(MEMORY_LAYOUT.getArrayHeaderSize(), length, elementSize, MEMORY_LAYOUT.getObjectAlignment());
     }
 
     /**
@@ -221,7 +205,7 @@ public class ObjectSizes
 
     public static long measureDeepOmitShared(Object pojo)
     {
-        return omitSharedMeter.measureDeep(pojo);
+        return meter.measureDeep(pojo, MemoryMeter.ByteBufferMode.SLAB_ALLOCATION_NO_SLICE);
     }
 
     /**

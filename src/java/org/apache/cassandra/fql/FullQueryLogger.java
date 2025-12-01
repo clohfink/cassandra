@@ -30,6 +30,7 @@ import com.google.common.collect.Sets;
 import com.google.common.primitives.Ints;
 
 import org.apache.cassandra.io.util.File;
+import org.github.jamm.MemoryMeterStrategy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -50,7 +51,6 @@ import org.apache.cassandra.utils.binlog.BinLog;
 import org.apache.cassandra.utils.binlog.BinLogOptions;
 import org.apache.cassandra.utils.concurrent.UncheckedInterruptedException;
 import org.apache.cassandra.utils.concurrent.WeightedQueue;
-import org.github.jamm.MemoryLayoutSpecification;
 
 import static com.google.common.base.Preconditions.checkNotNull;
 
@@ -85,8 +85,8 @@ public class FullQueryLogger implements QueryEvents.Listener
     private static final int EMPTY_LIST_SIZE = Ints.checkedCast(ObjectSizes.measureDeep(new ArrayList<>(0)));
     private static final int EMPTY_BYTEBUF_SIZE;
 
-    private static final int OBJECT_HEADER_SIZE = MemoryLayoutSpecification.SPEC.getObjectHeaderSize();
-    private static final int OBJECT_REFERENCE_SIZE = MemoryLayoutSpecification.SPEC.getReferenceSize();
+    private static final int OBJECT_HEADER_SIZE = MemoryMeterStrategy.MEMORY_LAYOUT.getObjectHeaderSize();
+    private static final int OBJECT_REFERENCE_SIZE = MemoryMeterStrategy.MEMORY_LAYOUT.getReferenceSize();
 
     public static final FullQueryLogger instance = new FullQueryLogger();
 

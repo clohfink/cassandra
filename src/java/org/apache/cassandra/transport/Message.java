@@ -29,6 +29,7 @@ import com.google.common.annotations.VisibleForTesting;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.*;
 
+import org.apache.cassandra.utils.ReflectionUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -133,7 +134,7 @@ public abstract class Message
             Codec<?> original = this.codec;
             Field field = Type.class.getDeclaredField("codec");
             field.setAccessible(true);
-            Field modifiers = Field.class.getDeclaredField("modifiers");
+            Field modifiers = ReflectionUtils.getModifiersField();
             modifiers.setAccessible(true);
             modifiers.setInt(field, field.getModifiers() & ~Modifier.FINAL);
             field.set(this, codec);

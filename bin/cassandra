@@ -125,7 +125,10 @@ fi
 # To specify your own libjemalloc in a different path, configure the fully qualified path in CASSANDRA_LIBJEMALLOC.
 # To disable jemalloc preload at all, set CASSANDRA_LIBJEMALLOC=-
 #
-#CASSANDRA_LIBJEMALLOC=
+# Netflix JDK 21 or higher packgage brings its own internal netflix jemalloc package so standard cassandra detection fails to find it
+# We need to set explicit path to it
+
+CASSANDRA_LIBJEMALLOC=/apps/nflx-jemalloc/lib/libjemalloc.so.2
 #
 find_library()
 {

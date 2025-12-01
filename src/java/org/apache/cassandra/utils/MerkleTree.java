@@ -741,7 +741,7 @@ public class MerkleTree
         logger.debug("Allocating direct buffer of size {} for an off-heap merkle tree", size);
         ByteBuffer buffer = ByteBuffer.allocateDirect(size);
         if (Ref.DEBUG_ENABLED)
-            MemoryUtil.setAttachment(buffer, new Ref<>(null, null));
+            MemoryUtil.setAttachment(buffer, new Ref.DirectBufferRef<>(null, null));
         return buffer;
     }
 
@@ -976,8 +976,8 @@ public class MerkleTree
         void release()
         {
             Object attachment = MemoryUtil.getAttachment(buffer);
-            if (attachment instanceof Ref)
-                ((Ref) attachment).release();
+            if (attachment instanceof Ref.DirectBufferRef)
+                ((Ref.DirectBufferRef) attachment).release();
             FileUtils.clean(buffer);
         }
 
@@ -1604,6 +1604,13 @@ public class MerkleTree
     boolean hashesRange(Range<Token> range)
     {
         return ifHashesRange(range, n -> {});
+    }
+
+
+    @VisibleForTesting
+    public boolean isReleased()
+    {
+        return root == null;
     }
 
     /**

@@ -21,6 +21,8 @@ ENV DIST_DIR=$CASSANDRA_DIR/build
 ENV LANG=en_US.UTF-8
 ENV LC_CTYPE=en_US.UTF-8
 
+ARG java_version
+
 LABEL org.cassandra.buildenv=ubuntu_2004
 
 RUN echo "Building with arguments:" \
@@ -45,7 +47,7 @@ RUN export DEBIAN_FRONTEND=noninteractive && \
     apt-get install -y curl git-core python3-pip python3.8-dev \
         net-tools wget gcc libxml2 libxslt1-dev \
         vim lsof sudo libjemalloc2 dumb-init locales \
-        openjdk-11-jdk ant ant-optional bc libssl-dev
+        openjdk-${java_version}-jdk ant ant-optional bc libssl-dev
 
 # generate locales for the standard en_US.UTF8 value we use for testing
 RUN locale-gen en_US.UTF-8

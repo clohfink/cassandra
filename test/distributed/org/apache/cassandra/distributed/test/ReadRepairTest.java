@@ -27,6 +27,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 
 import org.junit.Assert;
+import org.junit.BeforeClass;
 import org.junit.Test;
 
 import net.bytebuddy.ByteBuddy;
@@ -59,6 +60,7 @@ import org.apache.cassandra.utils.concurrent.Condition;
 
 import static net.bytebuddy.matcher.ElementMatchers.named;
 
+import static org.apache.cassandra.config.CassandraRelevantProperties.TEST_JVM_DTEST_DISABLE_SSL;
 import static org.apache.cassandra.db.Keyspace.open;
 import static org.apache.cassandra.distributed.api.ConsistencyLevel.ALL;
 import static org.apache.cassandra.distributed.api.ConsistencyLevel.QUORUM;
@@ -74,6 +76,15 @@ import static org.junit.Assert.fail;
 
 public class ReadRepairTest extends TestBaseImpl
 {
+    @BeforeClass
+    public static void disableSsl()
+    {
+        //ssl is using metatron that creates a daemon thread which holds reference on InstanceClassLoader.
+        //the thead is never cleaned and since each instance in the test has its own InstanceClassLoader they are
+        //creating memory leak that pushes JDK 21 test over the memory limit because it has slightly higher memory footprint
+        //due to disabled compressed pointers with ZGC.
+        TEST_JVM_DTEST_DISABLE_SSL.setBoolean(true);
+    }
     /**
      * Tests basic behaviour of read repair with {@code BLOCKING} read repair strategy.
      */

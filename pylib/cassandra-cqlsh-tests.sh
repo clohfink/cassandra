@@ -43,11 +43,9 @@ export NUM_TOKENS="16"
 export CASSANDRA_DIR=${WORKSPACE}
 export TESTSUITE_NAME="cqlshlib.${PYTHON_VERSION}"
 
-if [ -z "$CASSANDRA_USE_JDK11" ]; then
-    export CASSANDRA_USE_JDK11=false
-fi
-
-if [ "$CASSANDRA_USE_JDK11" = true ] ; then
+if [ "$CASSANDRA_USE_JDK21" = true ] ; then
+    TESTSUITE_NAME="${TESTSUITE_NAME}.jdk21"
+elif [ "$CASSANDRA_USE_JDK11" = true ] ; then
     TESTSUITE_NAME="${TESTSUITE_NAME}.jdk11"
 else
     TESTSUITE_NAME="${TESTSUITE_NAME}.jdk8"

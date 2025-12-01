@@ -99,19 +99,11 @@ public abstract class MemtableSizeTestBase extends CQLTester
     @Test
     public void testSize() throws Throwable
     {
-        // Note: To see a printout of the usage for each object, add .enableDebug() here (most useful with smaller number of
-        // partitions)
-        MemoryMeter meter = new MemoryMeter().withGuessing(MemoryMeter.Guess.FALLBACK_UNSAFE)
-//                                           .enableDebug(100)
-                                             .ignoreKnownSingletons();
-        if (DatabaseDescriptor.getMemtableAllocationType() == Config.MemtableAllocationType.heap_buffers ||
-            DatabaseDescriptor.getMemtableAllocationType() == Config.MemtableAllocationType.offheap_buffers)
-        {
-            // jamm includes capacity for all ByteBuffer sub-clases (HeapByteBuffer and DirectByteBuffer) to deepMeasure result
-            // we need it only when we use HeapByteBuffer because we want to measure heap usage only
-            // we have to use it for DirectByteBuffer too to avoid MemoryMeter traversing through Cleaner references
-            meter = meter.omitSharedBufferOverhead();
-        }
+        MemoryMeter meter =  MemoryMeter.builder()
+                                               .withGuessing(MemoryMeter.Guess.INSTRUMENTATION_AND_SPECIFICATION,
+                                                             MemoryMeter.Guess.UNSAFE)
+                                               .build();
+        MemoryMeter.ByteBufferMode meterMode = MemoryMeter.ByteBufferMode.NORMAL;
 
         // Make sure memtables use the correct allocation type, i.e. that setup has worked.
         // If this fails, make sure the test is not reusing an already-initialized JVM.
@@ -138,7 +130,7 @@ public abstract class MemtableSizeTestBase extends CQLTester
             Util.flush(cfs);
 
             Memtable memtable = cfs.getTracker().getView().getCurrentMemtable();
-            long deepSizeBefore = meter.measureDeep(memtable);
+            long deepSizeBefore = meter.measureDeep(memtable, meterMode);
             logger.info("Memtable deep size before {}", FBUtilities.prettyPrintMemory(deepSizeBefore));
             long i;
             long limit = partitions;
@@ -177,21 +169,10 @@ public abstract class MemtableSizeTestBase extends CQLTester
                                       FBUtilities.prettyPrintMemory(memtable.getLiveDataSize()),
                                       usage));
 
-            long deepSizeAfter = meter.measureDeep(memtable);
+            long deepSizeAfter = meter.measureDeep(memtable, meterMode);
             logger.info("Memtable deep size {}", FBUtilities.prettyPrintMemory(deepSizeAfter));
 
             long expectedHeap = deepSizeAfter - deepSizeBefore;
-            // jamm MemoryMeter 0.3.2 does not allow to measure heap usage for DirectHeapBuffer correctly
-            //   within a bigger object graph (measureDeep).
-            // If omitSharedBufferOverhead is disabled
-            //    it starts to traverse and include heap usage for unpredictable global Cleaner/ReferenceQueue graphs
-            // if omitSharedBufferOverhead is enabled
-            //    it includes direct buffer capacity into the memory usage
-            // so, we have to correct the heap usage measured in the test by subtracting the total size of data within DirectByteBuffer.
-            // We assume that there is no data replacement in the test operations
-            // so all the off-heap memory allocated in direct byte buffer slabs is in-use/visible by traversing Memtable object graph
-            if (DatabaseDescriptor.getMemtableAllocationType() == Config.MemtableAllocationType.offheap_buffers)
-                expectedHeap -= usage.ownsOffHeap;
 
             long maxDifference = MAX_DIFFERENCE_PERCENT * expectedHeap / 100;
 

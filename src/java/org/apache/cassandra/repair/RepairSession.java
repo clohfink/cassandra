@@ -455,4 +455,10 @@ public class RepairSession extends AsyncFuture<RepairSessionResult> implements I
         }
         return false;
     }
+
+    @VisibleForTesting
+    public int syncingCount()
+    {
+        return syncingTasks.size();
+    }
 }

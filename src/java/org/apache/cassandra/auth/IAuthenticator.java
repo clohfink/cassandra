@@ -18,10 +18,9 @@
 package org.apache.cassandra.auth;
 
 import java.net.InetAddress;
+import java.security.cert.Certificate;
 import java.util.Map;
 import java.util.Set;
-
-import javax.security.cert.X509Certificate;
 
 import org.apache.cassandra.exceptions.AuthenticationException;
 import org.apache.cassandra.exceptions.ConfigurationException;
@@ -77,7 +76,7 @@ public interface IAuthenticator
      * @return org.apache.cassandra.auth.IAuthenticator.SaslNegotiator implementation
      * (see {@link org.apache.cassandra.auth.PasswordAuthenticator.PlainTextSaslAuthenticator})
      */
-    default SaslNegotiator newSaslNegotiator(InetAddress clientAddress, X509Certificate[] certificates)
+    default SaslNegotiator newSaslNegotiator(InetAddress clientAddress, Certificate[] certificates)
     {
         return newSaslNegotiator(clientAddress);
     }

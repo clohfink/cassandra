@@ -494,11 +494,11 @@ public abstract class AbstractFuture<V> implements Future<V>
     public String toString()
     {
         String description = description();
-        String state = state();
+        String state = stateName();
         return description == null ? state : (state + ' ' + description);
     }
 
-    private String state()
+    private String stateName()
     {
         Object result = this.result;
         if (isSuccess(result))

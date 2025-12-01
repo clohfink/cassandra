@@ -56,6 +56,9 @@
 #-XX:MaxTenuringThreshold=1
 #-XX:G1HeapRegionSize=16m
 
+# Disable biased locking as it does not benefit Cassandra.
+-XX:-UseBiasedLocking
+
 #
 ## Have the JVM do less remembered set work during STW, instead
 ## preferring concurrent GC. Reduces p99.9 latency.

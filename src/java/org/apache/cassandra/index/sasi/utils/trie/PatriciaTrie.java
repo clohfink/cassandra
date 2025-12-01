@@ -99,7 +99,7 @@ public class PatriciaTrie<K, V> extends AbstractPatriciaTrie<K, V> implements Se
     @Override
     public K lastKey()
     {
-        TrieEntry<K, V> entry = lastEntry();
+        TrieEntry<K, V> entry = lastTrieEntry();
         return entry != null ? entry.getKey() : null;
     }
 
@@ -414,7 +414,7 @@ public class PatriciaTrie<K, V> extends AbstractPatriciaTrie<K, V> implements Se
      * <p>This is implemented by going always to the right until
      * we encounter a valid uplink. That uplink is the last key.
      */
-    private TrieEntry<K, V> lastEntry()
+    private TrieEntry<K, V> lastTrieEntry()
     {
         return followRight(root.left);
     }
@@ -747,7 +747,7 @@ public class PatriciaTrie<K, V> extends AbstractPatriciaTrie<K, V> implements Se
        public K lastKey()
        {
            Map.Entry<K,V> e = toKey == null
-                ? lastEntry()
+                ? lastTrieEntry()
                 : toInclusive ? floorEntry(toKey) : lowerEntry(toKey);
 
            K last = e != null ? e.getKey() : null;
@@ -1019,7 +1019,7 @@ public class PatriciaTrie<K, V> extends AbstractPatriciaTrie<K, V> implements Se
         {
             fixup();
 
-            Map.Entry<K,V> e = toKey == null ? lastEntry() : lowerEntry(toKey);
+            Map.Entry<K,V> e = toKey == null ? lastTrieEntry() : lowerEntry(toKey);
             K last = e != null ? e.getKey() : null;
             if (e == null || !isPrefix(last, prefix))
                 throw new NoSuchElementException();

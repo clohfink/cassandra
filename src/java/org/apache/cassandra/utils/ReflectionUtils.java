@@ -25,6 +25,12 @@ import java.util.Map;
 import java.util.function.Predicate;
 
 public class ReflectionUtils {
+
+    public static Field getModifiersField() throws NoSuchFieldException
+    {
+        return getField(Field.class, "modifiers");
+    }
+
     public static Field getField(Class<?> clazz, String fieldName) throws NoSuchFieldException
     {
         // below code works before Java 12

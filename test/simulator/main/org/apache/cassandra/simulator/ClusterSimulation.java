@@ -86,10 +86,7 @@ import org.apache.cassandra.simulator.utils.ChanceRange;
 import org.apache.cassandra.simulator.utils.IntRange;
 import org.apache.cassandra.simulator.utils.KindOfSequence;
 import org.apache.cassandra.simulator.utils.LongRange;
-import org.apache.cassandra.utils.Clock;
-import org.apache.cassandra.utils.Closeable;
-import org.apache.cassandra.utils.FBUtilities;
-import org.apache.cassandra.utils.Throwables;
+import org.apache.cassandra.utils.*;
 import org.apache.cassandra.utils.concurrent.Ref;
 import org.apache.cassandra.utils.memory.BufferPool;
 import org.apache.cassandra.utils.memory.BufferPools;
@@ -790,7 +787,7 @@ public class ClusterSimulation<S extends Simulation> implements AutoCloseable
             Field field = Clock.Global.class.getDeclaredField("instance");
             field.setAccessible(true);
 
-            Field modifiersField = Field.class.getDeclaredField("modifiers");
+            Field modifiersField = ReflectionUtils.getModifiersField();
             modifiersField.setAccessible(true);
             modifiersField.setInt(field, field.getModifiers() & ~Modifier.FINAL);
 

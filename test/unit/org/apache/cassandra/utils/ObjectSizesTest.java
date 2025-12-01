@@ -22,26 +22,28 @@ import java.nio.ByteBuffer;
 
 import org.junit.Test;
 
-import org.github.jamm.MemoryLayoutSpecification;
 import org.github.jamm.MemoryMeter;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 public class ObjectSizesTest
 {
-    private static final MemoryMeter meter = new MemoryMeter().withGuessing(MemoryMeter.Guess.FALLBACK_UNSAFE).omitSharedBufferOverhead().ignoreKnownSingletons();
+    // We use INSTRUMENTATION as principal strategy as it is our reference strategy
+    private static final MemoryMeter meter = MemoryMeter.builder()
+                                                        .withGuessing(MemoryMeter.Guess.INSTRUMENTATION, MemoryMeter.Guess.UNSAFE)
+                                                        .build();
 
     private static final long EMPTY_HEAP_BUFFER_RAW_SIZE = meter.measure(ByteBuffer.allocate(0));
     private static final long EMPTY_OFFHEAP_BUFFER_RAW_SIZE = meter.measure(ByteBuffer.allocateDirect(0));
     private static final ByteBuffer[] EMPTY_BYTE_BUFFER_ARRAY = new ByteBuffer[0];
 
-    public static final long REF_ARRAY_0_SIZE = MemoryLayoutSpecification.sizeOfArray(0, MemoryLayoutSpecification.SPEC.getReferenceSize());
-    public static final long REF_ARRAY_1_SIZE = MemoryLayoutSpecification.sizeOfArray(1, MemoryLayoutSpecification.SPEC.getReferenceSize());
-    public static final long REF_ARRAY_2_SIZE = MemoryLayoutSpecification.sizeOfArray(2, MemoryLayoutSpecification.SPEC.getReferenceSize());
+    public static final long REF_ARRAY_0_SIZE = meter.measureArray(new Object[]{});
+    public static final long REF_ARRAY_1_SIZE = meter.measureArray(new Object[]{new Object()});
+    public static final long REF_ARRAY_2_SIZE = meter.measureArray(new Object[]{ new Object(), new Object()});
 
-    public static final long BYTE_ARRAY_0_SIZE = MemoryLayoutSpecification.sizeOfArray(0, 1);
-    public static final long BYTE_ARRAY_10_SIZE = MemoryLayoutSpecification.sizeOfArray(10, 1);
-    public static final long BYTE_ARRAY_10_EXCEPT_DATA_SIZE = MemoryLayoutSpecification.sizeOfArray(10, 1) - 10;
+    public static final long BYTE_ARRAY_0_SIZE = meter.measureArray(new byte[] {});
+    public static final long BYTE_ARRAY_10_SIZE = meter.measureArray(new byte[] {1, 2, 3, 4, 5, 6, 7, 8, 9, 10});
+    public static final long BYTE_ARRAY_10_EXCEPT_DATA_SIZE = BYTE_ARRAY_10_SIZE - 10;
 
     private ByteBuffer buf10 = ByteBuffer.allocate(10);
     private ByteBuffer prefixBuf8 = buf10.duplicate();
