@@ -25,7 +25,7 @@ import org.apache.cassandra.metrics.LatencyMetrics;
 
 import static org.apache.cassandra.metrics.CassandraMetricsRegistry.Metrics;
 
-public class S3Metrics extends LatencyMetrics
+public class ObjectStoreMetrics extends LatencyMetrics
 {
     public final Meter successes;
     public final Meter failures;
@@ -43,9 +43,9 @@ public class S3Metrics extends LatencyMetrics
 
     public final Timer headObjectLatency;
 
-    public S3Metrics()
+    public ObjectStoreMetrics()
     {
-        super("S3", null);
+        super("objectstore", null);
         successes = Metrics.meter(factory.createMetricName("Successes"));
         failures = Metrics.meter(factory.createMetricName("Failures"));
         accessDenied = Metrics.meter(factory.createMetricName("AccessDenied"));

@@ -54,7 +54,7 @@ public class Descriptor
     private static final Splitter filenameSplitter = Splitter.on(FILENAME_SEPARATOR);
 
     /** canonicalized path to the directory where SSTable resides */
-    public final File directory;
+    public File directory;
     /** version has the following format: <code>[a-z]+</code> */
     public final Version version;
     public final String ksname;
