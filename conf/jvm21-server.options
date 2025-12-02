@@ -36,7 +36,6 @@
 -XX:+UseZGC
 -XX:+ZGenerational
 -XX:-UseCompressedOops
--XX:+UseTransparentHugePages
 
 --add-exports java.base/jdk.internal.misc=ALL-UNNAMED
 --add-exports java.base/jdk.internal.ref=ALL-UNNAMED

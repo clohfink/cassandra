@@ -126,9 +126,7 @@ fi
 # To disable jemalloc preload at all, set CASSANDRA_LIBJEMALLOC=-
 #
 # Netflix JDK 21 or higher packgage brings its own internal netflix jemalloc package so standard cassandra detection fails to find it
-# We need to set explicit path to it
-
-CASSANDRA_LIBJEMALLOC=/apps/nflx-jemalloc/lib/libjemalloc.so.2
+# We need to set explicit path to it (Linux only)
 #
 find_library()
 {
@@ -139,6 +137,10 @@ find_library()
 }
 case "`uname -s`" in
     Linux)
+        # Set Netflix jemalloc path for Linux only if it exists
+        if [ -z "$CASSANDRA_LIBJEMALLOC" ] && [ -f /apps/nflx-jemalloc/lib/libjemalloc.so.2 ] ; then
+            CASSANDRA_LIBJEMALLOC=/apps/nflx-jemalloc/lib/libjemalloc.so.2
+        fi
         if [ -z $CASSANDRA_LIBJEMALLOC ] ; then
             dirs="/lib64 /lib /usr/lib64 /usr/lib "
             which ldconfig > /dev/null 2>&1
@@ -163,6 +165,8 @@ case "`uname -s`" in
                 export LD_PRELOAD=$CASSANDRA_LIBJEMALLOC
             fi
         fi
+        # Enable Transparent Huge Pages on Linux
+        export JVM_OPTS="$JVM_OPTS -XX:+UseTransparentHugePages"
     ;;
     Darwin)
         if [ -z $CASSANDRA_LIBJEMALLOC ] ; then
