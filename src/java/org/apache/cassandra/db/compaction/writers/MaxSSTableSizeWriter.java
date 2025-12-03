@@ -99,7 +99,7 @@ public class MaxSSTableSizeWriter extends CompactionAwareWriter
             currentTokenIndex++;
 
         boolean sizeLimitExceeded = sstableWriter.currentWriter().getEstimatedOnDiskBytesWritten() > maxSSTableSize;
-        boolean tokenBoundaryChanged = currentTokenIndex != previousTokenIndex;
+        boolean tokenBoundaryChanged = level != 0 && currentTokenIndex != previousTokenIndex;
 
         // Switch to a new SSTable if we've crossed a token boundary or exceeded size limit
         if (tokenBoundaryChanged || sizeLimitExceeded)

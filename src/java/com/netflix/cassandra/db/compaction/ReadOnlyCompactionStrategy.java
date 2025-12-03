@@ -263,7 +263,7 @@ public class ReadOnlyCompactionStrategy extends AbstractCompactionStrategy
                                                               LifecycleTransaction txn,
                                                               Set<SSTableReader> nonExpiredSSTables)
         {
-            return new MaxSSTableSizeWriter(cfs, directories, txn, nonExpiredSSTables, strategy.maxSizeMb * 1024L * 1024L, 0);
+            return new MaxSSTableSizeWriter(cfs, directories, txn, nonExpiredSSTables, strategy.maxSizeMb * 1024L * 1024L, 1);
         }
     }
 }
