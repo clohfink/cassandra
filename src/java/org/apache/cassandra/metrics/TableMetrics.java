@@ -354,6 +354,8 @@ public class TableMetrics
 
     public final Gauge<Long> unrepairedAge;
 
+    public final Gauge<Integer> gcGraceSeconds;
+
     public final Meter readRepairRequests;
     public final Meter shortReadProtectionRequests;
     
@@ -1022,6 +1024,8 @@ public class TableMetrics
              }
              return oldest == Long.MAX_VALUE ? 0 : Math.max(0, FBUtilities.nowInSeconds() - TimeUnit.MICROSECONDS.toSeconds(oldest));
         });
+
+        gcGraceSeconds = createTableGauge("GcGraceSeconds", () -> cfs.metadata().params.gcGraceSeconds);
 
         clientTombstoneWarnings = createTableMeter("ClientTombstoneWarnings", cfs.keyspace.metric.clientTombstoneWarnings);
         clientTombstoneAborts = createTableMeter("ClientTombstoneAborts", cfs.keyspace.metric.clientTombstoneAborts);

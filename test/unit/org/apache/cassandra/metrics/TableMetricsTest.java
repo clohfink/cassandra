@@ -236,6 +236,36 @@ public class TableMetricsTest
     }
 
     @Test
+    public void testGcGraceSecondsMetric()
+    {
+        String tableName = TABLE + "_gc_grace_test";
+        int initialGcGrace = 86400; // 1 day
+        int updatedGcGrace = 604800; // 7 days
+
+        // Create table with specific gc_grace_seconds
+        session.execute(String.format("DROP TABLE IF EXISTS %s.%s", KEYSPACE, tableName));
+        session.execute(String.format("CREATE TABLE %s.%s (id int PRIMARY KEY, val text) WITH gc_grace_seconds = %d;",
+                                      KEYSPACE, tableName, initialGcGrace));
+
+        ColumnFamilyStore cfs = ColumnFamilyStore.getIfExists(KEYSPACE, tableName);
+
+        // Verify initial gc_grace_seconds is reflected in the metric
+        assertEquals("Initial gc_grace_seconds should match",
+                     initialGcGrace, (int) cfs.metric.gcGraceSeconds.getValue());
+
+        // Alter the table to change gc_grace_seconds
+        session.execute(String.format("ALTER TABLE %s.%s WITH gc_grace_seconds = %d;",
+                                      KEYSPACE, tableName, updatedGcGrace));
+
+        // Verify the metric dynamically reflects the new value
+        assertEquals("Updated gc_grace_seconds should match",
+                     updatedGcGrace, (int) cfs.metric.gcGraceSeconds.getValue());
+
+        // Cleanup
+        session.execute(String.format("DROP TABLE IF EXISTS %s.%s", KEYSPACE, tableName));
+    }
+
+    @Test
     public void testMetricsCleanupOnDrop()
     {
         String tableName = TABLE + "_metrics_cleanup";
