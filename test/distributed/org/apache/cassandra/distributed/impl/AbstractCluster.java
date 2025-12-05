@@ -43,6 +43,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Future;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BiPredicate;
 import java.util.function.Consumer;
@@ -1091,6 +1092,7 @@ public abstract class AbstractCluster<I extends IInstance> implements ICluster<I
 
         instances.clear();
         instanceMap.clear();
+
         PathUtils.setDeletionListener(ignore -> {});
         // Make sure to only delete directory when threads are stopped
         if (Files.exists(root))
@@ -1098,6 +1100,12 @@ public abstract class AbstractCluster<I extends IInstance> implements ICluster<I
         Thread.setDefaultUncaughtExceptionHandler(previousHandler);
         previousHandler = null;
         checkAndResetUncaughtExceptions();
+
+        // Clean up any lingering threads with InstanceClassLoader
+        // This includes MetatronFilesystemCache and other daemon threads that may not have fully terminated
+        // Do this right before the leak check to minimize timing issues
+        cleanupLingeringThreads();
+
         //checkForThreadLeaks();
         //withThreadLeakCheck(futures);
     }
@@ -1112,6 +1120,69 @@ public abstract class AbstractCluster<I extends IInstance> implements ICluster<I
         });
         if (!drain.isEmpty())
             throw new ShutdownException(drain);
+    }
+
+    /**
+     * Clean up any lingering threads that still have InstanceClassLoader set as their context classloader.
+     * This includes MetatronFilesystemCache's internal ScheduledExecutorService (third-party JAR) and
+     * any daemon threads that are slow to shut down after Instance.shutdown() completes.
+     */
+    private void cleanupLingeringThreads()
+    {
+        try
+        {
+            Class<?> metatronClass = Class.forName("com.netflix.metatron.ipc.security.MetatronFilesystemCache");
+            Method getInstanceMethod = metatronClass.getMethod("getInstance");
+            Object instance = getInstanceMethod.invoke(null);
+
+            if (instance != null)
+            {
+                Field refreshPoolField = metatronClass.getDeclaredField("refreshPool");
+                refreshPoolField.setAccessible(true);
+                Object refreshPool = refreshPoolField.get(instance);
+
+                if (refreshPool instanceof ScheduledExecutorService)
+                {
+                    ScheduledExecutorService scheduler = (ScheduledExecutorService) refreshPool;
+                    // Use shutdownNow() immediately to interrupt any waiting threads
+                    scheduler.shutdownNow();
+                    scheduler.awaitTermination(2, TimeUnit.SECONDS);
+                    logger.debug("MetatronFilesystemCache scheduler shutdown complete");
+                }
+            }
+        }
+        catch (ClassNotFoundException e)
+        {
+            // MetatronFilesystemCache not present, which is fine
+            logger.debug("MetatronFilesystemCache not found, skipping shutdown");
+        }
+        catch (Throwable e)
+        {
+            logger.warn("Failed to shutdown MetatronFilesystemCache scheduler", e);
+        }
+
+        // Even after shutdown, daemon threads may still be alive for a moment
+        // Clear InstanceClassLoader from ALL threads that have it to prevent strong references to classloader
+        // and metaspace OOMs. EXCEPT: Do not clear from isolatedExecutor threads as they should have been
+        // shut down already via Instance.shutdown() and if they're still running, something is wrong.
+        Set<Thread> allThreads = Thread.getAllStackTraces().keySet();
+        for (Thread t : allThreads)
+        {
+            if (t.getContextClassLoader() instanceof InstanceClassLoader)
+            {
+                // Skip isolatedExecutor threads - they should have been shut down properly already
+                // If they're still running, that's a real leak we want to catch
+                if (t.getName() != null && t.getName().contains("isolatedExecutor"))
+                {
+                    logger.warn("isolatedExecutor thread still running after instance shutdown: {} (state: {})",
+                               t.getName(), t.getState());
+                    continue;
+                }
+
+                logger.debug("Clearing InstanceClassLoader from thread: {} (state: {})", t.getName(), t.getState());
+                t.setContextClassLoader(null);
+            }
+        }
     }
 
     private void checkForThreadLeaks()

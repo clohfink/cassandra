@@ -29,6 +29,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
@@ -49,6 +50,7 @@ import org.apache.cassandra.utils.Clock;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import org.apache.cassandra.concurrent.ExecutorPlus;
 import org.apache.cassandra.concurrent.ScheduledExecutorPlus;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.db.ColumnFamilyStore;
@@ -59,6 +61,7 @@ import org.apache.cassandra.gms.Gossiper;
 import org.apache.cassandra.schema.TableMetadata;
 import org.apache.cassandra.schema.Tables;
 import org.apache.cassandra.service.AutoRepairService;
+import org.apache.cassandra.utils.ExecutorUtils;
 import org.apache.cassandra.utils.FBUtilities;
 import org.apache.cassandra.repair.autorepair.AutoRepairUtils.RepairTurn;
 import org.apache.cassandra.utils.concurrent.Condition;
@@ -157,6 +160,18 @@ public class AutoRepair
             throw new ConfigurationException("Auto-repair is disabled for repair type " + repairType);
         }
         repairExecutors.get(repairType).submit(() -> repair(repairType));
+    }
+
+    /**
+     * Shutdown all repair executors. This should be called during cluster shutdown
+     * to prevent thread leaks in tests.
+     */
+    public void shutdownAndWait(long timeout, TimeUnit unit) throws InterruptedException, TimeoutException
+    {
+        List<ExecutorPlus> allExecutors = new ArrayList<>();
+        allExecutors.addAll(repairExecutors.values());
+        allExecutors.addAll(repairRunnableExecutors.values());
+        ExecutorUtils.shutdownNowAndWait(timeout, unit, allExecutors);
     }
 
     /**

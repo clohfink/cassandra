@@ -113,6 +113,7 @@ import org.apache.cassandra.net.Message;
 import org.apache.cassandra.net.MessagingService;
 import org.apache.cassandra.net.NoPayload;
 import org.apache.cassandra.net.Verb;
+import org.apache.cassandra.repair.autorepair.AutoRepair;
 import org.apache.cassandra.schema.MigrationCoordinator;
 import org.apache.cassandra.schema.Schema;
 import org.apache.cassandra.schema.SchemaConstants;
@@ -903,6 +904,7 @@ public class Instance extends IsolatedExecutor implements IInvokableInstance
                                 () -> SSTableReader.shutdownBlocking(1L, MINUTES),
                                 () -> shutdownAndWait(Collections.singletonList(ActiveRepairService.repairCommandExecutor())),
                                 () -> ActiveRepairService.instance.shutdownNowAndWait(1L, MINUTES),
+                                () -> AutoRepair.instance.shutdownAndWait(1L, MINUTES),
                                 () -> SnapshotManager.shutdownAndWait(1L, MINUTES)
             );
 
@@ -910,6 +912,17 @@ public class Instance extends IsolatedExecutor implements IInvokableInstance
             error = parallelRun(error, executor,
                                 // can only shutdown message once, so if the test shutsdown an instance, then ignore the failure
                                 (IgnoreThrowingRunnable) () -> MessagingService.instance().shutdown(1L, MINUTES, false, config.has(NETWORK))
+            );
+            // Shutdown the socketFactory to clean up Netty event loop threads
+            error = parallelRun(error, executor,
+                                () -> {
+                                    MessagingService.instance().socketFactory.shutdownNow();
+                                    try {
+                                        MessagingService.instance().socketFactory.awaitTerminationUntil(System.nanoTime() + MINUTES.toNanos(1L));
+                                    } catch (InterruptedException | TimeoutException e) {
+                                        // Log but don't fail - this is best-effort cleanup
+                                    }
+                                }
             );
             error = parallelRun(error, executor,
                                 () -> { if (config.has(NETWORK)) { try { GlobalEventExecutor.INSTANCE.awaitInactivity(1L, MINUTES); } catch (IllegalStateException ignore) {} } },

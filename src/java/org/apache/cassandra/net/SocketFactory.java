@@ -284,7 +284,7 @@ public final class SocketFactory
         synchronousWorkExecutor.shutdownNow();
     }
 
-    void awaitTerminationUntil(long deadlineNanos) throws InterruptedException, TimeoutException
+    public void awaitTerminationUntil(long deadlineNanos) throws InterruptedException, TimeoutException
     {
         List<ExecutorService> groups = ImmutableList.of(acceptGroup, defaultGroup, outboundStreamingGroup, synchronousWorkExecutor);
         ExecutorUtils.awaitTerminationUntil(deadlineNanos, groups);

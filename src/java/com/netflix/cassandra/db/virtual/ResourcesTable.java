@@ -22,7 +22,6 @@ import java.lang.management.ManagementFactory;
 import java.lang.management.OperatingSystemMXBean;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
 import org.slf4j.Logger;
@@ -31,7 +30,7 @@ import org.slf4j.LoggerFactory;
 import com.codahale.metrics.Histogram;
 import com.codahale.metrics.SlidingWindowReservoir;
 import com.netflix.cassandra.metrics.ResourcesMetrics;
-import org.apache.cassandra.concurrent.ExecutorFactory;
+import org.apache.cassandra.concurrent.ScheduledExecutors;
 import org.apache.cassandra.db.marshal.DoubleType;
 import org.apache.cassandra.db.marshal.UTF8Type;
 import org.apache.cassandra.db.virtual.AbstractVirtualTable;
@@ -44,8 +43,6 @@ public class ResourcesTable extends AbstractVirtualTable
     private static final Logger logger = LoggerFactory.getLogger(ResourcesTable.class);
     private static final String NAME = "type";
     private static final String VALUE = "value";
-
-    private static final ScheduledExecutorService scheduler = ExecutorFactory.Global.executorFactory().scheduled("ResourceUtilMonitor");
 
     public static final String TABLE_NAME = "resource_util";
     private final CpuUsageMonitor monitor;
@@ -128,7 +125,7 @@ public class ResourcesTable extends AbstractVirtualTable
         public void startMonitoring()
         {
             // Every second, sample the system load average, update the histogram, and update the average.
-            scheduler.scheduleWithFixedDelay(() -> {
+            ScheduledExecutors.optionalTasks.scheduleWithFixedDelay(() -> {
                 double cpuLoad = osBean.getSystemLoadAverage();
                 int cores = Runtime.getRuntime().availableProcessors();
                 // Normalize the load average by dividing by the number of CPU cores.
@@ -143,11 +140,6 @@ public class ResourcesTable extends AbstractVirtualTable
         public double getAverageCpuUsage()
         {
             return averageCpuUsage;
-        }
-
-        public void stopMonitoring()
-        {
-            scheduler.shutdown();
         }
     }
 
@@ -164,7 +156,7 @@ public class ResourcesTable extends AbstractVirtualTable
 
         public void startMonitoring()
         {
-            scheduler.scheduleWithFixedDelay(() -> {
+            ScheduledExecutors.optionalTasks.scheduleWithFixedDelay(() -> {
                 ResourcesMetrics.SchedStatMetrics currentMeasure = ResourcesMetrics.schedStatReader.getMetrics();
                 ResourcesMetrics.SchedStatMetrics diff = new ResourcesMetrics.SchedStatMetrics(
                 currentMeasure.coreAveragedtotalDelay() - previousMeasure.coreAveragedtotalDelay(),
