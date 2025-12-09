@@ -37,6 +37,7 @@ import com.google.common.annotations.VisibleForTesting;
 
 import org.apache.commons.lang3.ArrayUtils;
 
+import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.db.ColumnFamilyStore;
 import org.apache.cassandra.db.Keyspace;
 import org.apache.cassandra.db.memtable.Memtable;
@@ -351,6 +352,33 @@ public class TableMetrics
     public static final Gauge<Long> globalBytesPendingRepair = 
         Metrics.register(GLOBAL_FACTORY.createMetricName("BytesPendingRepair"),
                          () -> totalNonSystemTablesSize(SSTableReader::isPendingRepair, INCREMENTAL_REPAIR_ENABLED).left);
+
+    /**
+     * Returns the minimum gc_grace_seconds across all non-system tables where gc_grace_seconds >= max_hint_window.
+     * This is useful for monitoring tables that have gc_grace configured appropriately for hinted handoff.
+     * Returns -1 if no tables meet the criteria.
+     */
+    public static final Gauge<Integer> globalMinGcGraceAboveHintWindow = 
+        Metrics.register(GLOBAL_FACTORY.createMetricName("MinGcGraceAboveHintWindow"),
+                         () -> {
+                             int maxHintWindowSeconds = DatabaseDescriptor.getMaxHintWindow() / 1000;
+                             int minGcGrace = Integer.MAX_VALUE;
+                             for (String keyspaceName : Schema.instance.distributedKeyspaces().names())
+                             {
+                                 Keyspace keyspace = Schema.instance.getKeyspaceInstance(keyspaceName);
+                                 if (keyspace == null)
+                                     continue;
+                                 for (ColumnFamilyStore cfs : keyspace.getColumnFamilyStores())
+                                 {
+                                     int gcGrace = cfs.metadata().params.gcGraceSeconds;
+                                     if (gcGrace >= maxHintWindowSeconds && gcGrace < minGcGrace)
+                                     {
+                                         minGcGrace = gcGrace;
+                                     }
+                                 }
+                             }
+                             return minGcGrace == Integer.MAX_VALUE ? -1 : minGcGrace;
+                         });
 
     public final Gauge<Long> unrepairedAge;
 

@@ -36,6 +36,7 @@ import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
 import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
+import com.google.common.cache.RemovalListener;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
@@ -238,6 +239,8 @@ public class ActiveRepairService implements IEndpointStateChangeSubscriber, IFai
         repairs = CacheBuilder.newBuilder()
                               .expireAfterWrite(duration.quantity(), duration.unit())
                               .maximumSize(numElements)
+                              .removalListener((RemovalListener<TimeUUID, CoordinatorState>) notification -> 
+                                  RepairMetrics.unregisterRepairElapsedMetric(notification.getKey()))
                               .build();
         participates = CacheBuilder.newBuilder()
                                    .expireAfterWrite(duration.quantity(), duration.unit())
@@ -1129,6 +1132,7 @@ public class ActiveRepairService implements IEndpointStateChangeSubscriber, IFai
     public void register(CoordinatorState state)
     {
         repairs.put(state.id, state);
+        RepairMetrics.registerRepairElapsedMetric(state);
     }
 
     public boolean register(ParticipateState state)

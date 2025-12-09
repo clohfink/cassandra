@@ -18,7 +18,16 @@
 
 package org.apache.cassandra.metrics;
 
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
+
 import com.codahale.metrics.Counter;
+import com.codahale.metrics.Gauge;
+
+import org.apache.cassandra.repair.state.CoordinatorState;
+import org.apache.cassandra.utils.Clock;
+import org.apache.cassandra.utils.TimeUUID;
 
 import static org.apache.cassandra.metrics.CassandraMetricsRegistry.Metrics;
 
@@ -26,6 +35,45 @@ public class RepairMetrics
 {
     public static final String TYPE_NAME = "Repair";
     public static final Counter previewFailures = Metrics.counter(DefaultNameFactory.createMetricName(TYPE_NAME, "PreviewFailures", null));
+
+    private static final Map<TimeUUID, CassandraMetricsRegistry.MetricName> registeredRepairMetrics = new ConcurrentHashMap<>();
+
+    /**
+     * Register a per-repair elapsed time metric for a specific repair session.
+     * This should be called when a repair starts.
+     *
+     * @param state the coordinator state for the repair
+     */
+    public static void registerRepairElapsedMetric(CoordinatorState state)
+    {
+        String scope = String.format("cmd-%d-keyspace-%s", state.cmd, state.keyspace);
+        CassandraMetricsRegistry.MetricName metricName = DefaultNameFactory.createMetricName(TYPE_NAME, "RepairElapsedSec", scope);
+
+        Gauge<Integer> gauge = () -> {
+            if (state.isComplete())
+            {
+                return 0;
+            }
+            return (int) TimeUnit.MILLISECONDS.toSeconds(Clock.Global.currentTimeMillis() - state.getInitializedAtMillis());
+        };
+
+        Metrics.register(metricName, gauge);
+        registeredRepairMetrics.put(state.id, metricName);
+    }
+
+    /**
+     * Unregister the per-repair elapsed time metric when a repair completes.
+     *
+     * @param repairId the repair session ID
+     */
+    public static void unregisterRepairElapsedMetric(TimeUUID repairId)
+    {
+        CassandraMetricsRegistry.MetricName metricName = registeredRepairMetrics.remove(repairId);
+        if (metricName != null)
+        {
+            Metrics.remove(metricName);
+        }
+    }
 
     public static void init()
     {
