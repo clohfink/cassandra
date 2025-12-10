@@ -50,4 +50,18 @@ public interface HintsServiceMBean
      * @return a list of endpoints with relevant hint information - total number of files, newest and oldest timestamps.
      */
     List<Map<String, String>> getPendingHints();
+
+    /**
+     * Returns hint delivery metrics per endpoint.
+     *
+     * @return a list of maps containing endpoint and their hint delivery statistics
+     */
+    List<Map<String, String>> getHintDeliveryMetrics();
+
+    /**
+     * Returns the current hints throttle rate in KiB/sec.
+     *
+     * @return current throttle rate in KiB/sec
+     */
+    double getCurrentThrottleInKiB();
 }

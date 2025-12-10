@@ -18,6 +18,7 @@
 package org.apache.cassandra.hints;
 
 import java.net.UnknownHostException;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
@@ -30,13 +31,18 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
+import java.util.LinkedHashMap;
 import java.util.stream.Collectors;
 
+import com.codahale.metrics.Gauge;
+import com.codahale.metrics.Meter;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableMap;
 import org.apache.cassandra.db.Keyspace;
 import org.apache.cassandra.io.util.File;
 import org.apache.cassandra.locator.ReplicaLayout;
+import org.apache.cassandra.metrics.CassandraMetricsRegistry;
+import org.apache.cassandra.metrics.DefaultNameFactory;
 import org.apache.cassandra.utils.Clock;
 import org.apache.cassandra.utils.concurrent.Future;
 import org.slf4j.Logger;
@@ -94,6 +100,9 @@ public final class HintsService implements HintsServiceMBean
     private final ScheduledFuture triggerFlushingFuture;
     private volatile ScheduledFuture triggerDispatchFuture;
     private final ScheduledFuture triggerCleanupFuture;
+    private volatile ScheduledFuture triggerDynamicThrottleFuture;
+
+    private final DynamicHintsThrottleManager dynamicThrottleManager;
 
     public final HintedHandoffMetrics metrics;
 
@@ -130,7 +139,20 @@ public final class HintsService implements HintsServiceMBean
         HintsCleanupTrigger cleanupTrigger = new HintsCleanupTrigger(catalog, dispatchExecutor);
         triggerCleanupFuture = ScheduledExecutors.optionalTasks.scheduleWithFixedDelay(cleanupTrigger, 1, 1, TimeUnit.HOURS);
 
+        dynamicThrottleManager = new DynamicHintsThrottleManager(catalog, sharedRateLimiter);
+
         metrics = new HintedHandoffMetrics();
+
+        // Register gauge for current throttle rate
+        CassandraMetricsRegistry.Metrics.register(
+            new DefaultNameFactory("HintsService").createMetricName("CurrentThrottleInKiB"),
+            new Gauge<Double>()
+            {
+                public Double getValue()
+                {
+                    return getCurrentThrottleInKiB();
+                }
+            });
     }
 
     private static ImmutableMap<String, Object> createDescriptorParams()
@@ -238,6 +260,8 @@ public final class HintsService implements HintsServiceMBean
         // triggering hint dispatch is now very cheap, so we can do it more often - every 10 seconds vs. every 10 minutes,
         // previously; this reduces mean time to delivery, and positively affects batchlog delivery latencies, too
         triggerDispatchFuture = ScheduledExecutors.scheduledTasks.scheduleWithFixedDelay(trigger, pause, pause, TimeUnit.SECONDS);
+
+        startDynamicThrottleIfEnabled();
     }
 
     public void pauseDispatch()
@@ -289,6 +313,9 @@ public final class HintsService implements HintsServiceMBean
 
         triggerCleanupFuture.cancel(false);
 
+        if (triggerDynamicThrottleFuture != null)
+            triggerDynamicThrottleFuture.cancel(false);
+
         writeExecutor.flushBufferPool(bufferPool).get();
         writeExecutor.closeAllWriters().get();
 
@@ -322,6 +349,95 @@ public final class HintsService implements HintsServiceMBean
         return getPendingHintsInfo().stream()
                                     .map(PendingHintsInfo::asMap)
                                     .collect(Collectors.toList());
+    }
+
+    /**
+     * Returns hint delivery metrics per endpoint using existing metrics.
+     *
+     * @return a list of maps containing endpoint and their hint delivery statistics
+     */
+    @Override
+    public List<Map<String, String>> getHintDeliveryMetrics()
+    {
+        List<Map<String, String>> metrics = new ArrayList<>();
+
+        catalog.stores().forEach(store -> {
+            InetAddressAndPort endpoint = store.address();
+            if (endpoint == null)
+                return;
+
+            Map<String, String> endpointMetrics = new LinkedHashMap<>();
+            endpointMetrics.put("endpoint", endpoint.toString());
+            
+            String metricName = endpoint.getHostAddress(false);
+
+            Meter successMeter = CassandraMetricsRegistry.Metrics.getMeters()
+                    .get("org.apache.cassandra.metrics.HintsService.HintsSucceeded-" + metricName);
+            Meter failedMeter = CassandraMetricsRegistry.Metrics.getMeters()
+                    .get("org.apache.cassandra.metrics.HintsService.HintsFailed-" + metricName);
+            Meter timedOutMeter = CassandraMetricsRegistry.Metrics.getMeters()
+                    .get("org.apache.cassandra.metrics.HintsService.HintsTimedOut-" + metricName);
+            Meter throughputMeter = CassandraMetricsRegistry.Metrics.getMeters()
+                    .get("org.apache.cassandra.metrics.HintsService.HintsThroughputBytes-" + metricName);
+
+            if (successMeter != null)
+            {
+                endpointMetrics.put("succeeded", String.valueOf(successMeter.getCount()));
+                endpointMetrics.put("success_rate", String.format("%.2f", successMeter.getOneMinuteRate()));
+            }
+            else
+            {
+                endpointMetrics.put("succeeded", "0");
+                endpointMetrics.put("success_rate", "0.00");
+            }
+
+            if (failedMeter != null)
+            {
+                endpointMetrics.put("failed", String.valueOf(failedMeter.getCount()));
+            }
+            else
+            {
+                endpointMetrics.put("failed", "0");
+            }
+
+            if (timedOutMeter != null)
+            {
+                endpointMetrics.put("timedout", String.valueOf(timedOutMeter.getCount()));
+            }
+            else
+            {
+                endpointMetrics.put("timedout", "0");
+            }
+
+            if (throughputMeter != null)
+            {
+                endpointMetrics.put("throughput_bytes", String.valueOf(throughputMeter.getCount()));
+                endpointMetrics.put("throughput_rate", String.format("%.2f", throughputMeter.getOneMinuteRate()));
+            }
+            else
+            {
+                endpointMetrics.put("throughput_bytes", "0");
+                endpointMetrics.put("throughput_rate", "0.00");
+            }
+
+            metrics.add(endpointMetrics);
+        });
+
+        return metrics;
+    }
+
+    /**
+     * Returns the current hints throttle rate in KiB/sec.
+     *
+     * @return current throttle rate in KiB/sec
+     */
+    @Override
+    public double getCurrentThrottleInKiB()
+    {
+        RateLimiter limiter = sharedRateLimiter.get();
+        if (limiter == null)
+            return 0.0;
+        return limiter.getRate() / 1024.0;
     }
 
     /**
@@ -524,8 +640,45 @@ public final class HintsService implements HintsServiceMBean
         sharedRateLimiter.set(RateLimiter.create(throttleInBytes));
     }
 
+    private synchronized void startDynamicThrottleIfEnabled()
+    {
+        if (DatabaseDescriptor.getHintedHandoffDynamicThrottleEnabled())
+        {
+            if (triggerDynamicThrottleFuture != null)
+            {
+                triggerDynamicThrottleFuture.cancel(false);
+            }
+
+            int throttleAdjustmentInterval = DatabaseDescriptor.getHintedHandoffThrottleAdjustmentIntervalInSec();
+            triggerDynamicThrottleFuture = ScheduledExecutors.optionalTasks.scheduleWithFixedDelay(() -> dynamicThrottleManager.updateThrottle(),
+                                                                                                   throttleAdjustmentInterval,
+                                                                                                   throttleAdjustmentInterval,
+                                                                                                   TimeUnit.SECONDS);
+            logger.info("Started dynamic hints throttle with adjustment interval of {} seconds", throttleAdjustmentInterval);
+        }
+    }
+
+    private synchronized void stopDynamicThrottle()
+    {
+        if (triggerDynamicThrottleFuture != null)
+        {
+            triggerDynamicThrottleFuture.cancel(false);
+            triggerDynamicThrottleFuture = null;
+            logger.info("Stopped dynamic hints throttle");
+        }
+    }
+
     public void updateConfiguration()
     {
         updateRateLimiter();
+
+        if (DatabaseDescriptor.getHintedHandoffDynamicThrottleEnabled())
+        {
+            startDynamicThrottleIfEnabled();
+        }
+        else
+        {
+            stopDynamicThrottle();
+        }
     }
 }

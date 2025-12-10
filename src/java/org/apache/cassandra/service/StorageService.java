@@ -6639,10 +6639,31 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
         }
     }
 
+    public int getHintedHandoffThrottleInKB()
+    {
+        return DatabaseDescriptor.getHintedHandoffThrottleInKiB();
+    }
+
     public void setHintedHandoffThrottleInKB(int throttleInKB)
     {
         DatabaseDescriptor.setHintedHandoffThrottleInKiB(throttleInKB);
         logger.info("updated hinted_handoff_throttle to {} KiB", throttleInKB);
+    }
+
+    public int getHintedHandoffMaxThrottleInKB()
+    {
+        return DatabaseDescriptor.getHintedHandoffMaxThrottleInKiB();
+    }
+
+    public boolean getHintedHandoffDynamicThrottleEnabled()
+    {
+        return DatabaseDescriptor.getHintedHandoffDynamicThrottleEnabled();
+    }
+
+    public void setHintedHandoffDynamicThrottleEnabled(boolean enabled)
+    {
+        DatabaseDescriptor.setHintedHandoffDynamicThrottleEnabled(enabled);
+        logger.info("updated hinted_handoff_dynamic_throttle_enabled to {}", enabled);
     }
 
     public boolean getTransferHintsOnDecommission()

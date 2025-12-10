@@ -136,12 +136,17 @@ public class HintsServiceMetricsTest extends TestBaseImpl
             assertThat(countEndpointDelays(node1, node3)).isGreaterThan(0).isLessThanOrEqualTo(numGlobalDelays);
             assertThat(countEndpointDelays(node1, node2) + countEndpointDelays(node1, node3)).isGreaterThanOrEqualTo(numGlobalDelays);
 
+            // verify throughput metrics - should have some bytes transferred for successful hints
+            long throughputBytes = countHintsThroughputBytes(node1);
+            assertThat(throughputBytes).isGreaterThan(0);
+
             // verify that the metrics for the not-coordinator nodes are zero
             for (IInvokableInstance node : Arrays.asList(node2, node3))
             {
                 assertThat(countHintsSucceeded(node)).isEqualTo(0);
                 assertThat(countHintsFailed(node)).isEqualTo(0);
                 assertThat(countHintsTimedOut(node)).isEqualTo(0);
+                assertThat(countHintsThroughputBytes(node)).isEqualTo(0);
                 assertThat(countGlobalDelays(node)).isEqualTo(0);
                 cluster.forEach(target -> assertThat(countEndpointDelays(node, target)).isEqualTo(0));
             }
@@ -180,16 +185,21 @@ public class HintsServiceMetricsTest extends TestBaseImpl
         return node.callOnInstance(() -> HintsServiceMetrics.hintsTimedOut.getCount());
     }
 
+    @SuppressWarnings("Convert2MethodRef")
+    private static Long countHintsThroughputBytes(IInvokableInstance node)
+    {
+        return node.callOnInstance(() -> HintsServiceMetrics.hintsThroughputBytes.getCount());
+    }
+
     private static Long countGlobalDelays(IInvokableInstance node)
     {
-        return getHistogramCount(node, "org.apache.cassandra.metrics.HintsService.Hint_delays");
+        return getHistogramCount(node, "org.apache.cassandra.metrics.HintsService.HintDelays");
     }
 
     private static Long countEndpointDelays(IInvokableInstance node, IInvokableInstance target)
     {
-        return getHistogramCount(node, String.format("org.apache.cassandra.metrics.HintsService.Hint_delays-%s.%d",
-                                                     target.broadcastAddress().getAddress(),
-                                                     target.broadcastAddress().getPort()));
+        return getHistogramCount(node, String.format("org.apache.cassandra.metrics.HintsService.HintDelays-%s",
+                                                     target.broadcastAddress().getAddress().getHostAddress()));
     }
 
     private static long getHistogramCount(IInvokableInstance node, String name)

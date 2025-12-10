@@ -157,6 +157,7 @@ public class NodeTool
                 GetTimeout.class,
                 GetTraceProbability.class,
                 GossipInfo.class,
+                HintStats.class,
                 Import.class,
                 IncrementalRepairStats.class,
                 Info.class,

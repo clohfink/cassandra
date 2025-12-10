@@ -143,16 +143,20 @@ final class HintsDispatcher implements AutoCloseable
         if (action == Action.ABORT)
             return action;
 
-        long success = 0, failures = 0, timeouts = 0;
+        long success = 0, failures = 0, timeouts = 0, bytesSucceeded = 0;
         for (Callback cb : callbacks)
         {
             Callback.Outcome outcome = cb.await();
-            if (outcome == Callback.Outcome.SUCCESS) success++;
+            if (outcome == Callback.Outcome.SUCCESS)
+            {
+                success++;
+                bytesSucceeded += cb.hintSizeBytes;
+            }
             else if (outcome == Callback.Outcome.FAILURE) failures++;
             else if (outcome == Callback.Outcome.TIMEOUT) timeouts++;
         }
 
-        updateMetrics(success, failures, timeouts);
+        updateMetrics(success, failures, timeouts, bytesSucceeded);
 
         if (failures > 0 || timeouts > 0)
         {
@@ -166,11 +170,14 @@ final class HintsDispatcher implements AutoCloseable
         }
     }
 
-    private void updateMetrics(long success, long failures, long timeouts)
+    private void updateMetrics(long success, long failures, long timeouts, long bytesSucceeded)
     {
-        HintsServiceMetrics.hintsSucceeded.mark(success);
-        HintsServiceMetrics.hintsFailed.mark(failures);
-        HintsServiceMetrics.hintsTimedOut.mark(timeouts);
+        if (success > 0)
+            HintsServiceMetrics.updateSuccessMetrics(address, success, bytesSucceeded);
+        if (failures > 0)
+            HintsServiceMetrics.updateFailureMetrics(address, failures);
+        if (timeouts > 0)
+            HintsServiceMetrics.updateTimeoutMetrics(address, timeouts);
     }
 
     /*
@@ -193,7 +200,8 @@ final class HintsDispatcher implements AutoCloseable
 
     private Callback sendHint(Hint hint)
     {
-        Callback callback = new Callback(hint.creationTime);
+        int hintSize = (int) Hint.serializer.serializedSize(hint, messagingVersion);
+        Callback callback = new Callback(hint.creationTime, hintSize);
         Message<?> message = Message.out(HINT_REQ, new HintMessage(hostId, hint));
         MessagingService.instance().sendWithCallback(message, address, callback);
         return callback;
@@ -206,7 +214,8 @@ final class HintsDispatcher implements AutoCloseable
     private Callback sendEncodedHint(ByteBuffer hint)
     {
         HintMessage.Encoded message = new HintMessage.Encoded(hostId, hint, messagingVersion);
-        Callback callback = new Callback(message.getHintCreationTime());
+        int hintSize = hint.remaining();
+        Callback callback = new Callback(message.getHintCreationTime(), hintSize);
         MessagingService.instance().sendWithCallback(Message.out(HINT_REQ, message), address, callback);
         return callback;
     }
@@ -219,10 +228,12 @@ final class HintsDispatcher implements AutoCloseable
         private final Condition condition = newOneTimeCondition();
         private volatile Outcome outcome;
         private final long hintCreationNanoTime;
+        final int hintSizeBytes;
 
-        private Callback(long hintCreationTimeMillisSinceEpoch)
+        private Callback(long hintCreationTimeMillisSinceEpoch, int hintSizeBytes)
         {
             this.hintCreationNanoTime = approxTime.translate().fromMillisSinceEpoch(hintCreationTimeMillisSinceEpoch);
+            this.hintSizeBytes = hintSizeBytes;
         }
 
         Outcome await()

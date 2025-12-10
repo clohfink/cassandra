@@ -537,6 +537,14 @@ public class DatabaseDescriptor
         else if (conf.repair_session_space.toMebibytes() > (int) (Runtime.getRuntime().maxMemory() / (4 * 1048576)))
             logger.warn("A repair_session_space of " + conf.repair_session_space+ " mebibytes is likely to cause heap pressure");
 
+        // Auto-calculate max throttle as 10x base throttle if not explicitly set
+        if (conf.hinted_handoff_max_throttle.toKibibytes() == 0)
+        {
+            int baseThrottleKiB = conf.hinted_handoff_throttle.toKibibytes();
+            conf.hinted_handoff_max_throttle = new DataStorageSpec.IntKibibytesBound(baseThrottleKiB * 10);
+            logger.info("Dynamic hints max throttle auto-calculated as 10x base throttle: {}KiB", conf.hinted_handoff_max_throttle.toKibibytes());
+        }
+
         checkForLowestAcceptedTimeouts(conf);
 
         long valueInBytes = conf.native_transport_max_frame_size.toBytes();
@@ -3310,6 +3318,50 @@ public class DatabaseDescriptor
     public static void setHintedHandoffThrottleInKiB(int throttleInKiB)
     {
         conf.hinted_handoff_throttle = new DataStorageSpec.IntKibibytesBound(throttleInKiB);
+        HintsService.instance.updateConfiguration();
+    }
+
+    public static boolean getHintedHandoffDynamicThrottleEnabled()
+    {
+        return conf.hinted_handoff_dynamic_throttle_enabled;
+    }
+
+    public static void setHintedHandoffDynamicThrottleEnabled(boolean enabled)
+    {
+        conf.hinted_handoff_dynamic_throttle_enabled = enabled;
+        HintsService.instance.updateConfiguration();
+    }
+
+    public static int getHintedHandoffMaxThrottleInKiB()
+    {
+        return conf.hinted_handoff_max_throttle.toKibibytes();
+    }
+
+    public static void setHintedHandoffMaxThrottleInKiB(int throttleInKiB)
+    {
+        conf.hinted_handoff_max_throttle = new DataStorageSpec.IntKibibytesBound(throttleInKiB);
+        HintsService.instance.updateConfiguration();
+    }
+
+    public static int getHintedHandoffThrottleBacklogThreshold()
+    {
+        return conf.hinted_handoff_throttle_backlog_threshold;
+    }
+
+    public static void setHintedHandoffThrottleBacklogThreshold(int threshold)
+    {
+        conf.hinted_handoff_throttle_backlog_threshold = threshold;
+        HintsService.instance.updateConfiguration();
+    }
+
+    public static int getHintedHandoffThrottleAdjustmentIntervalInSec()
+    {
+        return conf.hinted_handoff_throttle_adjustment_interval_in_sec;
+    }
+
+    public static void setHintedHandoffThrottleAdjustmentIntervalInSec(int intervalInSec)
+    {
+        conf.hinted_handoff_throttle_adjustment_interval_in_sec = intervalInSec;
         HintsService.instance.updateConfiguration();
     }
 

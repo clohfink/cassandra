@@ -42,13 +42,36 @@ public final class HintsServiceMetrics
     public static final Meter hintsFailed    = Metrics.meter(factory.createMetricName("HintsFailed"));
     public static final Meter hintsTimedOut  = Metrics.meter(factory.createMetricName("HintsTimedOut"));
 
+    /** Meter tracking throughput (bytes) of successfully delivered hints */
+    public static final Meter hintsThroughputBytes = Metrics.meter(factory.createMetricName("HintsThroughputBytes"));
+
     /** Histogram of all hint delivery delays */
-    private static final Histogram globalDelayHistogram = Metrics.histogram(factory.createMetricName("Hint_delays"), false);
+    private static final Histogram globalDelayHistogram = Metrics.histogram(factory.createMetricName("HintDelays"), false);
 
     /** Histograms per-endpoint of hint delivery delays, This is not a cache. */
     private static final LoadingCache<InetAddressAndPort, Histogram> delayByEndpoint = Caffeine.newBuilder()
                                                                                                .executor(ImmediateExecutor.INSTANCE)
-                                                                                               .build(address -> Metrics.histogram(factory.createMetricName("Hint_delays-"+address.toString().replace(':', '.')), false));
+                                                                                               .build(address -> Metrics.histogram(factory.createMetricName("HintDelays-"+address.getHostAddress(false)), false));
+
+    /** Meters per-endpoint for successful hint deliveries. This is not a cache. */
+    private static final LoadingCache<InetAddressAndPort, Meter> succeededByEndpoint = Caffeine.newBuilder()
+                                                                                                .executor(ImmediateExecutor.INSTANCE)
+                                                                                                .build(address -> Metrics.meter(factory.createMetricName("HintsSucceeded-"+address.getHostAddress(false))));
+
+    /** Meters per-endpoint for failed hint deliveries. This is not a cache. */
+    private static final LoadingCache<InetAddressAndPort, Meter> failedByEndpoint = Caffeine.newBuilder()
+                                                                                            .executor(ImmediateExecutor.INSTANCE)
+                                                                                            .build(address -> Metrics.meter(factory.createMetricName("HintsFailed-"+address.getHostAddress(false))));
+
+    /** Meters per-endpoint for timed out hint deliveries. This is not a cache. */
+    private static final LoadingCache<InetAddressAndPort, Meter> timedOutByEndpoint = Caffeine.newBuilder()
+                                                                                              .executor(ImmediateExecutor.INSTANCE)
+                                                                                              .build(address -> Metrics.meter(factory.createMetricName("HintsTimedOut-"+address.getHostAddress(false))));
+
+    /** Meters per-endpoint for hint delivery throughput in bytes. This is not a cache. */
+    private static final LoadingCache<InetAddressAndPort, Meter> throughputBytesByEndpoint = Caffeine.newBuilder()
+                                                                                                      .executor(ImmediateExecutor.INSTANCE)
+                                                                                                      .build(address -> Metrics.meter(factory.createMetricName("HintsThroughputBytes-"+address.getHostAddress(false))));
 
     public static void updateDelayMetrics(InetAddressAndPort endpoint, long delay)
     {
@@ -60,5 +83,26 @@ public final class HintsServiceMetrics
 
         globalDelayHistogram.update(delay);
         delayByEndpoint.get(endpoint).update(delay);
+    }
+
+    public static void updateSuccessMetrics(InetAddressAndPort endpoint, long count, long bytes)
+    {
+        hintsSucceeded.mark(count);
+        succeededByEndpoint.get(endpoint).mark(count);
+
+        hintsThroughputBytes.mark(bytes);
+        throughputBytesByEndpoint.get(endpoint).mark(bytes);
+    }
+
+    public static void updateFailureMetrics(InetAddressAndPort endpoint, long count)
+    {
+        hintsFailed.mark(count);
+        failedByEndpoint.get(endpoint).mark(count);
+    }
+
+    public static void updateTimeoutMetrics(InetAddressAndPort endpoint, long count)
+    {
+        hintsTimedOut.mark(count);
+        timedOutByEndpoint.get(endpoint).mark(count);
     }
 }

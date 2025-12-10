@@ -891,8 +891,20 @@ public interface StorageServiceMBean extends NotificationEmitter
     /** Sets the threshold for warning queries due to a large batch size */
     public void setBatchSizeWarnThreshold(int batchSizeDebugThreshold);
 
+    /** Gets the hinted handoff base throttle in KiB per second. */
+    public int getHintedHandoffThrottleInKB();
+
     /** Sets the hinted handoff throttle in KiB per second, per delivery thread. */
     public void setHintedHandoffThrottleInKB(int throttleInKB);
+
+    /** Gets the hinted handoff max throttle in KiB per second (for dynamic throttling). */
+    public int getHintedHandoffMaxThrottleInKB();
+
+    /** Gets whether dynamic hints throttling is enabled. */
+    public boolean getHintedHandoffDynamicThrottleEnabled();
+
+    /** Enables or disables dynamic hints throttling. */
+    public void setHintedHandoffDynamicThrottleEnabled(boolean enabled);
 
     public boolean getTransferHintsOnDecommission();
     public void setTransferHintsOnDecommission(boolean enabled);

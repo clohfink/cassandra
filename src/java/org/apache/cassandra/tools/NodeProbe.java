@@ -980,6 +980,21 @@ public class NodeProbe implements AutoCloseable
         ssProxy.setHintedHandoffThrottleInKB(throttleInKB);
     }
 
+    public void enableDynamicHintsThrottle()
+    {
+        ssProxy.setHintedHandoffDynamicThrottleEnabled(true);
+    }
+
+    public void disableDynamicHintsThrottle()
+    {
+        ssProxy.setHintedHandoffDynamicThrottleEnabled(false);
+    }
+
+    public boolean isDynamicHintsThrottleEnabled()
+    {
+        return ssProxy.getHintedHandoffDynamicThrottleEnabled();
+    }
+
     public List<String> getEndpointsWithPort(String keyspace, String cf, String key)
     {
         return ssProxy.getNaturalEndpointsWithPort(keyspace, cf, key);
@@ -1211,6 +1226,26 @@ public class NodeProbe implements AutoCloseable
     public List<Map<String, String>> listPendingHints()
     {
         return hsProxy.getPendingHints();
+    }
+
+    public List<Map<String, String>> getHintDeliveryMetrics()
+    {
+        return hsProxy.getHintDeliveryMetrics();
+    }
+
+    public double getCurrentHintsThrottleInKiB()
+    {
+        return hsProxy.getCurrentThrottleInKiB();
+    }
+
+    public int getHintedHandoffThrottleInKB()
+    {
+        return ssProxy.getHintedHandoffThrottleInKB();
+    }
+
+    public int getHintedHandoffMaxThrottleInKB()
+    {
+        return ssProxy.getHintedHandoffMaxThrottleInKB();
     }
 
     public void refreshSizeEstimates()
