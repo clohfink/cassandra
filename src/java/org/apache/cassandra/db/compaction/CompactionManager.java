@@ -1433,6 +1433,7 @@ public class CompactionManager implements CompactionManagerMBean
             compressionRatio = 1.0;
 
         List<SSTableReader> finished;
+        double totalThrottleTimeSeconds = 0.0;
 
         int nowInSec = FBUtilities.nowInSeconds();
         try (SSTableRewriter writer = SSTableRewriter.construct(cfs, txn, false, sstable.maxDataAge);
@@ -1458,7 +1459,7 @@ public class CompactionManager implements CompactionManagerMBean
 
                     long bytesScanned = scanner.getBytesScanned();
 
-                    compactionRateLimiterAcquire(limiter, bytesScanned, lastBytesScanned, compressionRatio);
+                    totalThrottleTimeSeconds += compactionRateLimiterAcquire(limiter, bytesScanned, lastBytesScanned, compressionRatio);
 
                     lastBytesScanned = bytesScanned;
                 }
@@ -1483,20 +1484,37 @@ public class CompactionManager implements CompactionManagerMBean
                                       FBUtilities.prettyPrintMemory(endsize), (int) (ratio * 100), totalkeysWritten, dTime));
         }
 
+        // update compaction throttle metrics
+        if (totalThrottleTimeSeconds > 0)
+        {
+            long throttleTimeNanos = (long) (totalThrottleTimeSeconds * TimeUnit.SECONDS.toNanos(1));
+            metrics.throttleTime.update(throttleTimeNanos, TimeUnit.NANOSECONDS);
+        }
     }
 
-    static void compactionRateLimiterAcquire(RateLimiter limiter, long bytesScanned, long lastBytesScanned, double compressionRatio)
+    /**
+     * Acquires permits from the rate limiter for compaction throttling.
+     *
+     * @param limiter the rate limiter to acquire from
+     * @param bytesScanned total bytes scanned so far
+     * @param lastBytesScanned bytes scanned at last call
+     * @param compressionRatio compression ratio to account for
+     * @return the total time in seconds spent waiting for permits (throttled time)
+     */
+    static double compactionRateLimiterAcquire(RateLimiter limiter, long bytesScanned, long lastBytesScanned, double compressionRatio)
     {
+        double totalWaitTimeSeconds = 0.0;
         long lengthRead = (long) ((bytesScanned - lastBytesScanned) * compressionRatio) + 1;
         while (lengthRead >= Integer.MAX_VALUE)
         {
-            limiter.acquire(Integer.MAX_VALUE);
+            totalWaitTimeSeconds += limiter.acquire(Integer.MAX_VALUE);
             lengthRead -= Integer.MAX_VALUE;
         }
         if (lengthRead > 0)
         {
-            limiter.acquire((int) lengthRead);
+            totalWaitTimeSeconds += limiter.acquire((int) lengthRead);
         }
+        return totalWaitTimeSeconds;
     }
 
     private static abstract class CleanupStrategy
@@ -1791,6 +1809,7 @@ public class CompactionManager implements CompactionManagerMBean
                 compressionRatio = 1.0;
 
             long lastBytesScanned = 0;
+            double totalThrottleTimeSeconds = 0.0;
 
             while (ci.hasNext())
             {
@@ -1812,7 +1831,7 @@ public class CompactionManager implements CompactionManagerMBean
                         unrepairedWriter.append(partition);
                     }
                     long bytesScanned = scanners.getTotalBytesScanned();
-                    compactionRateLimiterAcquire(limiter, bytesScanned, lastBytesScanned, compressionRatio);
+                    totalThrottleTimeSeconds += compactionRateLimiterAcquire(limiter, bytesScanned, lastBytesScanned, compressionRatio);
                     lastBytesScanned = bytesScanned;
                 }
             }
@@ -1840,6 +1859,14 @@ public class CompactionManager implements CompactionManagerMBean
                         transSSTables,
                         unrepairedSSTables,
                         pendingRepair);
+
+            // update compaction throttle metrics
+            if (totalThrottleTimeSeconds > 0)
+            {
+                long throttleTimeNanos = (long) (totalThrottleTimeSeconds * TimeUnit.SECONDS.toNanos(1));
+                metrics.throttleTime.update(throttleTimeNanos, TimeUnit.NANOSECONDS);
+            }
+
             return fullSSTables.size() + transSSTables.size() + unrepairedSSTables.size();
         }
         catch (Throwable e)

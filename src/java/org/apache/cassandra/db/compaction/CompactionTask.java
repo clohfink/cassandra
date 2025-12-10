@@ -170,6 +170,7 @@ public class CompactionTask extends AbstractCompactionTask
             long estimatedKeys = 0;
             long inputSizeBytes;
             long timeSpentWritingKeys;
+            double totalThrottleTimeSeconds = 0.0;
 
             Set<SSTableReader> actuallyCompact = Sets.difference(transaction.originals(), fullyExpiredSSTables);
             Collection<SSTableReader> newSStables;
@@ -208,7 +209,7 @@ public class CompactionTask extends AbstractCompactionTask
                         long bytesScanned = scanners.getTotalBytesScanned();
 
                         // Rate limit the scanners, and account for compression
-                        CompactionManager.compactionRateLimiterAcquire(limiter, bytesScanned, lastBytesScanned, compressionRatio);
+                        totalThrottleTimeSeconds += CompactionManager.compactionRateLimiterAcquire(limiter, bytesScanned, lastBytesScanned, compressionRatio);
 
                         lastBytesScanned = bytesScanned;
 
@@ -275,6 +276,13 @@ public class CompactionTask extends AbstractCompactionTask
 
             // update the metrics
             cfs.metric.compactionBytesWritten.inc(endsize);
+
+            // update compaction throttle metrics
+            if (totalThrottleTimeSeconds > 0)
+            {
+                long throttleTimeNanos = (long) (totalThrottleTimeSeconds * TimeUnit.SECONDS.toNanos(1));
+                CompactionManager.instance.getMetrics().throttleTime.update(throttleTimeNanos, TimeUnit.NANOSECONDS);
+            }
         }
     }
 

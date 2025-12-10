@@ -64,6 +64,12 @@ public class CompactionMetrics
     /** Total number of compactions which have outright failed due to lack of disk space */
     public final Counter compactionsAborted;
 
+    /** Time spent waiting due to compaction throttling (rate limiting) */
+    public final Timer throttleTime;
+
+    /** Current compaction throughput limit in bytes per second (0 means unlimited) */
+    public final Gauge<Long> throttleRateBytesPerSec;
+
     public CompactionMetrics(final ExecutorPlus... collectors)
     {
         pendingTasks = Metrics.register(factory.createMetricName("PendingTasks"), new Gauge<Integer>()
@@ -152,5 +158,18 @@ public class CompactionMetrics
         sstablesDropppedFromCompactions = Metrics.counter(factory.createMetricName("SSTablesDroppedFromCompaction"));
         compactionsAborted = Metrics.counter(factory.createMetricName("CompactionsAborted"));
         indexSummaryRedistributionTime = Metrics.timer(factory.createMetricName("IndexSummaryRedistributionTime"));
+
+        // compaction throttle metrics
+        throttleTime = Metrics.timer(factory.createMetricName("ThrottleTime"));
+
+        throttleRateBytesPerSec = Metrics.register(factory.createMetricName("ThrottleRateBytesPerSec"), new Gauge<Long>()
+        {
+            public Long getValue()
+            {
+                double rate = CompactionManager.instance.getRateLimiter().getRate();
+                // Return 0 if unlimited (Double.MAX_VALUE), otherwise the configured rate
+                return rate >= Double.MAX_VALUE ? 0L : (long) rate;
+            }
+        });
     }
 }
