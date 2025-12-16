@@ -39,7 +39,8 @@ public class BulkLoaderTest extends OfflineToolUtils
         
         assertNoUnexpectedThreadsStarted(new String[] { "ObjectCleanerThread",
                                                         "Shutdown-checker",
-                                                        "cluster[0-9]-connection-reaper-[0-9]" });
+                                                        "cluster[0-9]-connection-reaper-[0-9]",
+                                                        "idle-connection-reaper"});
         assertSchemaNotLoaded();
         assertCLSMNotLoaded();
         assertSystemKSNotLoaded();
@@ -65,6 +66,7 @@ public class BulkLoaderTest extends OfflineToolUtils
                                                         "globalEventExecutor-[1-9]-[1-9]",
                                                         "globalEventExecutor-[1-9]-[1-9]",
                                                         "Shutdown-checker",
+                                                        "idle-connection-reaper",
                                                         "cluster[0-9]-connection-reaper-[0-9]" });
         assertSchemaNotLoaded();
         assertCLSMNotLoaded();
@@ -93,6 +95,7 @@ public class BulkLoaderTest extends OfflineToolUtils
                                                         "globalEventExecutor-[1-9]-[1-9]",
                                                         "globalEventExecutor-[1-9]-[1-9]",
                                                         "Shutdown-checker",
+                                                        "idle-connection-reaper",
                                                         "cluster[0-9]-connection-reaper-[0-9]",
                                                         // the driver isn't expected to terminate threads on close synchronously (CASSANDRA-19000)
                                                         "cluster[0-9]-nio-worker-[0-9]" });
@@ -123,6 +126,7 @@ public class BulkLoaderTest extends OfflineToolUtils
                                                         "globalEventExecutor-[1-9]-[1-9]",
                                                         "globalEventExecutor-[1-9]-[1-9]",
                                                         "Shutdown-checker",
+                                                        "idle-connection-reaper",
                                                         "cluster[0-9]-connection-reaper-[0-9]",
                                                         // the driver isn't expected to terminate threads on close synchronously (CASSANDRA-19000)
                                                         "cluster[0-9]-nio-worker-[0-9]" });

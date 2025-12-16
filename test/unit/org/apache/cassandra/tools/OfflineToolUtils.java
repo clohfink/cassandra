@@ -72,6 +72,7 @@ public abstract class OfflineToolUtils
     "process reaper",  // spawned by the jvm when executing external processes
                        // and may still be active when we check
     "Attach Listener", // spawned in intellij IDEA
+    "idle-connection-reaper", // Apache HTTP client connection reaper thread
     };
 
     public void assertNoUnexpectedThreadsStarted(String[] optionalThreadNames)

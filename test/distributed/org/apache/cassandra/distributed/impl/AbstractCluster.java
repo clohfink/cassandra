@@ -43,7 +43,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Future;
-import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BiPredicate;
 import java.util.function.Consumer;
@@ -1129,38 +1128,6 @@ public abstract class AbstractCluster<I extends IInstance> implements ICluster<I
      */
     private void cleanupLingeringThreads()
     {
-        try
-        {
-            Class<?> metatronClass = Class.forName("com.netflix.metatron.ipc.security.MetatronFilesystemCache");
-            Method getInstanceMethod = metatronClass.getMethod("getInstance");
-            Object instance = getInstanceMethod.invoke(null);
-
-            if (instance != null)
-            {
-                Field refreshPoolField = metatronClass.getDeclaredField("refreshPool");
-                refreshPoolField.setAccessible(true);
-                Object refreshPool = refreshPoolField.get(instance);
-
-                if (refreshPool instanceof ScheduledExecutorService)
-                {
-                    ScheduledExecutorService scheduler = (ScheduledExecutorService) refreshPool;
-                    // Use shutdownNow() immediately to interrupt any waiting threads
-                    scheduler.shutdownNow();
-                    scheduler.awaitTermination(2, TimeUnit.SECONDS);
-                    logger.debug("MetatronFilesystemCache scheduler shutdown complete");
-                }
-            }
-        }
-        catch (ClassNotFoundException e)
-        {
-            // MetatronFilesystemCache not present, which is fine
-            logger.debug("MetatronFilesystemCache not found, skipping shutdown");
-        }
-        catch (Throwable e)
-        {
-            logger.warn("Failed to shutdown MetatronFilesystemCache scheduler", e);
-        }
-
         // Even after shutdown, daemon threads may still be alive for a moment
         // Clear InstanceClassLoader from ALL threads that have it to prevent strong references to classloader
         // and metaspace OOMs. EXCEPT: Do not clear from isolatedExecutor threads as they should have been
@@ -1178,7 +1145,6 @@ public abstract class AbstractCluster<I extends IInstance> implements ICluster<I
                                t.getName(), t.getState());
                     continue;
                 }
-
                 logger.debug("Clearing InstanceClassLoader from thread: {} (state: {})", t.getName(), t.getState());
                 t.setContextClassLoader(null);
             }
@@ -1267,6 +1233,7 @@ public abstract class AbstractCluster<I extends IInstance> implements ICluster<I
 
             return shared.contains(s) ||
                    InstanceClassLoader.getDefaultLoadSharedFilter().test(s) ||
+                   s.startsWith("com.netflix.metatron") ||
                    s.startsWith("org.jboss.byteman");
         };
     }

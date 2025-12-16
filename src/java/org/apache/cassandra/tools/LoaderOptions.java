@@ -45,6 +45,7 @@ import com.datastax.driver.core.AuthProvider;
 import com.datastax.driver.core.PlainTextAuthProvider;
 import org.apache.cassandra.config.Config;
 import org.apache.cassandra.config.DataRateSpec;
+import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.config.EncryptionOptions;
 import org.apache.cassandra.config.YamlConfigurationLoader;
 import org.apache.cassandra.exceptions.ConfigurationException;
@@ -463,6 +464,7 @@ public class LoaderOptions
                         errorMsg("Config file not found", options);
                     }
                     config = new YamlConfigurationLoader().loadConfig(configFile.toPath().toUri().toURL());
+                    DatabaseDescriptor.applyStreamingThroughputDefaults(config);
 
                     // below 2 checks are needed in order to match the pre-CASSANDRA-15234 upper bound for those parameters which were still in megabits per second
                     if (config.stream_throughput_outbound.toMegabitsPerSecond() >= Integer.MAX_VALUE)

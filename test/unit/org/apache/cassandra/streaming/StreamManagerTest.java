@@ -48,9 +48,10 @@ public class StreamManagerTest
     public static void setupClass()
     {
         Config c = DatabaseDescriptor.loadConfig();
-
+        DatabaseDescriptor.applyStreamingThroughputDefaults(c);
         defaultStreamThroughputBytesPerSec = c.stream_throughput_outbound.toBytesPerSecond();
         defaultInterDCStreamThroughputBytesPerSec = c.inter_dc_stream_throughput_outbound.toBytesPerSecond();
+
         defaultEntireSSTableStreamThroughputBytesPerSec = c.entire_sstable_stream_throughput_outbound.toBytesPerSecond();
         defaultEntireSSTableInterDCStreamThroughputBytesPerSec = c.entire_sstable_inter_dc_stream_throughput_outbound.toBytesPerSecond();
         if (defaultEntireSSTableInterDCStreamThroughputBytesPerSec == 0)

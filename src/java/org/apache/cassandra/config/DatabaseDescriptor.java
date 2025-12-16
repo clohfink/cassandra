@@ -92,6 +92,7 @@ import org.apache.cassandra.security.SSLFactory;
 import org.apache.cassandra.service.CacheService.CacheType;
 import org.apache.cassandra.service.paxos.Paxos;
 import org.apache.cassandra.utils.FBUtilities;
+import com.netflix.cassandra.BandwidthProvider;
 
 import static org.apache.cassandra.config.CassandraRelevantProperties.OS_ARCH;
 import static org.apache.cassandra.config.CassandraRelevantProperties.SUN_ARCH_DATA_MODEL;
@@ -126,6 +127,9 @@ public class DatabaseDescriptor
      * Request timeouts can not be less than below defined value (see CASSANDRA-9375)
      */
     static final DurationSpec.LongMillisecondsBound LOWEST_ACCEPTED_TIMEOUT = new DurationSpec.LongMillisecondsBound(10L);
+
+    private static final String STREAMING_UTILIZATION_PERCENT = System.getProperty("cassandra.streaming.utilization.percent", "50.0");
+    private static final DataRateSpec.LongBytesPerSecondBound DEFAULT_STREAMING_FALLBACK_THROUGHPUT = new DataRateSpec.LongBytesPerSecondBound(System.getProperty("cassandra.streaming.fallback.throughput", "100MiB/s"));
 
     private static Supplier<IFailureDetector> newFailureDetector;
     private static IEndpointSnitch snitch;
@@ -408,6 +412,12 @@ public class DatabaseDescriptor
         //InetAddressAndPort and get the right defaults
         InetAddressAndPort.initializeDefaultPort(getStoragePort());
 
+        DataRateSpec.LongBytesPerSecondBound streamingDefaults;
+        try (BandwidthProvider bandwidthProvider = new BandwidthProvider())
+        {
+            streamingDefaults = calculateNetflixStreamingThroughputDefault(bandwidthProvider, FBUtilities.getAvailableProcessors());
+        }
+        applyStreamingThroughputDefaults(conf, streamingDefaults);
         validateUpperBoundStreamingConfig();
 
         if (conf.auto_snapshot_ttl != null)
@@ -943,6 +953,39 @@ public class DatabaseDescriptor
                                                              conf.native_transport_min_backoff_on_queue_overload,
                                                              conf.native_transport_max_backoff_on_queue_overload));
 
+    }
+
+    @VisibleForTesting
+    public static DataRateSpec.LongBytesPerSecondBound calculateNetflixStreamingThroughputDefault(BandwidthProvider bandwidthProvider, int numProcessors)
+    {
+        double utilizationPercent = Double.parseDouble(STREAMING_UTILIZATION_PERCENT) / 100.0;
+        long baselineBandwidthMiB = 0;
+        if (bandwidthProvider != null)
+            baselineBandwidthMiB = bandwidthProvider.getBaselineBandwidthInMiB();
+
+        if (baselineBandwidthMiB > 0)
+        {
+            long bandwidth = (long) ((baselineBandwidthMiB * utilizationPercent) / Math.max(1, numProcessors));
+            return new DataRateSpec.LongBytesPerSecondBound(bandwidth, MEBIBYTES_PER_SECOND);
+        }
+        return DEFAULT_STREAMING_FALLBACK_THROUGHPUT;
+    }
+
+    public static void applyStreamingThroughputDefaults(Config config)
+    {
+        applyStreamingThroughputDefaults(config, DEFAULT_STREAMING_FALLBACK_THROUGHPUT);
+    }
+
+    public static void applyStreamingThroughputDefaults(Config config, DataRateSpec.LongBytesPerSecondBound defaults)
+    {
+        if (config.stream_throughput_outbound == null)
+            config.stream_throughput_outbound = defaults;
+        if (config.inter_dc_stream_throughput_outbound == null)
+            config.inter_dc_stream_throughput_outbound = defaults;
+        if (config.entire_sstable_stream_throughput_outbound == null)
+            config.entire_sstable_stream_throughput_outbound = defaults;
+        if (config.entire_sstable_inter_dc_stream_throughput_outbound == null)
+            config.entire_sstable_inter_dc_stream_throughput_outbound = defaults;
     }
 
     @VisibleForTesting

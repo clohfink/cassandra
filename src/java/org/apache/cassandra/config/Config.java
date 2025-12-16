@@ -392,12 +392,12 @@ public class Config
     public int max_streaming_retries = 3;
 
     @Replaces(oldName = "stream_throughput_outbound_megabits_per_sec", converter = Converters.MEGABITS_TO_BYTES_PER_SECOND_DATA_RATE, deprecated = true)
-    public volatile DataRateSpec.LongBytesPerSecondBound stream_throughput_outbound = new DataRateSpec.LongBytesPerSecondBound("0MiB/s");
+    public volatile DataRateSpec.LongBytesPerSecondBound stream_throughput_outbound = null;
     @Replaces(oldName = "inter_dc_stream_throughput_outbound_megabits_per_sec", converter = Converters.MEGABITS_TO_BYTES_PER_SECOND_DATA_RATE, deprecated = true)
-    public volatile DataRateSpec.LongBytesPerSecondBound inter_dc_stream_throughput_outbound = new DataRateSpec.LongBytesPerSecondBound("0MiB/s");
+    public volatile DataRateSpec.LongBytesPerSecondBound inter_dc_stream_throughput_outbound = null;
 
-    public volatile DataRateSpec.LongBytesPerSecondBound entire_sstable_stream_throughput_outbound = new DataRateSpec.LongBytesPerSecondBound("0MiB/s");
-    public volatile DataRateSpec.LongBytesPerSecondBound entire_sstable_inter_dc_stream_throughput_outbound = new DataRateSpec.LongBytesPerSecondBound("0MiB/s");
+    public volatile DataRateSpec.LongBytesPerSecondBound entire_sstable_stream_throughput_outbound = null;
+    public volatile DataRateSpec.LongBytesPerSecondBound entire_sstable_inter_dc_stream_throughput_outbound = null;
 
     public String[] data_file_directories = new String[0];
 

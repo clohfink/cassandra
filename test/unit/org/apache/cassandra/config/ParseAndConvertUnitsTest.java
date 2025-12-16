@@ -113,6 +113,6 @@ public class ParseAndConvertUnitsTest
 
         //Confirm rate parameters were successfully parsed with the default values in cassandra.yaml
         assertEquals(new DataRateSpec.LongBytesPerSecondBound(0), config.compaction_throughput);
-        assertEquals(new DataRateSpec.LongBytesPerSecondBound(0), config.inter_dc_stream_throughput_outbound);
+        assertEquals(null, config.inter_dc_stream_throughput_outbound);
     }
 }

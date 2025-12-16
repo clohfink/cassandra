@@ -1105,6 +1105,8 @@
         <dependency groupId="netflix" artifactId="metatron-ipc-common-shaded" version="1.468.0"/>
         <dependency groupId="com.github.luben" artifactId="zstd-jni" version="1.5.0-4"/>
         <dependency groupId="com.amazonaws" artifactId="aws-java-sdk-core" version="1.12.129"/>
+        <dependency groupId="software.amazon.awssdk" artifactId="ec2" version="2.27.21"/>
+        <dependency groupId="software.amazon.awssdk" artifactId="apache-client" version="2.27.21"/>
         <dependency groupId="software.amazon.awssdk" artifactId="s3" version="2.27.21" />
         <dependency groupId="software.amazon.awssdk.crt" artifactId="aws-crt" version="0.30.11" />
       </artifact:pom>

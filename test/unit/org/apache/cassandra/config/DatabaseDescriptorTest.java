@@ -33,6 +33,7 @@ import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
+import com.netflix.cassandra.BandwidthProvider;
 import org.apache.cassandra.db.Keyspace;
 import org.apache.cassandra.exceptions.ConfigurationException;
 import org.assertj.core.api.Assertions;
@@ -814,5 +815,163 @@ public class DatabaseDescriptorTest
     public void testInvalidSub1DefaultRFs() throws IllegalArgumentException
     {
         DatabaseDescriptor.setDefaultKeyspaceRF(0);
+    }
+
+    // Mock BandwidthProvider for testing
+    public static class MockBandwidthProvider extends BandwidthProvider
+    {
+        private final long baselineBandwidthMiB;
+        
+        public MockBandwidthProvider(long baselineBandwidthMiB)
+        {
+            this.baselineBandwidthMiB = baselineBandwidthMiB;
+        }
+        
+        @Override
+        public long getBaselineBandwidthInMiB()
+        {
+            return baselineBandwidthMiB;
+        }
+    }
+
+    @Test
+    public void testCalculateNetflixStreamingThroughputDefault()
+    {
+        // Test case 1: Basic calculation with current utilization setting 
+        // (system properties are read at class load time, so we use whatever is set)
+        MockBandwidthProvider provider = new MockBandwidthProvider(1000);
+        
+        DataRateSpec.LongBytesPerSecondBound result4proc = DatabaseDescriptor.calculateNetflixStreamingThroughputDefault(provider, 4);
+        DataRateSpec.LongBytesPerSecondBound result8proc = DatabaseDescriptor.calculateNetflixStreamingThroughputDefault(provider, 8);
+        
+        // Verify that more processors results in lower throughput per processor
+        Assert.assertTrue("With more processors, throughput per processor should be lower", 
+                         result8proc.toMebibytesPerSecond() < result4proc.toMebibytesPerSecond());
+        
+        // Test case 2: Different baseline bandwidth
+        MockBandwidthProvider provider2000 = new MockBandwidthProvider(2000);
+        DataRateSpec.LongBytesPerSecondBound result2000 = DatabaseDescriptor.calculateNetflixStreamingThroughputDefault(provider2000, 4);
+        
+        // Higher baseline should result in higher throughput
+        Assert.assertTrue("Higher baseline bandwidth should result in higher throughput", 
+                         result2000.toMebibytesPerSecond() > result4proc.toMebibytesPerSecond());
+        
+        // Test case 3: Zero baseline bandwidth (fallback case)
+        MockBandwidthProvider zeroProvider = new MockBandwidthProvider(0);
+        DataRateSpec.LongBytesPerSecondBound fallbackResult = DatabaseDescriptor.calculateNetflixStreamingThroughputDefault(zeroProvider, 4);
+        
+        // Should use fallback value (which is configurable via system property, but defaults to 100MiB/s)
+        Assert.assertTrue("Should use fallback value when baseline bandwidth is 0", 
+                         fallbackResult.toMebibytesPerSecond() > 0);
+        
+        // Test case 4: Very small processor count should give higher throughput
+        DataRateSpec.LongBytesPerSecondBound result1proc = DatabaseDescriptor.calculateNetflixStreamingThroughputDefault(provider, 1);
+        Assert.assertTrue("Single processor should get higher throughput than 4 processors", 
+                         result1proc.toMebibytesPerSecond() > result4proc.toMebibytesPerSecond());
+        
+        // Test case 5: Null provider (should use fallback)
+        DataRateSpec.LongBytesPerSecondBound nullResult = DatabaseDescriptor.calculateNetflixStreamingThroughputDefault(null, 4);
+        Assert.assertTrue("Null provider should use fallback value", 
+                         nullResult.toMebibytesPerSecond() > 0);
+        
+        // Test case 6: Negative baseline bandwidth (should use fallback)
+        MockBandwidthProvider negativeProvider = new MockBandwidthProvider(-100);
+        DataRateSpec.LongBytesPerSecondBound negativeResult = DatabaseDescriptor.calculateNetflixStreamingThroughputDefault(negativeProvider, 4);
+        Assert.assertTrue("Negative baseline bandwidth should use fallback value", 
+                         negativeResult.toMebibytesPerSecond() > 0);
+        
+        // Test case 7: Zero processors (should default to 1 processor via Math.max)
+        DataRateSpec.LongBytesPerSecondBound zeroProc = DatabaseDescriptor.calculateNetflixStreamingThroughputDefault(provider, 0);
+        DataRateSpec.LongBytesPerSecondBound oneProc = DatabaseDescriptor.calculateNetflixStreamingThroughputDefault(provider, 1);
+        Assert.assertEquals("Zero processors should be treated as 1 processor", 
+                           zeroProc.toMebibytesPerSecond(), oneProc.toMebibytesPerSecond(), 0.0);
+    }
+    
+    @Test
+    public void testApplyStreamingThroughputDefaults()
+    {
+        // Test case 1: Apply defaults when all streaming throughput values are null
+        Config config = new Config();
+        DataRateSpec.LongBytesPerSecondBound testDefault = new DataRateSpec.LongBytesPerSecondBound(50, DataRateSpec.DataRateUnit.MEBIBYTES_PER_SECOND);
+        
+        Assert.assertNull("stream_throughput_outbound should initially be null", config.stream_throughput_outbound);
+        Assert.assertNull("inter_dc_stream_throughput_outbound should initially be null", config.inter_dc_stream_throughput_outbound);
+        Assert.assertNull("entire_sstable_stream_throughput_outbound should initially be null", config.entire_sstable_stream_throughput_outbound);
+        Assert.assertNull("entire_sstable_inter_dc_stream_throughput_outbound should initially be null", config.entire_sstable_inter_dc_stream_throughput_outbound);
+        
+        DatabaseDescriptor.applyStreamingThroughputDefaults(config, testDefault);
+        
+        Assert.assertEquals("stream_throughput_outbound should be set to default", testDefault, config.stream_throughput_outbound);
+        Assert.assertEquals("inter_dc_stream_throughput_outbound should be set to default", testDefault, config.inter_dc_stream_throughput_outbound);
+        Assert.assertEquals("entire_sstable_stream_throughput_outbound should be set to default", testDefault, config.entire_sstable_stream_throughput_outbound);
+        Assert.assertEquals("entire_sstable_inter_dc_stream_throughput_outbound should be set to default", testDefault, config.entire_sstable_inter_dc_stream_throughput_outbound);
+    }
+    
+    @Test
+    public void testApplyStreamingThroughputDefaultsPreservesExistingValues()
+    {
+        // Test case 2: Don't override existing non-null values
+        Config config = new Config();
+        DataRateSpec.LongBytesPerSecondBound existingValue = new DataRateSpec.LongBytesPerSecondBound(200, DataRateSpec.DataRateUnit.MEBIBYTES_PER_SECOND);
+        DataRateSpec.LongBytesPerSecondBound testDefault = new DataRateSpec.LongBytesPerSecondBound(50, DataRateSpec.DataRateUnit.MEBIBYTES_PER_SECOND);
+        
+        config.stream_throughput_outbound = existingValue;
+        config.inter_dc_stream_throughput_outbound = existingValue;
+        config.entire_sstable_stream_throughput_outbound = existingValue;
+        config.entire_sstable_inter_dc_stream_throughput_outbound = existingValue;
+        
+        DatabaseDescriptor.applyStreamingThroughputDefaults(config, testDefault);
+        
+        Assert.assertEquals("stream_throughput_outbound should preserve existing value", existingValue, config.stream_throughput_outbound);
+        Assert.assertEquals("inter_dc_stream_throughput_outbound should preserve existing value", existingValue, config.inter_dc_stream_throughput_outbound);
+        Assert.assertEquals("entire_sstable_stream_throughput_outbound should preserve existing value", existingValue, config.entire_sstable_stream_throughput_outbound);
+        Assert.assertEquals("entire_sstable_inter_dc_stream_throughput_outbound should preserve existing value", existingValue, config.entire_sstable_inter_dc_stream_throughput_outbound);
+    }
+    
+    @Test
+    public void testApplyStreamingThroughputDefaultsPartiallySet()
+    {
+        // Test case 3: Mix of null and non-null values
+        Config config = new Config();
+        DataRateSpec.LongBytesPerSecondBound existingValue = new DataRateSpec.LongBytesPerSecondBound(200, DataRateSpec.DataRateUnit.MEBIBYTES_PER_SECOND);
+        DataRateSpec.LongBytesPerSecondBound testDefault = new DataRateSpec.LongBytesPerSecondBound(50, DataRateSpec.DataRateUnit.MEBIBYTES_PER_SECOND);
+        
+        config.stream_throughput_outbound = existingValue;
+        config.inter_dc_stream_throughput_outbound = null;
+        config.entire_sstable_stream_throughput_outbound = existingValue;
+        config.entire_sstable_inter_dc_stream_throughput_outbound = null;
+        
+        DatabaseDescriptor.applyStreamingThroughputDefaults(config, testDefault);
+        
+        Assert.assertEquals("stream_throughput_outbound should preserve existing value", existingValue, config.stream_throughput_outbound);
+        Assert.assertEquals("inter_dc_stream_throughput_outbound should be set to default", testDefault, config.inter_dc_stream_throughput_outbound);
+        Assert.assertEquals("entire_sstable_stream_throughput_outbound should preserve existing value", existingValue, config.entire_sstable_stream_throughput_outbound);
+        Assert.assertEquals("entire_sstable_inter_dc_stream_throughput_outbound should be set to default", testDefault, config.entire_sstable_inter_dc_stream_throughput_outbound);
+    }
+    
+    @Test
+    public void testApplyStreamingThroughputDefaultsNoArgument()
+    {
+        // Test case 4: Test the convenience method that uses DEFAULT_STREAMING_FALLBACK_THROUGHPUT
+        Config config = new Config();
+
+        // Used in tools
+        DatabaseDescriptor.applyStreamingThroughputDefaults(config);
+        
+        Assert.assertNotNull("stream_throughput_outbound should be set", config.stream_throughput_outbound);
+        Assert.assertNotNull("inter_dc_stream_throughput_outbound should be set", config.inter_dc_stream_throughput_outbound);
+        Assert.assertNotNull("entire_sstable_stream_throughput_outbound should be set", config.entire_sstable_stream_throughput_outbound);
+        Assert.assertNotNull("entire_sstable_inter_dc_stream_throughput_outbound should be set", config.entire_sstable_inter_dc_stream_throughput_outbound);
+        
+        // All should have the same default value
+        Assert.assertEquals("All streaming throughput values should be equal", 
+                           config.stream_throughput_outbound.toMebibytesPerSecond(), 
+                           config.inter_dc_stream_throughput_outbound.toMebibytesPerSecond(), 0.0);
+        Assert.assertEquals("All streaming throughput values should be equal", 
+                           config.stream_throughput_outbound.toMebibytesPerSecond(), 
+                           config.entire_sstable_stream_throughput_outbound.toMebibytesPerSecond(), 0.0);
+        Assert.assertEquals("All streaming throughput values should be equal", 
+                           config.stream_throughput_outbound.toMebibytesPerSecond(), 
+                           config.entire_sstable_inter_dc_stream_throughput_outbound.toMebibytesPerSecond(), 0.0);
     }
 }
