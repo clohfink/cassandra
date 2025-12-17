@@ -1,7 +1,7 @@
 builds:
   analyze-failure:
     - enabled: true
-      comment-pr: true
+      comment-pr: false
       channel-resolver-spel: "#root.authorSlackId"
 pr-open:
   code-quality:
