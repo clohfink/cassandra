@@ -373,7 +373,7 @@ public class StorageProxy implements StorageProxyMBean
                 // validate that the generated mutations are targetted at the same
                 // partition as the initial updates and reject (via an
                 // InvalidRequestException) any which aren't.
-                updates = TriggerExecutor.instance.execute(updates);
+                updates = TriggerExecutor.instance.execute(updates, clientState);
 
                 return Pair.create(updates, null);
             };

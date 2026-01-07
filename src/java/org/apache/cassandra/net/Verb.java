@@ -222,6 +222,9 @@ public enum Verb
     // CUSTOM VERBS
     UNUSED_CUSTOM_VERB     (CUSTOM,
                             0,   P1, rpcTimeout,      INTERNAL_RESPONSE, () -> null,                                 () -> null                                                     ),
+    // Netflix import verbs (one-way, no response)
+    IMPORT_STATE_CHANGE_REQ          (CUSTOM, 1, P1, rpcTimeout,    MISC,              () -> com.netflix.cassandra.importing.ImportStateChangeRequest.serializer, () -> com.netflix.cassandra.importing.ImportStateChangeVerbHandler.instance                  ),
+
     ;
 
     public static final List<Verb> VERBS = ImmutableList.copyOf(Verb.values());

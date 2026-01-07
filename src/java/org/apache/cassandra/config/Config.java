@@ -91,6 +91,10 @@ public class Config
     public volatile boolean enable_select_partition_range = true;
     public volatile boolean alter_table_enabled = true;
 
+    public volatile int import_concurrency = 4;
+    public volatile int import_max_disk_percentage = 75;
+    public volatile DataRateSpec.LongBytesPerSecondBound import_disk_throughput = new DataRateSpec.LongBytesPerSecondBound("300MiB/s");
+
     /** The configuration of timestamp bounds */
     public volatile DurationSpec.LongMicrosecondsBound maximum_timestamp_warn_threshold = null;
     public volatile DurationSpec.LongMicrosecondsBound maximum_timestamp_fail_threshold = null;
@@ -112,6 +116,16 @@ public class Config
 
     public volatile HeapBufferAllocatorType global_heap_buffer_allocator = HeapBufferAllocatorType.unpooled;
     public int native_slow_pool_max_threads = 64;
+
+    public volatile int import_http_retry_max_attempts = 3;
+    public volatile DurationSpec.IntMillisecondsBound import_http_retry_initial_delay = new DurationSpec.IntMillisecondsBound("1000ms");
+    public volatile double import_http_retry_backoff_multiplier = 2.0;
+    public volatile DurationSpec.IntMillisecondsBound import_http_retry_max_delay = new DurationSpec.IntMillisecondsBound("30000ms");
+    public volatile int import_http_retry_jitter_percentage = 10;
+
+    public volatile DurationSpec.IntSecondsBound import_cleanup_initial_delay = new DurationSpec.IntSecondsBound("1h");
+    public volatile DurationSpec.IntSecondsBound import_cleanup_period = new DurationSpec.IntSecondsBound("1h");
+    public volatile DurationSpec.IntSecondsBound import_cleanup_min_age = new DurationSpec.IntSecondsBound("1d");
 
     /**
      * end Netflix specific configuration options

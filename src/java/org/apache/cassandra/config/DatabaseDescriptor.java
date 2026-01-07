@@ -47,6 +47,7 @@ import com.google.common.primitives.Ints;
 import com.google.common.primitives.Longs;
 import com.google.common.util.concurrent.RateLimiter;
 
+import com.netflix.cassandra.importing.steps.DownloadUnzipStep;
 import org.apache.cassandra.hints.HintsService;
 import org.apache.cassandra.repair.autorepair.AutoRepairConfig;
 import org.apache.commons.lang3.ArrayUtils;
@@ -103,6 +104,7 @@ import static org.apache.cassandra.config.DataStorageSpec.DataStorageUnit.MEBIBY
 import static org.apache.cassandra.io.util.FileUtils.ONE_GIB;
 import static org.apache.cassandra.io.util.FileUtils.ONE_MIB;
 import static org.apache.cassandra.utils.Clock.Global.logInitializationOutcome;
+import static java.util.concurrent.TimeUnit.SECONDS;
 
 public class DatabaseDescriptor
 {
@@ -2662,6 +2664,116 @@ public class DatabaseDescriptor
     public static int getInternodeSocketReceiveBufferSizeInBytes()
     {
         return conf.internode_socket_receive_buffer_size.toBytes();
+    }
+
+    public static int getImportConcurrency()
+    {
+        return conf.import_concurrency;
+    }
+
+    public static int getImportMaxDiskPercentage()
+    {
+        return conf.import_max_disk_percentage;
+    }
+
+    public static int getImportHttpRetryMaxAttempts()
+    {
+        return conf.import_http_retry_max_attempts;
+    }
+
+    public static double getImportHttpRetryBackoffMultiplier()
+    {
+        return conf.import_http_retry_backoff_multiplier;
+    }
+
+    public static int getImportHttpRetryInitialDelayMs()
+    {
+        return conf.import_http_retry_initial_delay.toMilliseconds();
+    }
+
+    public static int getImportHttpRetryMaxDelayMs()
+    {
+        return conf.import_http_retry_max_delay.toMilliseconds();
+    }
+
+    public static int getImportHttpRetryJitterPercentage()
+    {
+        return conf.import_http_retry_jitter_percentage;
+    }
+
+    public static int getImportCleanupInitialDelaySeconds()
+    {
+        return conf.import_cleanup_initial_delay.toSeconds();
+    }
+
+    public static int getImportCleanupPeriodSeconds()
+    {
+        return conf.import_cleanup_period.toSeconds();
+    }
+
+    public static int getImportCleanupMinAgeSeconds()
+    {
+        return conf.import_cleanup_min_age.toSeconds();
+    }
+
+    public static double getImportDiskThroughputBytesPerSec()
+    {
+        return conf.import_disk_throughput.toBytesPerSecond();
+    }
+
+    public static void setImportHttpRetryMaxAttempts(int maxAttempts)
+    {
+        conf.import_http_retry_max_attempts = maxAttempts;
+    }
+
+    public static void setImportHttpRetryBackoffMultiplier(double backoffMultiplier) {
+        conf.import_http_retry_backoff_multiplier = backoffMultiplier;
+    }
+
+    public static void setImportHttpRetryInitialDelayInMs(int initialDelayMs)
+    {
+        conf.import_http_retry_initial_delay = new DurationSpec.IntMillisecondsBound(initialDelayMs);
+    }
+
+    public static void setImportHttpRetryMaxDelayInMs(int maxDelayMs)
+    {
+        conf.import_http_retry_max_delay = new DurationSpec.IntMillisecondsBound(maxDelayMs);
+    }
+
+    public static void setImportHttpRetryJitterPercentage(int jitterPercentage)
+    {
+        conf.import_http_retry_jitter_percentage = jitterPercentage;
+    }
+
+    public static void setImportDiskThroughputBytesPerSec(long bytesPerSec)
+    {
+        conf.import_disk_throughput = new DataRateSpec.LongBytesPerSecondBound(bytesPerSec, BYTES_PER_SECOND);
+        DownloadUnzipStep.updateDiskThroughput();
+    }
+
+    public static void setImportConcurrency(int concurrency)
+    {
+        conf.import_concurrency = concurrency;
+    }
+
+    public static void setImportMaxDiskPercentage(int percentage)
+    {
+        conf.import_max_disk_percentage = percentage;
+    }
+
+    public static void setImportCleanupInitialDelaySeconds(int seconds)
+    {
+        conf.import_cleanup_initial_delay = new DurationSpec.IntSecondsBound(seconds, SECONDS);
+    }
+
+    public static void setImportCleanupPeriodSeconds(int seconds)
+    {
+        conf.import_cleanup_period = new DurationSpec.IntSecondsBound(seconds, SECONDS);
+    }
+
+    public static void setImportCleanupMinAgeSeconds(int seconds)
+    {
+        conf.import_cleanup_min_age = new DurationSpec.IntSecondsBound(seconds, SECONDS);
     }
 
     public static int getInternodeApplicationSendQueueCapacityInBytes()

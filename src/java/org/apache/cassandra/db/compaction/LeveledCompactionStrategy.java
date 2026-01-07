@@ -60,6 +60,7 @@ public class LeveledCompactionStrategy extends AbstractCompactionStrategy
     private static final boolean tolerateSstableSize = Boolean.getBoolean(Config.PROPERTY_PREFIX + "tolerate_sstable_size");
     private static final String LEVEL_FANOUT_SIZE_OPTION = "fanout_size";
     private static final String SINGLE_SSTABLE_UPLEVEL_OPTION = "single_sstable_uplevel";
+    private static final String DISABLE_STCS_IN_L0_OPTION = "disable_stcs_in_l0";
     public static final int DEFAULT_LEVEL_FANOUT_SIZE = 10;
 
     @VisibleForTesting
@@ -67,6 +68,7 @@ public class LeveledCompactionStrategy extends AbstractCompactionStrategy
     private final int maxSSTableSizeInMiB;
     private final int levelFanoutSize;
     private final boolean singleSSTableUplevel;
+    private final boolean disableSTCSInL0;
     private static final String SCHEDULED_COMPACTION_OPTION = "scheduled_compactions";
 
     /**
@@ -90,6 +92,7 @@ public class LeveledCompactionStrategy extends AbstractCompactionStrategy
 
         // CASS-18509: Enable single_sstable_uplevel by default for LCS
         boolean configuredSingleSSTableUplevel = true;
+        boolean configuredDisableSTCSInL0 = false;
         boolean configuredEnableScheduledCompactions = false;
         SizeTieredCompactionStrategyOptions localOptions = new SizeTieredCompactionStrategyOptions(options);
         if (options != null)
@@ -117,6 +120,10 @@ public class LeveledCompactionStrategy extends AbstractCompactionStrategy
             {
                 configuredSingleSSTableUplevel = Boolean.parseBoolean(options.get(SINGLE_SSTABLE_UPLEVEL_OPTION));
             }
+            if (options.containsKey(DISABLE_STCS_IN_L0_OPTION))
+            {
+                configuredDisableSTCSInL0 = Boolean.parseBoolean(options.get(DISABLE_STCS_IN_L0_OPTION));
+            }
             if (options.containsKey(SCHEDULED_COMPACTION_OPTION))
             {
                 configuredEnableScheduledCompactions = Boolean.parseBoolean(options.get(SCHEDULED_COMPACTION_OPTION));
@@ -125,9 +132,10 @@ public class LeveledCompactionStrategy extends AbstractCompactionStrategy
         maxSSTableSizeInMiB = configuredMaxSSTableSize;
         levelFanoutSize = configuredLevelFanoutSize;
         singleSSTableUplevel = configuredSingleSSTableUplevel;
+        disableSTCSInL0 = configuredDisableSTCSInL0;
         enableScheduledCompactions = configuredEnableScheduledCompactions;
 
-        manifest = new LeveledManifest(cfs, this.maxSSTableSizeInMiB, this.levelFanoutSize, localOptions);
+        manifest = new LeveledManifest(cfs, this.maxSSTableSizeInMiB, this.levelFanoutSize, localOptions, this);
         logger.trace("Created {}", manifest);
     }
 
@@ -510,6 +518,11 @@ public class LeveledCompactionStrategy extends AbstractCompactionStrategy
         return levelFanoutSize;
     }
 
+    public boolean getDisableSTCSInL0()
+    {
+        return disableSTCSInL0;
+    }
+
     public ScannerList getScanners(Collection<SSTableReader> sstables, Collection<Range<Token>> ranges)
     {
         Set<SSTableReader>[] sstablesPerLevel = manifest.getSStablesPerLevelSnapshot();
@@ -818,6 +831,7 @@ public class LeveledCompactionStrategy extends AbstractCompactionStrategy
 
         uncheckedOptions.remove(LEVEL_FANOUT_SIZE_OPTION);
         uncheckedOptions.remove(SINGLE_SSTABLE_UPLEVEL_OPTION);
+        uncheckedOptions.remove(DISABLE_STCS_IN_L0_OPTION);
 
         uncheckedOptions.remove(CompactionParams.Option.MIN_THRESHOLD.toString());
         uncheckedOptions.remove(CompactionParams.Option.MAX_THRESHOLD.toString());

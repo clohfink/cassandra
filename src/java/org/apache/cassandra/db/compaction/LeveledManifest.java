@@ -62,6 +62,7 @@ public class LeveledManifest
     private static final int NO_COMPACTION_LIMIT = 25;
 
     private final ColumnFamilyStore cfs;
+    private final LeveledCompactionStrategy strategy;
 
     private final LeveledGenerations generations;
 
@@ -71,9 +72,10 @@ public class LeveledManifest
     private final int [] compactionCounter;
     private final int levelFanoutSize;
 
-    LeveledManifest(ColumnFamilyStore cfs, int maxSSTableSizeInMB, int fanoutSize, SizeTieredCompactionStrategyOptions options)
+    LeveledManifest(ColumnFamilyStore cfs, int maxSSTableSizeInMB, int fanoutSize, SizeTieredCompactionStrategyOptions options, LeveledCompactionStrategy strategy)
     {
         this.cfs = cfs;
+        this.strategy = strategy;
         this.maxSSTableSizeInBytes = maxSSTableSizeInMB * 1024L * 1024L;
         this.options = options;
         this.levelFanoutSize = fanoutSize;
@@ -85,12 +87,17 @@ public class LeveledManifest
 
     public static LeveledManifest create(ColumnFamilyStore cfs, int maxSSTableSize, int fanoutSize, List<SSTableReader> sstables)
     {
-        return create(cfs, maxSSTableSize, fanoutSize, sstables, new SizeTieredCompactionStrategyOptions());
+        return create(cfs, maxSSTableSize, fanoutSize, sstables, new SizeTieredCompactionStrategyOptions(), null);
     }
 
-    public static LeveledManifest create(ColumnFamilyStore cfs, int maxSSTableSize, int fanoutSize, Iterable<SSTableReader> sstables, SizeTieredCompactionStrategyOptions options)
+    public static LeveledManifest create(ColumnFamilyStore cfs, int maxSSTableSize, int fanoutSize, List<SSTableReader> sstables, LeveledCompactionStrategy strategy)
     {
-        LeveledManifest manifest = new LeveledManifest(cfs, maxSSTableSize, fanoutSize, options);
+        return create(cfs, maxSSTableSize, fanoutSize, sstables, new SizeTieredCompactionStrategyOptions(), strategy);
+    }
+
+    public static LeveledManifest create(ColumnFamilyStore cfs, int maxSSTableSize, int fanoutSize, Iterable<SSTableReader> sstables, SizeTieredCompactionStrategyOptions options, LeveledCompactionStrategy strategy)
+    {
+        LeveledManifest manifest = new LeveledManifest(cfs, maxSSTableSize, fanoutSize, options, strategy);
 
         // ensure all SSTables are in the manifest
         manifest.addSSTables(sstables);
@@ -344,7 +351,7 @@ public class LeveledManifest
 
     private CompactionCandidate getSTCSInL0CompactionCandidate()
     {
-        if (!DatabaseDescriptor.getDisableSTCSInL0() && generations.get(0).size() > MAX_COMPACTING_L0)
+        if (!DatabaseDescriptor.getDisableSTCSInL0() && (strategy == null || !strategy.getDisableSTCSInL0()) && generations.get(0).size() > MAX_COMPACTING_L0)
         {
             List<SSTableReader> mostInteresting = getSSTablesForSTCS(generations.get(0));
             if (!mostInteresting.isEmpty())

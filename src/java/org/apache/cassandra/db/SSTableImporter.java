@@ -21,6 +21,7 @@ package org.apache.cassandra.db;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -39,6 +40,9 @@ import org.apache.cassandra.io.sstable.Descriptor;
 import org.apache.cassandra.io.sstable.KeyIterator;
 import org.apache.cassandra.io.sstable.format.SSTableReader;
 import org.apache.cassandra.io.sstable.format.SSTableWriter;
+import org.apache.cassandra.io.sstable.metadata.MetadataComponent;
+import org.apache.cassandra.io.sstable.metadata.MetadataType;
+import org.apache.cassandra.io.sstable.metadata.ValidationMetadata;
 import org.apache.cassandra.service.ActiveRepairService;
 import org.apache.cassandra.utils.Pair;
 import org.apache.cassandra.utils.concurrent.Refs;
@@ -330,11 +334,14 @@ public class SSTableImporter
      * @param verifySSTables to verify the sstables given. If this is false a "quick" verification will be run, just deserializing metadata
      * @param extendedVerify to validate the values in the sstables
      */
-    private void verifySSTableForImport(Descriptor descriptor, Set<Component> components, boolean verifyTokens, boolean verifySSTables, boolean extendedVerify)
+    public void verifySSTableForImport(Descriptor descriptor, Set<Component> components, boolean verifyTokens, boolean verifySSTables, boolean extendedVerify)
     {
         SSTableReader reader = null;
         try
         {
+            // Check partitioner before opening SSTable to avoid System.exit(1) in SSTableReader.open
+            checkPartitionerCompatibility(descriptor);
+            
             reader = SSTableReader.open(descriptor, components, cfs.metadata);
             Verifier.Options verifierOptions = Verifier.options()
                                                        .extendedVerification(extendedVerify)
@@ -355,6 +362,27 @@ public class SSTableImporter
         {
             if (reader != null)
                 reader.selfRef().release();
+        }
+    }
+
+    /**
+     * Check partitioner compatibility before opening SSTable to avoid System.exit(1).
+     * This duplicates the partitioner check from SSTableReader.open() but throws an exception instead.
+     */
+    private void checkPartitionerCompatibility(Descriptor descriptor) throws IOException
+    {
+        EnumSet<MetadataType> types = EnumSet.of(MetadataType.VALIDATION);
+        Map<MetadataType, MetadataComponent> sstableMetadata = descriptor.getMetadataSerializer().deserialize(descriptor, types);
+        ValidationMetadata validationMetadata = (ValidationMetadata) sstableMetadata.get(MetadataType.VALIDATION);
+        
+        if (validationMetadata != null)
+        {
+            String partitionerName = cfs.metadata().partitioner.getClass().getCanonicalName();
+            if (!partitionerName.equals(validationMetadata.partitioner))
+            {
+                throw new IOException(String.format("Cannot import %s; partitioner %s does not match system partitioner %s. Note that the default partitioner starting with Cassandra 1.2 is Murmur3Partitioner, so you will need to edit that to match your old partitioner if upgrading.",
+                                                  descriptor, validationMetadata.partitioner, partitionerName));
+            }
         }
     }
 

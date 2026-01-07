@@ -50,6 +50,7 @@ import com.google.common.util.concurrent.Uninterruptibles;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.netflix.cassandra.importing.ImportJob;
 import io.netty.util.concurrent.GlobalEventExecutor;
 import org.apache.cassandra.Util;
 import org.apache.cassandra.auth.AuthCache;
@@ -905,6 +906,7 @@ public class Instance extends IsolatedExecutor implements IInvokableInstance
                                 () -> shutdownAndWait(Collections.singletonList(ActiveRepairService.repairCommandExecutor())),
                                 () -> ActiveRepairService.instance.shutdownNowAndWait(1L, MINUTES),
                                 () -> AutoRepair.instance.shutdownAndWait(1L, MINUTES),
+                                () -> ImportJob.shutdownAndWait(1L, MINUTES),
                                 () -> SnapshotManager.shutdownAndWait(1L, MINUTES)
             );
 

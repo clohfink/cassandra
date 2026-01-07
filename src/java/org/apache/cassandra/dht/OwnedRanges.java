@@ -85,6 +85,22 @@ public final class OwnedRanges
         return !outOfRangeTokenRejection || unownedRanges.isEmpty();
     }
 
+    public boolean checkForOverlapsRange(Collection<Range<Token>> requestedRanges)
+    {
+        if (ownedRanges.isEmpty() || requestedRanges.isEmpty())
+            return false;
+
+        for (Range<Token> requestedRange : requestedRanges)
+        {
+            for (Range<Token> ownedRange : ownedRanges)
+            {
+                if (ownedRange.intersects(requestedRange))
+                    return true;
+            }
+        }
+        return false;
+    }
+
     /**
      * Takes a collection of ranges and returns ranges from that collection that are not covered by this node's owned ranges.
      * <p>

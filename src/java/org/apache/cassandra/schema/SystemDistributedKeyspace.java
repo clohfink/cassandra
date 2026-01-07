@@ -84,12 +84,15 @@ public final class SystemDistributedKeyspace
      * gen 6: add denylist table
      * gen 7: add disk usage table (netflix internal)
      * gen 8: add AutoRepair related tables
+     * gen 9: add remote snapshot table (netflix internal)
      */
-    public static final long GENERATION = 8;
+    public static final long GENERATION = 9;
 
     public static final String REPAIR_HISTORY = "repair_history";
 
     public static final String PARENT_REPAIR_HISTORY = "parent_repair_history";
+
+    public static final String REMOTE_IMPORT = "remote_import";
 
     public static final String VIEW_BUILD_STATUS = "view_build_status";
 
@@ -145,6 +148,25 @@ public final class SystemDistributedKeyspace
         .compaction(CompactionParams.twcs(ImmutableMap.of("compaction_window_unit","DAYS",
                                                           "compaction_window_size","1")))
         .build();
+
+    private static final TableMetadata RemoteImport =
+    parse(REMOTE_IMPORT,
+          "Remote Imports",
+          "CREATE TABLE %s ("
+          + "state text static,"
+          + "creation_time timestamp static," // optional
+          + "id uuid,"
+          + "target_keyspace text,"
+          + "target_table text,"
+          + "source text,"
+          + "source_type text,"
+          + "start_token text," // optional
+          + "end_token text,"   // optional
+          + "dc_filter text,"   // optional
+          + "size bigint,"
+          + "PRIMARY KEY ((id, target_keyspace, target_table), source))")
+    .triggers(Triggers.of(TriggerMetadata.create("remote_import_trigger", "com.netflix.cassandra.importing.RemoteImportTrigger")))
+    .build();
 
     private static final TableMetadata ViewBuildStatus =
         parse(VIEW_BUILD_STATUS,
@@ -207,7 +229,7 @@ public final class SystemDistributedKeyspace
 
     public static KeyspaceMetadata metadata()
     {
-        return KeyspaceMetadata.create(SchemaConstants.DISTRIBUTED_KEYSPACE_NAME, KeyspaceParams.simple(Math.max(DEFAULT_RF, DatabaseDescriptor.getDefaultKeyspaceRF())), Tables.of(RepairHistory, ParentRepairHistory, ViewBuildStatus, PartitionDenylistTable, DiskUsageTable, AutoRepairHistory, AutoRepairPriority));
+        return KeyspaceMetadata.create(SchemaConstants.DISTRIBUTED_KEYSPACE_NAME, KeyspaceParams.simple(Math.max(DEFAULT_RF, DatabaseDescriptor.getDefaultKeyspaceRF())), Tables.of(RepairHistory, ParentRepairHistory, ViewBuildStatus, PartitionDenylistTable, DiskUsageTable, AutoRepairHistory, AutoRepairPriority, RemoteImport));
     }
 
     public static void startParentRepair(TimeUUID parent_id, String keyspaceName, String[] cfnames, RepairOption options)

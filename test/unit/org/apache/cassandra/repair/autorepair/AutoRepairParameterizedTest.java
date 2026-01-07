@@ -489,8 +489,8 @@ public class AutoRepairParameterizedTest extends CQLTester
         assertEquals(0, AutoRepairMetricsManager.getMetrics(repairType).skippedTokenRangesCount.getValue().intValue());
 
         // TODO: flip to 2 once we make the repairs running by default
-        assertEquals(14, state.getSkippedTablesCount());
-        assertEquals(14, AutoRepairMetricsManager.getMetrics(repairType).skippedTablesCount.getValue().intValue());
+        assertEquals(15, state.getSkippedTablesCount());
+        assertEquals(15, AutoRepairMetricsManager.getMetrics(repairType).skippedTablesCount.getValue().intValue());
 
         // set it to higher value, and this time, the tables should not be skipped
         config.setRepairSSTableCountHigherThreshold(repairType, beforeCount);
@@ -500,8 +500,8 @@ public class AutoRepairParameterizedTest extends CQLTester
         AutoRepair.instance.repair(repairType);
         assertEquals(0, state.getSkippedTokenRangesCount());
         assertEquals(0, AutoRepairMetricsManager.getMetrics(repairType).skippedTokenRangesCount.getValue().intValue());
-        assertEquals(13, state.getSkippedTablesCount());
-        assertEquals(13, AutoRepairMetricsManager.getMetrics(repairType).skippedTablesCount.getValue().intValue());
+        assertEquals(14, state.getSkippedTablesCount());
+        assertEquals(14, AutoRepairMetricsManager.getMetrics(repairType).skippedTablesCount.getValue().intValue());
     }
 
     @Test

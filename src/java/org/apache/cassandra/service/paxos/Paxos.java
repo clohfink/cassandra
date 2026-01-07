@@ -720,7 +720,7 @@ public class Paxos
                     // validate that the generated mutations are targetted at the same
                     // partition as the initial updates and reject (via an
                     // InvalidRequestException) any which aren't.
-                    updates = TriggerExecutor.instance.execute(updates);
+                    updates = TriggerExecutor.instance.execute(updates, clientState);
 
                     proposal = Proposal.of(ballot, updates);
                     Tracing.trace("CAS precondition is met; proposing client-requested updates for {}", ballot);

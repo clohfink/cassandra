@@ -655,7 +655,7 @@ public class LeveledCompactionStrategyTest
     public void testAddingOverlapping()
     {
         ColumnFamilyStore cfs = MockSchema.newCFS();
-        LeveledManifest lm = new LeveledManifest(cfs, 10, 10, new SizeTieredCompactionStrategyOptions());
+        LeveledManifest lm = LeveledManifest.create(cfs, 10, 10, new ArrayList<>(), new SizeTieredCompactionStrategyOptions(), null);
         List<SSTableReader> currentLevel = new ArrayList<>();
         int gen = 1;
         currentLevel.add(MockSchema.sstableWithLevel(gen++, 10, 20, 1, cfs));
@@ -706,7 +706,7 @@ public class LeveledCompactionStrategyTest
     public void singleTokenSSTableTest()
     {
         ColumnFamilyStore cfs = MockSchema.newCFS();
-        LeveledManifest lm = new LeveledManifest(cfs, 10, 10, new SizeTieredCompactionStrategyOptions());
+        LeveledManifest lm = LeveledManifest.create(cfs, 10, 10, new ArrayList<>(), new SizeTieredCompactionStrategyOptions(), null);
         List<SSTableReader> expectedL1 = new ArrayList<>();
 
         int gen = 1;
@@ -742,7 +742,7 @@ public class LeveledCompactionStrategyTest
         int levelCount = 9;
 
         ColumnFamilyStore cfs = MockSchema.newCFS();
-        LeveledManifest lm = new LeveledManifest(cfs, 10, 10, new SizeTieredCompactionStrategyOptions());
+        LeveledManifest lm = LeveledManifest.create(cfs, 10, 10, new ArrayList<>(), new SizeTieredCompactionStrategyOptions(), null);
         long seed = System.currentTimeMillis();
         Random r = new Random(seed);
         List<SSTableReader> newLevels = generateNewRandomLevels(cfs, 40, levelCount, 0, r);
@@ -917,7 +917,7 @@ public class LeveledCompactionStrategyTest
     {
         ColumnFamilyStore cfs = MockSchema.newCFS();
         int fanoutSize = 2; // to generate less sstables
-        LeveledManifest lm = new LeveledManifest(cfs, 1, fanoutSize, new SizeTieredCompactionStrategyOptions());
+        LeveledManifest lm = LeveledManifest.create(cfs, 1, fanoutSize, new ArrayList<>(), new SizeTieredCompactionStrategyOptions(), null);
 
         // generate data for L7 to trigger compaction
         int l7 = 7;
