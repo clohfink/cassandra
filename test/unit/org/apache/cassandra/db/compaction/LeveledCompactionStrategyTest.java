@@ -1419,6 +1419,69 @@ public class LeveledCompactionStrategyTest
         return new LongToken(t);
     }
 
+    @Test
+    public void testUnsafeAggressiveSSTableExpirationOptionValidation() throws ConfigurationException
+    {
+        Map<String, String> options = new HashMap<>();
+        options.put("sstable_size_in_mb", "1");
+
+        // Valid options without aggressive expiration should pass
+        Map<String, String> unvalidated = LeveledCompactionStrategy.validateOptions(options);
+        assertFalse(unvalidated.containsKey(LeveledCompactionStrategy.UNSAFE_AGGRESSIVE_SSTABLE_EXPIRATION_KEY));
+
+        // Invalid boolean value should be rejected
+        try
+        {
+            options.put(LeveledCompactionStrategy.UNSAFE_AGGRESSIVE_SSTABLE_EXPIRATION_KEY, "not-a-boolean");
+            LeveledCompactionStrategy.validateOptions(options);
+            Assert.fail("Invalid unsafe_aggressive_sstable_expiration value should be rejected");
+        }
+        catch (ConfigurationException e)
+        {
+            // Expected - reset for next test
+            options.remove(LeveledCompactionStrategy.UNSAFE_AGGRESSIVE_SSTABLE_EXPIRATION_KEY);
+        }
+
+        // 'false' value should always be accepted
+        options.put(LeveledCompactionStrategy.UNSAFE_AGGRESSIVE_SSTABLE_EXPIRATION_KEY, "false");
+        unvalidated = LeveledCompactionStrategy.validateOptions(options);
+        assertFalse(unvalidated.containsKey(LeveledCompactionStrategy.UNSAFE_AGGRESSIVE_SSTABLE_EXPIRATION_KEY));
+    }
+
+    @Test
+    public void testUnsafeAggressiveSSTableExpirationEnabled()
+    {
+        Map<String, String> options = new HashMap<>();
+        options.put("sstable_size_in_mb", "1");
+        options.put(LeveledCompactionStrategy.UNSAFE_AGGRESSIVE_SSTABLE_EXPIRATION_KEY, "true");
+
+        // Should pass validation - no JVM property required
+        Map<String, String> unvalidated = LeveledCompactionStrategy.validateOptions(options);
+        assertFalse(unvalidated.containsKey(LeveledCompactionStrategy.UNSAFE_AGGRESSIVE_SSTABLE_EXPIRATION_KEY));
+
+        // Create strategy and verify it initializes correctly
+        LeveledCompactionStrategy lcs = new LeveledCompactionStrategy(cfs, options);
+        assertNotNull(lcs);
+    }
+
+    @Test
+    public void testLeveledCompactionControllerIgnoreOverlaps()
+    {
+        // Test that LeveledCompactionController correctly handles ignoreOverlaps flag
+        Set<SSTableReader> compacting = Collections.emptySet();
+        int gcBefore = (int) (System.currentTimeMillis() / 1000);
+
+        // With ignoreOverlaps = false (default behavior)
+        LeveledCompactionController controllerDefault = new LeveledCompactionController(cfs, compacting, gcBefore, false);
+        assertNotNull(controllerDefault);
+        Assert.assertFalse("Default controller should not ignore overlaps", controllerDefault.ignoreOverlaps());
+
+        // With ignoreOverlaps = true (aggressive expiration)
+        LeveledCompactionController controllerAggressive = new LeveledCompactionController(cfs, compacting, gcBefore, true);
+        assertNotNull(controllerAggressive);
+        Assert.assertTrue("Aggressive controller should ignore overlaps", controllerAggressive.ignoreOverlaps());
+    }
+
     static void populateCfsScheduled(ColumnFamilyStore cfs) throws InterruptedException
     {
         byte [] b = new byte[100 * 1024];

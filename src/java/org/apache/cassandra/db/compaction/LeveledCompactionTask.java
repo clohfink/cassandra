@@ -33,13 +33,26 @@ public class LeveledCompactionTask extends CompactionTask
     private final int level;
     private final long maxSSTableBytes;
     private final boolean majorCompaction;
+    private final boolean ignoreOverlaps;
 
     public LeveledCompactionTask(ColumnFamilyStore cfs, LifecycleTransaction txn, int level, int gcBefore, long maxSSTableBytes, boolean majorCompaction)
+    {
+        this(cfs, txn, level, gcBefore, maxSSTableBytes, majorCompaction, false);
+    }
+
+    public LeveledCompactionTask(ColumnFamilyStore cfs, LifecycleTransaction txn, int level, int gcBefore, long maxSSTableBytes, boolean majorCompaction, boolean ignoreOverlaps)
     {
         super(cfs, txn, gcBefore);
         this.level = level;
         this.maxSSTableBytes = maxSSTableBytes;
         this.majorCompaction = majorCompaction;
+        this.ignoreOverlaps = ignoreOverlaps;
+    }
+
+    @Override
+    public CompactionController getCompactionController(Set<SSTableReader> toCompact)
+    {
+        return new LeveledCompactionController(cfs, toCompact, gcBefore, ignoreOverlaps);
     }
 
     @Override

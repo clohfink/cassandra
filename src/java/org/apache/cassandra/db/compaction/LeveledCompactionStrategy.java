@@ -63,11 +63,14 @@ public class LeveledCompactionStrategy extends AbstractCompactionStrategy
     private static final String DISABLE_STCS_IN_L0_OPTION = "disable_stcs_in_l0";
     public static final int DEFAULT_LEVEL_FANOUT_SIZE = 10;
 
+    protected static final String UNSAFE_AGGRESSIVE_SSTABLE_EXPIRATION_KEY = "unsafe_aggressive_sstable_expiration";
+
     @VisibleForTesting
     final LeveledManifest manifest;
     private final int maxSSTableSizeInMiB;
     private final int levelFanoutSize;
     private final boolean singleSSTableUplevel;
+    private final boolean ignoreOverlaps;
     private final boolean disableSTCSInL0;
     private static final String SCHEDULED_COMPACTION_OPTION = "scheduled_compactions";
 
@@ -134,6 +137,9 @@ public class LeveledCompactionStrategy extends AbstractCompactionStrategy
         singleSSTableUplevel = configuredSingleSSTableUplevel;
         disableSTCSInL0 = configuredDisableSTCSInL0;
         enableScheduledCompactions = configuredEnableScheduledCompactions;
+
+        String aggressiveExpiration = options != null ? options.get(UNSAFE_AGGRESSIVE_SSTABLE_EXPIRATION_KEY) : null;
+        this.ignoreOverlaps = Boolean.parseBoolean(aggressiveExpiration);
 
         manifest = new LeveledManifest(cfs, this.maxSSTableSizeInMiB, this.levelFanoutSize, localOptions, this);
         logger.trace("Created {}", manifest);
@@ -215,7 +221,7 @@ public class LeveledCompactionStrategy extends AbstractCompactionStrategy
             {
                 AbstractCompactionTask newTask;
                 if (!singleSSTableUplevel || op == OperationType.TOMBSTONE_COMPACTION || txn.originals().size() > 1)
-                    newTask = new LeveledCompactionTask(cfs, txn, candidate.level, gcBefore, candidate.maxSSTableBytes, false);
+                    newTask = new LeveledCompactionTask(cfs, txn, candidate.level, gcBefore, candidate.maxSSTableBytes, false, ignoreOverlaps);
                 else
                     newTask = new SingleSSTableLCSTask(cfs, txn, candidate.level);
 
@@ -301,7 +307,8 @@ public class LeveledCompactionStrategy extends AbstractCompactionStrategy
                                                                                          candidate.maxSSTableBytes,
                                                                                          nextBounds,
                                                                                          lastScheduledCompactionTime + millisUntilNextScheduledCompaction,
-                                                                                         repaired);
+                                                                                         repaired,
+                                                                                         ignoreOverlaps);
                 task.setCompactionType(OperationType.TOMBSTONE_COMPACTION);
                 return task;
             }
@@ -417,7 +424,7 @@ public class LeveledCompactionStrategy extends AbstractCompactionStrategy
         LifecycleTransaction txn = cfs.getTracker().tryModify(filteredSSTables, OperationType.COMPACTION);
         if (txn == null)
             return null;
-        return Arrays.<AbstractCompactionTask>asList(new LeveledCompactionTask(cfs, txn, 0, gcBefore, getMaxSSTableBytes(), true));
+        return Arrays.<AbstractCompactionTask>asList(new LeveledCompactionTask(cfs, txn, 0, gcBefore, getMaxSSTableBytes(), true, ignoreOverlaps));
 
     }
 
@@ -436,7 +443,7 @@ public class LeveledCompactionStrategy extends AbstractCompactionStrategy
             return null;
         }
         int level = sstables.size() > 1 ? 0 : sstables.iterator().next().getSSTableLevel();
-        return new LeveledCompactionTask(cfs, transaction, level, gcBefore, level == 0 ? Long.MAX_VALUE : getMaxSSTableBytes(), false);
+        return new LeveledCompactionTask(cfs, transaction, level, gcBefore, level == 0 ? Long.MAX_VALUE : getMaxSSTableBytes(), false, ignoreOverlaps);
     }
 
     @Override
@@ -452,7 +459,7 @@ public class LeveledCompactionStrategy extends AbstractCompactionStrategy
             if (level != sstable.getSSTableLevel())
                 level = 0;
         }
-        return new LeveledCompactionTask(cfs, txn, level, gcBefore, maxSSTableBytes, false);
+        return new LeveledCompactionTask(cfs, txn, level, gcBefore, maxSSTableBytes, false, ignoreOverlaps);
     }
 
     /**
@@ -840,6 +847,17 @@ public class LeveledCompactionStrategy extends AbstractCompactionStrategy
         // is friendly, returns false if it can't parse (instead of NFE like above)
         uncheckedOptions.remove(SCHEDULED_COMPACTION_OPTION);
 
+        String aggressiveExpiration = options.get(UNSAFE_AGGRESSIVE_SSTABLE_EXPIRATION_KEY);
+        if (aggressiveExpiration != null)
+        {
+            if (!(aggressiveExpiration.equalsIgnoreCase("true") || aggressiveExpiration.equalsIgnoreCase("false")))
+            {
+                throw new ConfigurationException(String.format("%s is not 'true' or 'false' (%s)",
+                                                               UNSAFE_AGGRESSIVE_SSTABLE_EXPIRATION_KEY, aggressiveExpiration));
+            }
+        }
+        uncheckedOptions.remove(UNSAFE_AGGRESSIVE_SSTABLE_EXPIRATION_KEY);
+
         uncheckedOptions = SizeTieredCompactionStrategyOptions.validateOptions(options, uncheckedOptions);
 
         return uncheckedOptions;
@@ -855,7 +873,12 @@ public class LeveledCompactionStrategy extends AbstractCompactionStrategy
 
         public ScheduledLeveledCompactionTask(ColumnFamilyStore cfs, LifecycleTransaction txn, int level, int gcBefore, long maxSSTableBytes, Range<Token> compactingRange, long startTime, boolean repaired)
         {
-            super(cfs, txn, level, gcBefore, maxSSTableBytes, false);
+            this(cfs, txn, level, gcBefore, maxSSTableBytes, compactingRange, startTime, repaired, false);
+        }
+
+        public ScheduledLeveledCompactionTask(ColumnFamilyStore cfs, LifecycleTransaction txn, int level, int gcBefore, long maxSSTableBytes, Range<Token> compactingRange, long startTime, boolean repaired, boolean ignoreOverlaps)
+        {
+            super(cfs, txn, level, gcBefore, maxSSTableBytes, false, ignoreOverlaps);
             this.compactedRange = compactingRange;
             this.startTime = startTime;
             this.repaired = repaired;
