@@ -53,7 +53,6 @@ import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import static java.util.stream.Collectors.joining;
 import static java.util.stream.Collectors.toList;
 import static java.util.stream.Collectors.toSet;
-import static org.apache.cassandra.exceptions.StartupException.ERR_WRONG_DISK_STATE;
 import static org.apache.cassandra.exceptions.StartupException.ERR_WRONG_MACHINE_STATE;
 import static org.apache.cassandra.utils.Clock.Global.currentTimeMillis;
 
@@ -173,7 +172,11 @@ public class DataResurrectionCheck implements StartupCheck
         }
         catch (IOException ex)
         {
-            throw new StartupException(ERR_WRONG_DISK_STATE, "Failed to deserialize heartbeat file " + heartbeatFile, ex);
+            LOGGER.warn("Failed to deserialize heartbeat file "
+                        + heartbeatFile
+                        + ". Falling back to file last modified time.", ex);
+            Instant lastModified = Instant.ofEpochMilli(heartbeatFile.lastModified());
+            heartbeat = new Heartbeat(lastModified);
         }
 
         if (heartbeat.lastHeartbeat == null)

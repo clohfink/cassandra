@@ -18,9 +18,11 @@
 package org.apache.cassandra.service;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.attribute.FileTime;
 import java.time.Instant;
 import java.util.List;
 
@@ -205,6 +207,42 @@ public class StartupChecksTest
 
             Thread.sleep(6 * 1000);
             verifyFailure(startupChecks, "Invalid tables: abc.def");
+        }
+        finally
+        {
+            DatabaseDescriptor.setMaxHintWindow(originalHintWindow);
+        }
+    }
+
+    @Test
+    public void testDataResurrectionCheckLastModifiedFallback() throws Exception
+    {
+        DataResurrectionCheck check = new DataResurrectionCheck() {
+            @Override
+            List<String> getKeyspaces()
+            {
+                return singletonList("test_ks");
+            }
+
+            @Override
+            List<TableGCPeriod> getTablesGcPeriods(String userKeyspace)
+            {
+                return singletonList(new TableGCPeriod("test_table", 10));
+            }
+        };
+
+        int originalHintWindow = DatabaseDescriptor.getMaxHintWindow();
+        try
+        {
+            DatabaseDescriptor.setMaxHintWindow(5 * 1000);
+
+            // Empty file
+            Files.write(heartbeatFile.toPath(), "".getBytes(StandardCharsets.UTF_8));
+            Instant recentTimestamp = Instant.ofEpochMilli(Clock.Global.currentTimeMillis());
+            Files.setLastModifiedTime(heartbeatFile.toPath(), FileTime.from(recentTimestamp));
+
+            startupChecks.withTest(check);
+            verifySuccess(startupChecks);
         }
         finally
         {
