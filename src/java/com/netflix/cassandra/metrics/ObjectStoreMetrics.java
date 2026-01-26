@@ -30,17 +30,14 @@ public class ObjectStoreMetrics extends LatencyMetrics
     public final Meter successes;
     public final Meter failures;
     public final Meter accessDenied;
-
     public final Timer objectFetchLatency;
     public final Histogram objectFetchBytes;
-
     public final Timer rangeReadFetchLatency;
     public final Histogram rangeReadFetchBytes;
-
+    public final Timer fullReadFetchLatency;
+    public final Histogram fullReadFetchBytes;
     public final Timer prefixFetchLatency;
-
     public final Timer listObjectLatency;
-
     public final Timer headObjectLatency;
 
     public ObjectStoreMetrics()
@@ -53,6 +50,8 @@ public class ObjectStoreMetrics extends LatencyMetrics
         objectFetchBytes = Metrics.histogram(factory.createMetricName("ObjectFetchBytes"), false);
         rangeReadFetchLatency = Metrics.timer(factory.createMetricName("RangeReadFetchLatency"));
         rangeReadFetchBytes = Metrics.histogram(factory.createMetricName("RangeReadFetchBytes"), false);
+        fullReadFetchLatency = Metrics.timer(factory.createMetricName("FullReadFetchLatency"));
+        fullReadFetchBytes = Metrics.histogram(factory.createMetricName("FullReadFetchBytes"), false);
         prefixFetchLatency = Metrics.timer(factory.createMetricName("PrefixFetchLatency"));
         listObjectLatency = Metrics.timer(factory.createMetricName("ListObjectLatency"));
         headObjectLatency = Metrics.timer(factory.createMetricName("HeadObjectLatency"));
@@ -68,6 +67,8 @@ public class ObjectStoreMetrics extends LatencyMetrics
         Metrics.remove(factory.createMetricName("ObjectFetchBytes"));
         Metrics.remove(factory.createMetricName("RangeReadFetchLatency"));
         Metrics.remove(factory.createMetricName("RangeReadFetchBytes"));
+        Metrics.remove(factory.createMetricName("FullReadFetchLatency"));
+        Metrics.remove(factory.createMetricName("FullReadFetchBytes"));
         Metrics.remove(factory.createMetricName("PrefixFetchLatency"));
         Metrics.remove(factory.createMetricName("ListObjectLatency"));
         Metrics.remove(factory.createMetricName("HeadObjectLatency"));

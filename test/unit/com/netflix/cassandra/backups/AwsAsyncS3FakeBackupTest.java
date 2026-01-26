@@ -22,9 +22,7 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.ExecutionException;
 
 import org.junit.After;
@@ -53,8 +51,7 @@ public class AwsAsyncS3FakeBackupTest
     {
         tempDir = Files.createTempDirectory("s3-fake-test");
         
-        Map<String, String> envVars = new HashMap<>();
-        s3Fake = new AwsAsyncS3FakeBackup(envVars, Region.US_EAST_1);
+        s3Fake = new AwsAsyncS3FakeBackup(Region.US_EAST_1);
         s3Fake.setFakeS3RootDir(tempDir.toString());
         
         // Create test data structure
@@ -95,10 +92,7 @@ public class AwsAsyncS3FakeBackupTest
     @Test
     public void testConstructor()
     {
-        Map<String, String> envVars = new HashMap<>();
-        envVars.put("TEST_VAR", "value");
-        
-        AwsAsyncS3FakeBackup s3 = new AwsAsyncS3FakeBackup(envVars, Region.US_WEST_2);
+        AwsAsyncS3FakeBackup s3 = new AwsAsyncS3FakeBackup(Region.US_WEST_2);
         assertNotNull(s3);
     }
 

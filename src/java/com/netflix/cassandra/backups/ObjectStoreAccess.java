@@ -112,6 +112,15 @@ public interface ObjectStoreAccess
     AsyncPromise<Void> getObjectAsFile(String bucket, String key, Path path);
 
     /**
+     * Downloads an object as a byte array.
+     *
+     * @param bucket the bucket name (e.g., S3 bucket)
+     * @param key the object key
+     * @return AsyncPromise containing the object contents as a byte array
+     */
+    AsyncPromise<byte[]> getObjectAsBytes(String bucket, String key);
+
+    /**
      * Retrieves a specific byte range from an object into a reusable ByteBuffer to avoid allocations.
      *
      * @param bucket the bucket name (e.g., S3 bucket)

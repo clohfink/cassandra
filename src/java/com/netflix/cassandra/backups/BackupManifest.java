@@ -20,6 +20,7 @@ package com.netflix.cassandra.backups;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Collectors;
 
 import org.apache.commons.lang3.Validate;
 
@@ -41,6 +42,14 @@ public class BackupManifest {
     public void setInfo(Info info) { this.info = info; }
 
     public List<Data> getData() { return data; }
+    public List<Data> getData(String keyspace, String table) {
+        return data == null
+               ? new ArrayList<>()
+               : data.stream()
+                     .filter(data -> data.getKeyspaceName().equals(keyspace))
+                     .filter(data -> data.getColumnfamilyName().equals(table))
+                     .collect(Collectors.toList());
+    }
     public void setData(List<Data> data) { this.data = data; }
 
     public static Builder builder() {
@@ -184,7 +193,7 @@ public class BackupManifest {
             this.columnfamilyName = columnfamilyName;
         }
 
-        public List<BackupSSTable> getSstables() { return sstables; }
+        public List<BackupSSTable> getSstables() { return sstables == null ? new ArrayList<>() : sstables; }
         public void setSstables(List<BackupSSTable> sstables) {
             this.sstables = sstables;
         }
@@ -242,7 +251,7 @@ public class BackupManifest {
         public void setPrefix(String prefix) { this.prefix = prefix; }
 
         public List<BackupSSTableComponent> getSstableComponents() {
-            return sstableComponents;
+            return sstableComponents == null ? new ArrayList<>() : sstableComponents;
         }
         public void setSstableComponents(List<BackupSSTableComponent> sstableComponents) {
             this.sstableComponents = sstableComponents;

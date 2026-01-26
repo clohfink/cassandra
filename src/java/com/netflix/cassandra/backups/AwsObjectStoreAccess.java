@@ -126,6 +126,27 @@ public class AwsObjectStoreAccess implements ObjectStoreAccess
     }
 
     @Override
+    public AsyncPromise<byte[]> getObjectAsBytes(String bucket, String key)
+    {
+        Timer.Context time = metrics.fullReadFetchLatency.time();
+        GetObjectRequest req = GetObjectRequest.builder()
+                                               .bucket(bucket)
+                                               .key(key)
+                                               .build();
+
+        return toPromise(
+            s3AsyncClient.getObject(req, AsyncResponseTransformer.toBytes())
+                        .thenApply(responseBytes -> responseBytes.asByteArray())
+                        .whenComplete((response, error) -> {
+                            if (error == null && response != null)
+                                metrics.fullReadFetchBytes.update(response.length);
+                        })
+                        .whenComplete(successMetricReporting)
+                        .whenComplete((__, ___) -> time.stop())
+        );
+    }
+
+    @Override
     public AsyncPromise<Void> getObjectRangeIntoBuffer(String bucket, String key, long from, long to, ByteBuffer buffer)
     {
         Timer.Context time = metrics.rangeReadFetchLatency.time();

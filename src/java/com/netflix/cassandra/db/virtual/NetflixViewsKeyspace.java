@@ -19,6 +19,7 @@ package com.netflix.cassandra.db.virtual;
 
 import com.google.common.collect.ImmutableList;
 
+import com.netflix.cassandra.backups.BackupUtils;
 import org.apache.cassandra.db.virtual.VirtualKeyspace;
 import org.apache.cassandra.db.virtual.VirtualTable;
 
@@ -37,6 +38,8 @@ public final class NetflixViewsKeyspace extends VirtualKeyspace
                 .add(new PartitionHistogramTable(NAME))
                 .add(new ResourcesTable(NAME))
                 .add(new PriamConfigTable(NAME))
+                .add(new BackupsTable(NAME, BackupUtils.getBackupContext(), BackupUtils.getObjectStoreAccess()))
+                .add(new BackupDetailsTable(NAME, BackupUtils.getBackupContext(), BackupUtils.getObjectStoreAccess()))
                 .add(new LocalImport(NAME))
                 .build());
     }

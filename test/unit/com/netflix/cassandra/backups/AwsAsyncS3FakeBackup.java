@@ -26,7 +26,6 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -47,16 +46,12 @@ public class AwsAsyncS3FakeBackup implements ObjectStoreAccess, Serializable
 {
     private static final Logger logger = LoggerFactory.getLogger(AwsAsyncS3FakeBackup.class);
     private String fakeS3RootDir;
-    private final Map<String, String> envVars;
     private final String region;
 
     private final EnumMap<Method, CopyOnWriteArrayList<Injection<?>>> injectedBehavior;
 
-    public AwsAsyncS3FakeBackup(
-        Map<String, String> envVars,
-        Region region)
+    public AwsAsyncS3FakeBackup(Region region)
     {
-        this.envVars = envVars;
         this.region = region.id();
         this.injectedBehavior = new EnumMap<>(Method.class);
     }
@@ -239,6 +234,45 @@ public class AwsAsyncS3FakeBackup implements ObjectStoreAccess, Serializable
         );
     }
 
+    @Override
+    public AsyncPromise<byte[]> getObjectAsBytes(String bucket, String key)
+    {
+        ObjectStoreMetrics s3Metrics = ObjectStoreAccess.getMetrics();
+        Timer.Context time = s3Metrics.fullReadFetchLatency.time();
+        Optional<Injection<byte[]>> expectation = getExpectation(Method.GET_OBJECT_AS_BYTES);
+        return Futures.toPromise(
+        expectation.flatMap(Injection::error)
+                   .map(CompletableFuture::<byte[]>failedFuture)
+                   .or(() -> expectation.flatMap(Injection::result).map(CompletableFuture::completedFuture))
+                   .orElseGet(() ->
+                              CompletableFuture.supplyAsync(() -> {
+                                  File file = new File(fakeS3RootDir, bucket + "/" + key);
+                                  if (!file.exists())
+                                  {
+                                      throw new RuntimeException("File does not exist");
+                                  }
+                                  try
+                                  {
+                                      byte[] data = Files.readAllBytes(file.toPath());
+                                      s3Metrics.fullReadFetchBytes.update(data.length);
+                                      return data;
+                                  }
+                                  catch (IOException e)
+                                  {
+                                      throw new RuntimeException(e);
+                                  }
+                              })
+                   ).whenComplete((result, failure) -> {
+                       if (failure != null) {
+                           s3Metrics.failures.mark();
+                       } else {
+                           s3Metrics.successes.mark();
+                       }
+                       time.stop();
+                   })
+        );
+    }
+
     @SuppressWarnings("unchecked")
     private <T> Optional<Injection<T>> getExpectation(Method method)
     {
@@ -327,6 +361,7 @@ public class AwsAsyncS3FakeBackup implements ObjectStoreAccess, Serializable
         GET_OBJECT_AS_FILE,
         GET_OBJECT_RANGE_INTO_BUFFER,
         GET_OBJECT_KEYS,
-        GET_OBJECT_SIZE
+        GET_OBJECT_SIZE,
+        GET_OBJECT_AS_BYTES
     }
 }
