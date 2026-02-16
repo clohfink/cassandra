@@ -246,6 +246,9 @@ public class SelectStatement implements CQLStatement.SingleKeyspaceCqlStatement
     {
         if (parameters.allowFiltering && !SchemaConstants.isSystemKeyspace(table.keyspace))
             Guardrails.allowFilteringEnabled.ensureEnabled(state);
+
+        if (restrictions.isKeyRange() && table.params.memtable.toString().contains("backupmemtable"))
+            throw new InvalidRequestException("Range queries are not supported on S3 tables");
     }
 
     public ResultMessage.Rows execute(QueryState state, QueryOptions options, Dispatcher.RequestTime requestTime)

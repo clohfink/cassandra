@@ -223,6 +223,12 @@ public class TableMetrics
     /** Time spent waiting for free memtable space, either on- or off-heap */
     public final Histogram waitingOnFreeMemtableSpace;
 
+    /** Object Store (cold tier) per-read metrics */
+    public final Histogram objectStoreChunksPerRead;
+    public final Histogram objectStorePrefetchesPerRead;
+    public final Histogram objectStoreCacheHitsPerRead;
+    public final Histogram objectStoreBytesPerRead;
+
     @Deprecated
     public final Counter droppedMutations;
 
@@ -941,6 +947,12 @@ public class TableMetrics
         coordinatorScanLatency = createTableTimer("CoordinatorScanLatency");
         coordinatorWriteLatency = createTableTimer("CoordinatorWriteLatency");
         waitingOnFreeMemtableSpace = createTableHistogram("WaitingOnFreeMemtableSpace", false);
+
+        // Object Store (cold tier) per-read metrics
+        objectStoreChunksPerRead = createTableHistogram("ObjectStoreChunksPerRead", false);
+        objectStorePrefetchesPerRead = createTableHistogram("ObjectStorePrefetchesPerRead", false);
+        objectStoreCacheHitsPerRead = createTableHistogram("ObjectStoreCacheHitsPerRead", false);
+        objectStoreBytesPerRead = createTableHistogram("ObjectStoreBytesPerRead", false);
 
         // We do not want to capture view mutation specific metrics for a view
         // They only makes sense to capture on the base table

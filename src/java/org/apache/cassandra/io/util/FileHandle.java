@@ -65,11 +65,11 @@ public class FileHandle extends SharedCloseableImpl
      */
     private final Optional<CompressionMetadata> compressionMetadata;
 
-    private FileHandle(Cleanup cleanup,
-                       ChannelProxy channel,
-                       RebuffererFactory rebuffererFactory,
-                       CompressionMetadata compressionMetadata,
-                       long onDiskLength)
+    protected FileHandle(Cleanup cleanup,
+                         ChannelProxy channel,
+                         RebuffererFactory rebuffererFactory,
+                         CompressionMetadata compressionMetadata,
+                         long onDiskLength)
     {
         super(cleanup);
         this.rebuffererFactory = rebuffererFactory;
@@ -204,17 +204,17 @@ public class FileHandle extends SharedCloseableImpl
     /**
      * Perform clean up of all resources held by {@link FileHandle}.
      */
-    private static class Cleanup implements RefCounted.Tidy
+    protected static class Cleanup implements RefCounted.Tidy
     {
         final ChannelProxy channel;
         final RebuffererFactory rebufferer;
         final CompressionMetadata compressionMetadata;
         final Optional<ChunkCache> chunkCache;
 
-        private Cleanup(ChannelProxy channel,
-                        RebuffererFactory rebufferer,
-                        CompressionMetadata compressionMetadata,
-                        ChunkCache chunkCache)
+        public Cleanup(ChannelProxy channel,
+                       RebuffererFactory rebufferer,
+                       CompressionMetadata compressionMetadata,
+                       ChunkCache chunkCache)
         {
             this.channel = channel;
             this.rebufferer = rebufferer;
@@ -224,7 +224,7 @@ public class FileHandle extends SharedCloseableImpl
 
         public String name()
         {
-            return channel.filePath();
+            return channel != null ? channel.filePath() : "FileHandle";
         }
 
         public void tidy()
@@ -241,11 +241,17 @@ public class FileHandle extends SharedCloseableImpl
             {
                 try
                 {
-                    channel.close();
+                    if (channel != null)
+                    {
+                        channel.close();
+                    }
                 }
                 finally
                 {
-                    rebufferer.close();
+                    if (rebufferer != null)
+                    {
+                        rebufferer.close();
+                    }
                 }
             }
         }

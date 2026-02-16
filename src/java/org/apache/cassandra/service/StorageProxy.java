@@ -45,6 +45,7 @@ import com.google.common.cache.CacheLoader;
 import com.google.common.collect.Iterables;
 import com.google.common.util.concurrent.Uninterruptibles;
 
+import com.netflix.cassandra.backups.InvalidS3Exception;
 import org.apache.cassandra.service.paxos.Ballot;
 import org.apache.cassandra.service.paxos.Commit;
 import org.apache.cassandra.service.paxos.ContentionStrategy;
@@ -2224,6 +2225,11 @@ public class StorageProxy implements StorageProxyMBean
                 if (t instanceof TombstoneOverwhelmingException)
                 {
                     handler.onFailure(FBUtilities.getBroadcastAddressAndPort(), RequestFailureReason.READ_TOO_MANY_TOMBSTONES);
+                    logger.error(t.getMessage());
+                }
+                else if (t instanceof InvalidS3Exception)
+                {
+                    handler.onFailure(FBUtilities.getBroadcastAddressAndPort(), RequestFailureReason.UNKNOWN);
                     logger.error(t.getMessage());
                 }
                 else

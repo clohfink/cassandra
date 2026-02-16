@@ -1972,7 +1972,7 @@ public abstract class SSTableReader extends SSTable implements UnfilteredSource,
         return selfRef.ref();
     }
 
-    void setup(boolean trackHotness)
+    public void setup(boolean trackHotness)
     {
         tidy.setup(this, TRACK_ACTIVITY && trackHotness);
         this.readMeter = tidy.global.readMeter;

@@ -25,6 +25,7 @@ import com.google.common.collect.Iterables;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.netflix.cassandra.backups.BackupMemtableParams;
 import org.apache.cassandra.auth.Permission;
 import org.apache.cassandra.db.guardrails.Guardrails;
 import org.apache.cassandra.db.marshal.ValueAccessor;
@@ -276,6 +277,7 @@ public abstract class ModificationStatement implements CQLStatement.SingleKeyspa
         checkFalse(isVirtual() && attrs.isTimestampSet(), "Custom timestamp is not supported by virtual tables");
         checkFalse(isVirtual() && attrs.isTimeToLiveSet(), "Expiring columns are not supported by virtual tables");
         checkFalse(isVirtual() && hasConditions(), "Conditional updates are not supported by virtual tables");
+        checkFalse(metadata.params.memtable instanceof BackupMemtableParams, "Backup memtable cannot be used for updates or deletions");
 
         if (attrs.isTimestampSet())
             Guardrails.userTimestampsEnabled.ensureEnabled(state);

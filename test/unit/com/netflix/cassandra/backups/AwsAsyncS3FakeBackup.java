@@ -26,6 +26,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -46,12 +47,19 @@ public class AwsAsyncS3FakeBackup implements ObjectStoreAccess, Serializable
 {
     private static final Logger logger = LoggerFactory.getLogger(AwsAsyncS3FakeBackup.class);
     private String fakeS3RootDir;
+    private final Map<String, String> envVars;
     private final String region;
 
     private final EnumMap<Method, CopyOnWriteArrayList<Injection<?>>> injectedBehavior;
 
     public AwsAsyncS3FakeBackup(Region region)
     {
+        this(System.getenv(), region);
+    }
+
+    public AwsAsyncS3FakeBackup(Map<String, String> envVars, Region region)
+    {
+        this.envVars = envVars;
         this.region = region.id();
         this.injectedBehavior = new EnumMap<>(Method.class);
     }
@@ -63,176 +71,41 @@ public class AwsAsyncS3FakeBackup implements ObjectStoreAccess, Serializable
         Timer.Context time = objectStoreMetrics.objectFetchLatency.time();
         Optional<Injection<Void>> expectation = getExpectation(Method.GET_OBJECT_AS_FILE);
         return Futures.toPromise(
-            expectation.flatMap(Injection::error)
-                       .map(CompletableFuture::<Void>failedFuture)
-                       .or(() -> expectation.flatMap(Injection::result).map(CompletableFuture::completedFuture))
-                       .orElseGet(() ->
-                                  CompletableFuture.runAsync(() -> {
-                                        File sourceFile = new File(fakeS3RootDir, bucket + "/" + key);
-                                        if (!sourceFile.exists())
-                                        {
-                                            objectStoreMetrics.failures.mark();
-                                            throw new RuntimeException("Source file does not exist");
-                                        }
-                                        try
-                                        {
-                                            Files.copy(sourceFile.toPath(), path);
-                                        }
-                                        catch (IOException e)
-                                        {
-                                            throw new RuntimeException(e);
-                                        } finally
-                                        {
-                                            objectStoreMetrics.objectFetchBytes.update(sourceFile.length());
-                                            time.stop();
-                                        }
-                                  })
-                       ).whenComplete((result, failure) -> {
-                            time.stop();
-                            if (failure != null) {
-                                objectStoreMetrics.failures.mark();
-                            } else {
-                                objectStoreMetrics.successes.mark();
-                            }
-                       })
-        );
-    }
-
-    @Override
-    public AsyncPromise<Void> getObjectRangeIntoBuffer(String bucket, String key, long from, long to, ByteBuffer buffer)
-    {
-        long expectedLength = to - from + 1;
-        if (buffer.capacity() < expectedLength)
-        {
-            throw new IllegalArgumentException(
-                String.format("Buffer too small: buffer size %d, expected %d bytes", buffer.capacity(), expectedLength));
-        }
-        
-        ObjectStoreMetrics objectStoreMetrics = ObjectStoreAccess.getMetrics();
-        Timer.Context time = objectStoreMetrics.rangeReadFetchLatency.time();
-        Optional<Injection<Void>> expectation = getExpectation(Method.GET_OBJECT_RANGE_INTO_BUFFER);
-        return Futures.toPromise(
-            expectation.flatMap(Injection::error)
-                       .map(CompletableFuture::<Void>failedFuture)
-                       .or(() -> expectation.flatMap(Injection::result).map(CompletableFuture::completedFuture))
-                       .orElseGet(() ->
-                            CompletableFuture.runAsync(() -> {
-                                File file = new File(fakeS3RootDir, bucket + "/" + key);
-                                if (!file.exists())
-                                {
-                                    throw new RuntimeException("File does not exist");
-                                }
-                                try
-                                {
-                                    byte[] data = Files.readAllBytes(file.toPath());
-                                    if (from >= data.length)
-                                    {
-                                        objectStoreMetrics.rangeReadFetchBytes.update(0);
-                                        return;
-                                    }
-                                    int length = (int)Math.min(expectedLength, data.length - from);
-                                    if (length != expectedLength)
-                                    {
-                                        throw new RuntimeException(
-                                            String.format("Received incomplete byte range: expected %d bytes, got %d bytes", 
-                                                         expectedLength, length));
-                                    }
-                                    buffer.put(data, (int)from, length);
-                                    objectStoreMetrics.rangeReadFetchBytes.update(length);
-                                }
-                                catch (IOException e)
-                                {
-                                    throw new RuntimeException(e);
-                                }
-                            })
-                       ).whenComplete((result, failure) -> {
-                           if (failure != null) {
-                               objectStoreMetrics.failures.mark();
-                           } else {
-                               objectStoreMetrics.successes.mark();
-                           }
-                           time.stop();
-                       })
-        );
-    }
-
-    @Override
-    public AsyncPromise<List<String>> getObjectKeys(String bucket, String prefix)
-    {
-        ObjectStoreMetrics objectStoreMetrics = ObjectStoreAccess.getMetrics();
-        Timer.Context time = objectStoreMetrics.prefixFetchLatency.time();
-        Optional<Injection<List<String>>> expectation = getExpectation(Method.GET_OBJECT_KEYS);
-        return Futures.toPromise(
-            expectation.flatMap(Injection::error)
-                       .map(CompletableFuture::<List<String>>failedFuture)
-                       .or(() -> expectation.flatMap(Injection::result).map(CompletableFuture::completedFuture))
-                       .orElseGet(() ->
-                            CompletableFuture.supplyAsync(() -> {
-                                File bucketDir = new File(fakeS3RootDir, bucket);
-                                if (!bucketDir.exists())
-                                {
-                                    return new ArrayList<>();
-                                }
-                                try
-                                {
-                                    return Files.walk(bucketDir.toPath())
-                                                .filter(Files::isRegularFile)
-                                                .map(p -> p.toString().substring(bucketDir.toString().length() + 1))
-                                                .filter(key -> key.startsWith(prefix))
-                                                .collect(Collectors.toList());
-                                }
-                                catch (IOException e)
-                                {
-                                    throw new RuntimeException(e);
-                                }
-                            })
-                       ).whenComplete((result, failure) -> {
-                           if (failure != null) {
-                               objectStoreMetrics.failures.mark();
-                           } else {
-                               objectStoreMetrics.successes.mark();
-                           }
-                           time.stop();
-                       })
-        );
-    }
-
-    @Override
-    public AsyncPromise<Long> getObjectSize(String bucket, String key)
-    {
-        ObjectStoreMetrics objectStoreMetrics = ObjectStoreAccess.getMetrics();
-        Timer.Context time = objectStoreMetrics.headObjectLatency.time();
-        Optional<Injection<Long>> expectation = getExpectation(Method.GET_OBJECT_SIZE);
-        return Futures.toPromise(
         expectation.flatMap(Injection::error)
-                   .map(CompletableFuture::<Long>failedFuture)
+                   .map(CompletableFuture::<Void>failedFuture)
                    .or(() -> expectation.flatMap(Injection::result).map(CompletableFuture::completedFuture))
                    .orElseGet(() ->
-                        CompletableFuture.supplyAsync(() -> {
-                            File file = new File(fakeS3RootDir, bucket + "/" + key);
-                            if (!file.exists())
-                            {
-                                throw new RuntimeException("File does not exist");
-                            }
-                            try
-                            {
-                                return Files.size(file.toPath());
-                            }
-                            catch (IOException e)
-                            {
-                                throw new RuntimeException(e);
-                            }
-                        })
+                              CompletableFuture.runAsync(() -> {
+                                  File sourceFile = new File(fakeS3RootDir, bucket + "/" + key);
+                                  if (!sourceFile.exists())
+                                  {
+                                      objectStoreMetrics.failures.mark();
+                                      throw new RuntimeException("Source file does not exist");
+                                  }
+                                  try
+                                  {
+                                      Files.copy(sourceFile.toPath(), path);
+                                  }
+                                  catch (IOException e)
+                                  {
+                                      throw new RuntimeException(e);
+                                  } finally
+                                  {
+                                      objectStoreMetrics.objectFetchBytes.update(sourceFile.length());
+                                      time.stop();
+                                  }
+                              })
                    ).whenComplete((result, failure) -> {
+                       time.stop();
                        if (failure != null) {
                            objectStoreMetrics.failures.mark();
                        } else {
                            objectStoreMetrics.successes.mark();
                        }
-                       time.stop();
                    })
         );
     }
+
 
     @Override
     public AsyncPromise<byte[]> getObjectAsBytes(String bucket, String key)
@@ -273,6 +146,142 @@ public class AwsAsyncS3FakeBackup implements ObjectStoreAccess, Serializable
         );
     }
 
+    @Override
+    public AsyncPromise<Void> getObjectRangeIntoBuffer(String bucket, String key, long from, long to, ByteBuffer buffer)
+    {
+        long expectedLength = to - from + 1;
+        if (buffer.capacity() < expectedLength)
+        {
+            throw new IllegalArgumentException(
+            String.format("Buffer too small: buffer size %d, expected %d bytes", buffer.capacity(), expectedLength));
+        }
+
+        ObjectStoreMetrics objectStoreMetrics = ObjectStoreAccess.getMetrics();
+        Timer.Context time = objectStoreMetrics.rangeReadFetchLatency.time();
+        Optional<Injection<Void>> expectation = getExpectation(Method.GET_OBJECT_RANGE_INTO_BUFFER);
+        return Futures.toPromise(
+        expectation.flatMap(Injection::error)
+                   .map(CompletableFuture::<Void>failedFuture)
+                   .or(() -> expectation.flatMap(Injection::result).map(CompletableFuture::completedFuture))
+                   .orElseGet(() ->
+                              CompletableFuture.runAsync(() -> {
+                                  File file = new File(fakeS3RootDir, bucket + "/" + key);
+                                  if (!file.exists())
+                                  {
+                                      throw new RuntimeException("File does not exist");
+                                  }
+                                  try
+                                  {
+                                      byte[] data = Files.readAllBytes(file.toPath());
+                                      if (from >= data.length)
+                                      {
+                                          objectStoreMetrics.rangeReadFetchBytes.update(0);
+                                          return;
+                                      }
+                                      int length = (int)Math.min(expectedLength, data.length - from);
+                                      if (length != expectedLength)
+                                      {
+                                          throw new RuntimeException(
+                                          String.format("Received incomplete byte range: expected %d bytes, got %d bytes",
+                                                        expectedLength, length));
+                                      }
+                                      buffer.put(data, (int)from, length);
+                                      objectStoreMetrics.rangeReadFetchBytes.update(length);
+                                  }
+                                  catch (IOException e)
+                                  {
+                                      throw new RuntimeException(e);
+                                  }
+                              })
+                   ).whenComplete((result, failure) -> {
+                       if (failure != null) {
+                           objectStoreMetrics.failures.mark();
+                       } else {
+                           objectStoreMetrics.successes.mark();
+                       }
+                       time.stop();
+                   })
+        );
+    }
+
+    @Override
+    public AsyncPromise<List<String>> getObjectKeys(String bucket, String prefix)
+    {
+        ObjectStoreMetrics objectStoreMetrics = ObjectStoreAccess.getMetrics();
+        Timer.Context time = objectStoreMetrics.prefixFetchLatency.time();
+        Optional<Injection<List<String>>> expectation = getExpectation(Method.GET_OBJECT_KEYS);
+        return Futures.toPromise(
+        expectation.flatMap(Injection::error)
+                   .map(CompletableFuture::<List<String>>failedFuture)
+                   .or(() -> expectation.flatMap(Injection::result).map(CompletableFuture::completedFuture))
+                   .orElseGet(() ->
+                              CompletableFuture.supplyAsync(() -> {
+                                  File bucketDir = new File(fakeS3RootDir, bucket);
+                                  if (!bucketDir.exists())
+                                  {
+                                      return new ArrayList<>();
+                                  }
+                                  try
+                                  {
+                                      return Files.walk(bucketDir.toPath())
+                                                  .filter(Files::isRegularFile)
+                                                  .map(p -> p.toString().substring(bucketDir.toString().length() + 1))
+                                                  .filter(key -> key.startsWith(prefix))
+                                                  .collect(Collectors.toList());
+                                  }
+                                  catch (IOException e)
+                                  {
+                                      throw new RuntimeException(e);
+                                  }
+                              })
+                   ).whenComplete((result, failure) -> {
+                       if (failure != null) {
+                           objectStoreMetrics.failures.mark();
+                       } else {
+                           objectStoreMetrics.successes.mark();
+                       }
+                       time.stop();
+                   })
+        );
+    }
+
+    @Override
+    public AsyncPromise<Long> getObjectSize(String bucket, String key)
+    {
+        ObjectStoreMetrics objectStoreMetrics = ObjectStoreAccess.getMetrics();
+        Timer.Context time = objectStoreMetrics.headObjectLatency.time();
+        Optional<Injection<Long>> expectation = getExpectation(Method.GET_OBJECT_SIZE);
+        return Futures.toPromise(
+        expectation.flatMap(Injection::error)
+                   .map(CompletableFuture::<Long>failedFuture)
+                   .or(() -> expectation.flatMap(Injection::result).map(CompletableFuture::completedFuture))
+                   .orElseGet(() ->
+                              CompletableFuture.supplyAsync(() -> {
+                                  File file = new File(fakeS3RootDir, bucket + "/" + key);
+                                  if (!file.exists())
+                                  {
+                                      throw new RuntimeException("File does not exist");
+                                  }
+                                  try
+                                  {
+                                      return Files.size(file.toPath());
+                                  }
+                                  catch (IOException e)
+                                  {
+                                      throw new RuntimeException(e);
+                                  }
+                              })
+                   ).whenComplete((result, failure) -> {
+                       if (failure != null) {
+                           objectStoreMetrics.failures.mark();
+                       } else {
+                           objectStoreMetrics.successes.mark();
+                       }
+                       time.stop();
+                   })
+        );
+    }
+
     @SuppressWarnings("unchecked")
     private <T> Optional<Injection<T>> getExpectation(Method method)
     {
@@ -292,6 +301,23 @@ public class AwsAsyncS3FakeBackup implements ObjectStoreAccess, Serializable
     public void setFakeS3RootDir(String rootDir)
     {
         this.fakeS3RootDir = rootDir;
+    }
+
+    public void initializeFileSystemState(Map<String, String> configParameters,
+                                          String bucket,
+                                          String keyspace,
+                                          String tableName,
+                                          String backupPath)
+    {
+        Path fakeS3Root = new BackupFileSystemBuilder()
+                          .setKeyspace(keyspace)
+                          .setTableName(tableName)
+                          .setConfigParameters(configParameters)
+                          .setEnvVars(this.envVars)
+                          .setSourceBackupRootPath(backupPath)
+                          .setBucket(bucket)
+                          .build();
+        this.fakeS3RootDir = fakeS3Root.toString();
     }
 
     public interface Injection<T> extends Serializable {
@@ -361,7 +387,7 @@ public class AwsAsyncS3FakeBackup implements ObjectStoreAccess, Serializable
         GET_OBJECT_AS_FILE,
         GET_OBJECT_RANGE_INTO_BUFFER,
         GET_OBJECT_KEYS,
-        GET_OBJECT_SIZE,
-        GET_OBJECT_AS_BYTES
+        GET_OBJECT_AS_BYTES,
+        GET_OBJECT_SIZE
     }
 }

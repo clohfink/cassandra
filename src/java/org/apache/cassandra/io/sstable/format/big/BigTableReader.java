@@ -54,7 +54,7 @@ public class BigTableReader extends SSTableReader
 {
     private static final Logger logger = LoggerFactory.getLogger(BigTableReader.class);
 
-    BigTableReader(SSTableReaderBuilder builder)
+    public BigTableReader(SSTableReaderBuilder builder)
     {
         super(builder);
     }

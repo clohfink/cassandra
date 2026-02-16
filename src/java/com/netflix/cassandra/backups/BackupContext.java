@@ -31,13 +31,22 @@ public class BackupContext
     private final String app;
     private final String region;
     private final String token;
+    private final String bucketOverride;
+    private final String prefixOverride;
 
     public BackupContext(String env, String region, String app, String token)
+    {
+        this(env, region, app, token, null, null);
+    }
+
+    public BackupContext(String env, String region, String app, String token, String bucketOverride, String prefixOverride)
     {
         this.env = env;
         this.region = region;
         this.app = app;
         this.token = token;
+        this.bucketOverride = bucketOverride;
+        this.prefixOverride = prefixOverride;
     }
 
     public String env()
@@ -55,14 +64,33 @@ public class BackupContext
         return app;
     }
 
+    public String token()
+    {
+        return token;
+    }
+
     public String bucket()
     {
+        if (bucketOverride != null)
+            return bucketOverride;
         return region.replaceAll("-", "") + "-cass-" + env + "-1";
+    }
+
+    public String prefix()
+    {
+        if (prefixOverride != null)
+            return prefixOverride;
+        return env + "_backup" + '/' + String.format("%d_%s", app.hashCode() % 10000, app);
     }
 
     public String metafilePrefix()
     {
-        return env + "_backup" + '/' + String.format("%d_%s", app.hashCode() % 10000, app) + '/' + token + "/META_V2/";
+        return prefix() + '/' + token + "/META_V2/";
+    }
+
+    public String sstV2Prefix()
+    {
+        return prefix() + '/' + token + "/SST_V2/";
     }
 
     public boolean isValid()

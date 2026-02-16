@@ -22,7 +22,9 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ExecutionException;
 
 import org.junit.After;
@@ -38,7 +40,7 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
-public class AwsAsyncS3FakeBackupTest
+public class AwsObjectStoreFakeBackupTest
 {
     private AwsAsyncS3FakeBackup s3Fake;
     private Path tempDir;
@@ -50,10 +52,11 @@ public class AwsAsyncS3FakeBackupTest
     public void setUp() throws IOException
     {
         tempDir = Files.createTempDirectory("s3-fake-test");
-        
-        s3Fake = new AwsAsyncS3FakeBackup(Region.US_EAST_1);
+
+        Map<String, String> envVars = new HashMap<>();
+        s3Fake = new AwsAsyncS3FakeBackup(envVars, Region.US_EAST_1);
         s3Fake.setFakeS3RootDir(tempDir.toString());
-        
+
         // Create test data structure
         setupTestData();
     }
@@ -63,24 +66,24 @@ public class AwsAsyncS3FakeBackupTest
     {
         // Clean up temp directory
         Files.walk(tempDir)
-            .sorted((a, b) -> b.compareTo(a)) // Delete files before directories
-            .forEach(path -> {
-                try {
-                    Files.delete(path);
-                } catch (IOException e) {
-                    // Ignore cleanup failures in tests
-                }
-            });
+             .sorted((a, b) -> b.compareTo(a)) // Delete files before directories
+             .forEach(path -> {
+                 try {
+                     Files.delete(path);
+                 } catch (IOException e) {
+                     // Ignore cleanup failures in tests
+                 }
+             });
     }
 
     private void setupTestData() throws IOException
     {
         Path bucketPath = tempDir.resolve(testBucket);
         Files.createDirectories(bucketPath);
-        
+
         Path filePath = bucketPath.resolve(testKey);
         Files.write(filePath, testData);
-        
+
         // Create additional test files with directory structure
         Files.createDirectories(bucketPath.resolve("prefix"));
         Files.createDirectories(bucketPath.resolve("other"));
@@ -92,7 +95,10 @@ public class AwsAsyncS3FakeBackupTest
     @Test
     public void testConstructor()
     {
-        AwsAsyncS3FakeBackup s3 = new AwsAsyncS3FakeBackup(Region.US_WEST_2);
+        Map<String, String> envVars = new HashMap<>();
+        envVars.put("TEST_VAR", "value");
+
+        AwsAsyncS3FakeBackup s3 = new AwsAsyncS3FakeBackup(envVars, Region.US_WEST_2);
         assertNotNull(s3);
     }
 
@@ -100,10 +106,10 @@ public class AwsAsyncS3FakeBackupTest
     public void testGetObjectAsFileSuccess() throws Exception
     {
         Path targetPath = tempDir.resolve("downloaded-file");
-        
+
         AsyncPromise<Void> result = s3Fake.getObjectAsFile(testBucket, testKey, targetPath);
         result.get();
-        
+
         assertTrue(Files.exists(targetPath));
         assertArrayEquals(testData, Files.readAllBytes(targetPath));
     }
@@ -112,9 +118,9 @@ public class AwsAsyncS3FakeBackupTest
     public void testGetObjectAsFileNotFound() throws Exception
     {
         Path targetPath = tempDir.resolve("downloaded-file");
-        
+
         AsyncPromise<Void> result = s3Fake.getObjectAsFile(testBucket, "nonexistent", targetPath);
-        
+
         try {
             result.get();
             fail("Expected exception");
@@ -130,10 +136,10 @@ public class AwsAsyncS3FakeBackupTest
         long from = 7;
         long to = 9; // Note: this method uses inclusive 'to', unlike getObjectRange
         ByteBuffer buffer = ByteBuffer.allocate(10);
-        
+
         AsyncPromise<Void> result = s3Fake.getObjectRangeIntoBuffer(testBucket, testKey, from, to, buffer);
         result.get();
-        
+
         buffer.flip();
         byte[] resultData = new byte[buffer.remaining()];
         buffer.get(resultData);
@@ -144,7 +150,7 @@ public class AwsAsyncS3FakeBackupTest
     public void testGetObjectRangeIntoBufferTooSmall()
     {
         ByteBuffer buffer = ByteBuffer.allocate(1);
-        
+
         try {
             s3Fake.getObjectRangeIntoBuffer(testBucket, testKey, 0, 10, buffer);
             fail("Expected IllegalArgumentException");
@@ -157,9 +163,9 @@ public class AwsAsyncS3FakeBackupTest
     public void testGetObjectRangeIntoBufferFileNotFound() throws Exception
     {
         ByteBuffer buffer = ByteBuffer.allocate(10);
-        
+
         AsyncPromise<Void> result = s3Fake.getObjectRangeIntoBuffer(testBucket, "nonexistent", 0, 5, buffer);
-        
+
         try {
             result.get();
             fail("Expected exception");
@@ -174,7 +180,7 @@ public class AwsAsyncS3FakeBackupTest
     {
         AsyncPromise<List<String>> result = s3Fake.getObjectKeys(testBucket, "prefix");
         List<String> keys = result.get();
-        
+
         assertNotNull(keys);
         assertTrue(keys.size() >= 2);
         assertTrue(keys.stream().anyMatch(key -> key.contains("file1.txt")));
@@ -186,7 +192,7 @@ public class AwsAsyncS3FakeBackupTest
     {
         AsyncPromise<List<String>> result = s3Fake.getObjectKeys(testBucket, "");
         List<String> keys = result.get();
-        
+
         assertNotNull(keys);
         assertTrue(keys.size() >= 4); // testKey + 3 additional files
     }
@@ -196,7 +202,7 @@ public class AwsAsyncS3FakeBackupTest
     {
         AsyncPromise<List<String>> result = s3Fake.getObjectKeys("nonexistent-bucket", "");
         List<String> keys = result.get();
-        
+
         assertNotNull(keys);
         assertTrue(keys.isEmpty());
     }
@@ -206,7 +212,7 @@ public class AwsAsyncS3FakeBackupTest
     {
         AsyncPromise<Long> result = s3Fake.getObjectSize(testBucket, testKey);
         Long size = result.get();
-        
+
         assertEquals(Long.valueOf(testData.length), size);
     }
 
@@ -214,7 +220,7 @@ public class AwsAsyncS3FakeBackupTest
     public void testGetObjectSizeFileNotFound() throws Exception
     {
         AsyncPromise<Long> result = s3Fake.getObjectSize(testBucket, "nonexistent");
-        
+
         try {
             result.get();
             fail("Expected exception");

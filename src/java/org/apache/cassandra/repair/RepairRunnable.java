@@ -39,6 +39,7 @@ import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
 
+import com.netflix.cassandra.backups.BackupMemtable;
 import org.apache.cassandra.transport.Dispatcher;
 import org.apache.cassandra.utils.TimeUUID;
 import org.apache.cassandra.repair.state.ParticipateState;
@@ -294,7 +295,7 @@ public class RepairRunnable implements Runnable, ProgressEventNotifier, RepairNo
     {
         String[] columnFamilies = state.options.getColumnFamilies().toArray(new String[state.options.getColumnFamilies().size()]);
         Iterable<ColumnFamilyStore> validColumnFamilies = storageService.getValidColumnFamilies(false, false, state.keyspace, columnFamilies);
-
+        validColumnFamilies = Iterables.filter(validColumnFamilies, cfs -> !(cfs.getCurrentMemtable() instanceof BackupMemtable));
         if (Iterables.isEmpty(validColumnFamilies))
             throw new SkipRepairException(String.format("%s Empty keyspace, skipping repair: %s", state.id, state.keyspace));
         return Lists.newArrayList(validColumnFamilies);

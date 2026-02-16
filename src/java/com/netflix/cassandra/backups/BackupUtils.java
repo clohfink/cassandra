@@ -18,6 +18,8 @@
 
 package com.netflix.cassandra.backups;
 
+import java.io.IOException;
+import java.io.InputStream;
 import java.util.Iterator;
 import java.util.Map;
 import java.util.Optional;
@@ -57,21 +59,8 @@ public class BackupUtils
 
     public static BackupContext getBackupContext()
     {
-        String token = null;
-        try
-        {
-            token = StorageService.instance.getTokens().getFirst();
-        }
-        catch (Throwable e)
-        {
-            Iterator<String> iterator = DatabaseDescriptor.getInitialTokens().iterator();
-            if (iterator.hasNext())
-            {
-                token = iterator.next();
-            }
-        }
         Map<String, String> env = System.getenv();
-        return new BackupContext(env.get(NETFLIX_ENVIRONMENT), env.get(NETFLIX_REGION), env.get(NETFLIX_APP), token);
+        return new BackupContext(env.get(NETFLIX_ENVIRONMENT), env.get(NETFLIX_REGION), env.get(NETFLIX_APP), getToken());
     }
 
     public static ObjectStoreAccess getObjectStoreAccess()
@@ -127,15 +116,25 @@ public class BackupUtils
     }
 
     /**
-     * Constructs the SST_V2 path prefix for a given base prefix and token.
+     * Gets the current node's token from StorageService, falling back to DatabaseDescriptor.
      *
-     * @param prefix The base S3 prefix
-     * @param token The node token
-     * @return The full SST_V2 path prefix
+     * @return The token string, or null if not available
      */
-    public static String getSstV2PrefixPath(String prefix, String token)
+    public static String getToken()
     {
-        return prefix + '/' + token + "/SST_V2/";
+        try
+        {
+            return StorageService.instance.getTokens().get(0);
+        }
+        catch (Throwable t)
+        {
+            Iterator<String> iterator = DatabaseDescriptor.getInitialTokens().iterator();
+            if (iterator.hasNext())
+            {
+                return iterator.next();
+            }
+            return null;
+        }
     }
 
     /**
@@ -170,5 +169,17 @@ public class BackupUtils
         {
             return Optional.empty();
         }
+    }
+
+    /**
+     * Parses a BackupManifest from an InputStream.
+     *
+     * @param in The input stream containing the manifest JSON
+     * @return The parsed BackupManifest
+     * @throws IOException if parsing fails
+     */
+    public static BackupManifest getManifest(InputStream in) throws IOException
+    {
+        return mapper.readValue(in, BackupManifest.class);
     }
 }

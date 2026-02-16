@@ -674,7 +674,7 @@ public abstract class ForwardingSSTableReader extends SSTableReader
     }
 
     @Override
-    void setup(boolean trackHotness)
+    public void setup(boolean trackHotness)
     {
         delegate.setup(trackHotness);
     }

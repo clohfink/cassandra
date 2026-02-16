@@ -122,7 +122,7 @@ public abstract class SSTableReaderBuilder
      * if loaded index summary has different index interval from current value stored in schema,
      * then Summary.db file will be deleted and need to be rebuilt.
      */
-    void loadSummary()
+    public void loadSummary()
     {
         File summariesFile = new File(descriptor.filenameFor(Component.SUMMARY));
         if (!summariesFile.exists())
@@ -234,7 +234,7 @@ public abstract class SSTableReaderBuilder
      *
      * @throws IOException
      */
-    IFilter loadBloomFilter() throws IOException
+    public IFilter loadBloomFilter() throws IOException
     {
         try (FileInputStreamPlus stream = new File(descriptor.filenameFor(Component.FILTER)).newInputStream())
         {

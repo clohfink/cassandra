@@ -49,6 +49,7 @@ import java.util.function.Consumer;
 import java.util.function.Supplier;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+import javax.annotation.Nullable;
 import javax.management.MalformedObjectNameException;
 import javax.management.ObjectName;
 import javax.management.openmbean.CompositeData;
@@ -74,6 +75,7 @@ import com.google.common.util.concurrent.RateLimiter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.netflix.cassandra.backups.BackupMemtable;
 import org.apache.cassandra.cache.CounterCacheKey;
 import org.apache.cassandra.cache.IRowCacheEntry;
 import org.apache.cassandra.cache.RowCacheKey;
@@ -2253,11 +2255,17 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean, Memtable.Owner
      * @param rateLimiter Rate limiter for hardlinks-per-second
      * @param creationTime time when this snapshot was taken
      */
+    @Nullable
     public TableSnapshot snapshot(String snapshotName, Predicate<SSTableReader> predicate, boolean ephemeral, boolean skipMemtable, DurationSpec.IntSecondsBound ttl, RateLimiter rateLimiter, Instant creationTime)
     {
+        Memtable current = getTracker().getView().getCurrentMemtable();
+        // we return null here for Netflix specific usecase. At time of change
+        // the TableSnapshot was only used really for tests so was safe from NPEs
+        // added @Nullable to help catch future NPEs
+        if (current instanceof BackupMemtable)
+            return null;
         if (!skipMemtable)
         {
-            Memtable current = getTracker().getView().getCurrentMemtable();
             if (!current.isClean())
             {
                 if (current.shouldSwitch(FlushReason.SNAPSHOT))

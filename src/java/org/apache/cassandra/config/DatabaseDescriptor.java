@@ -2761,6 +2761,98 @@ public class DatabaseDescriptor
         conf.import_max_disk_percentage = percentage;
     }
 
+    public static int getNetflixPoolSize()
+    {
+        return conf.netflix_pool_size;
+    }
+
+    public static void setNetflixPoolSize(int netflix_pool_size)
+    {
+        if (netflix_pool_size < 0)
+        {
+            throw new IllegalArgumentException("Netflix pool size must be non-negative");
+        }
+        conf.netflix_pool_size = netflix_pool_size;
+    }
+
+
+    /**
+     * Get the size of the shared chunk cache for backup operations.
+     * @return the cache size in number of entries
+     */
+    public static int getObjectStoreSharedChunkCacheCount()
+    {
+        return conf.object_store_shared_chunk_cache_count;
+    }
+
+    public static int getObjectStoreSharedChunkCacheSize()
+    {
+        return conf.object_store_shared_chunk_cache_size;
+    }
+
+    /**
+     * Get whether partition prefetching is enabled for object store operations.
+     */
+    public static boolean getObjectStorePrefetchPartitionEnabled()
+    {
+        return conf.object_store_prefetch_partition_enabled;
+    }
+
+    /**
+     * Set whether partition prefetching is enabled for object store operations.
+     */
+    public static void setObjectStorePrefetchPartitionEnabled(boolean enabled)
+    {
+        conf.object_store_prefetch_partition_enabled = enabled;
+    }
+
+    /**
+     * Get the timeout in milliseconds for retrieving chunks from the cache.
+     */
+    public static int getObjectStoreChunkCacheTimeoutMs()
+    {
+        return conf.object_store_chunk_cache_timeout_ms;
+    }
+
+    /**
+     * Set the timeout in milliseconds for retrieving chunks from the cache.
+     */
+    public static void setObjectStoreChunkCacheTimeoutMs(int timeoutMs)
+    {
+        if (timeoutMs < 1)
+            throw new IllegalArgumentException("object_store_chunk_cache_timeout_ms must be positive");
+        conf.object_store_chunk_cache_timeout_ms = timeoutMs;
+    }
+
+    /**
+     * Get the timeout in milliseconds for fetching a chunk from the object store.
+     */
+    public static int getObjectStoreFetchTimeoutMs()
+    {
+        return conf.object_store_fetch_timeout_ms;
+    }
+
+    /**
+     * Set the timeout in milliseconds for fetching a chunk from the object store.
+     */
+    public static void setObjectStoreFetchTimeoutMs(int timeoutMs)
+    {
+        if (timeoutMs < 1)
+            throw new IllegalArgumentException("object_store_fetch_timeout_ms must be positive");
+        conf.object_store_fetch_timeout_ms = timeoutMs;
+    }
+
+    /**
+     * Set the size of the shared chunk cache for backup operations.
+     * @param size the cache size in number of entries
+     */
+    public static void setSharedChunkCacheSize(int size)
+    {
+        if (size < 1)
+            throw new IllegalArgumentException("shared_chunk_cache_size must be positive");
+        conf.object_store_shared_chunk_cache_count = size;
+    }
+
     public static void setImportCleanupInitialDelaySeconds(int seconds)
     {
         conf.import_cleanup_initial_delay = new DurationSpec.IntSecondsBound(seconds, SECONDS);

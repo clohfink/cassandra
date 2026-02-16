@@ -65,6 +65,8 @@ public final class JVMStabilityInspector
     public static void uncaughtException(Thread thread, Throwable t)
     {
         try { StorageMetrics.uncaughtExceptions.inc(); } catch (Throwable ignore) { /* might not be initialised */ }
+        if (isBackupRelatedError(t))
+            return;
         logger.error("Exception in thread {}", thread, t);
         Tracing.trace("Exception in thread {}", thread, t);
         for (Throwable t2 = t; t2 != null; t2 = t2.getCause())
@@ -74,6 +76,26 @@ public final class JVMStabilityInspector
                 logger.error("Exception in thread {}", thread, t2);
         }
         JVMStabilityInspector.inspectThrowable(t);
+    }
+
+    private static boolean isBackupRelatedError(Throwable t)
+    {
+        for (Throwable current = t; current != null; current = current.getCause())
+        {
+            String message = current.getMessage();
+            // hacky: the CorruptSSTableException uses the Descriptors path which we prefix with s3: in
+            // backup readers
+            if (message != null && message.startsWith("Corrupted: s3:"))
+                return true;
+
+            StackTraceElement[] stackTrace = current.getStackTrace();
+            for (StackTraceElement element : stackTrace)
+            {
+                if (element.getClassName().startsWith("com.netflix.cassandra.backups"))
+                    return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -94,6 +116,8 @@ public final class JVMStabilityInspector
 
     private static void inspectDiskError(Throwable t)
     {
+        if (isBackupRelatedError(t))
+            return;
         if (t instanceof CorruptSSTableException)
             FileUtils.handleCorruptSSTable((CorruptSSTableException) t);
         else if (t instanceof FSError)

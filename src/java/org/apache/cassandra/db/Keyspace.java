@@ -39,6 +39,7 @@ import com.google.common.util.concurrent.RateLimiter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.netflix.cassandra.backups.BackupMemtable;
 import org.apache.cassandra.concurrent.Stage;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.config.DurationSpec;
@@ -68,6 +69,7 @@ import org.apache.cassandra.tracing.Tracing;
 import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.FBUtilities;
 import org.apache.cassandra.utils.JVMStabilityInspector;
+import org.apache.cassandra.utils.NoSpamLogger;
 import org.apache.cassandra.utils.concurrent.AsyncPromise;
 import org.apache.cassandra.utils.concurrent.Future;
 import org.apache.cassandra.utils.concurrent.OpOrder;
@@ -75,6 +77,7 @@ import org.apache.cassandra.utils.concurrent.UncheckedInterruptedException;
 import org.apache.cassandra.utils.concurrent.Promise;
 
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
+import static java.util.concurrent.TimeUnit.MINUTES;
 import static java.util.concurrent.TimeUnit.NANOSECONDS;
 import static org.apache.cassandra.utils.Clock.Global.currentTimeMillis;
 import static org.apache.cassandra.utils.FBUtilities.now;
@@ -646,6 +649,14 @@ public class Keyspace
                 if (cfs == null)
                 {
                     logger.error("Attempting to mutate non-existant table {} ({}.{})", upd.metadata().id, upd.metadata().keyspace, upd.metadata().name);
+                    continue;
+                }
+                if (cfs.getCurrentMemtable() instanceof BackupMemtable)
+                {
+                    // If the memtable is a BackupMemtable, we cant write to it. need no spam logger since it may get a flurry of hints
+                    // if was down and dont want to log millions of this line
+                    NoSpamLogger.log(logger, NoSpamLogger.Level.INFO, 1, MINUTES,
+                                     "Skipping mutation for BackupMemtable {}", cfs.name);
                     continue;
                 }
                 AtomicLong baseComplete = new AtomicLong(Long.MAX_VALUE);

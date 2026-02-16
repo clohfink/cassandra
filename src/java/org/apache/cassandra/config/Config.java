@@ -91,6 +91,15 @@ public class Config
     public volatile boolean enable_select_partition_range = true;
     public volatile boolean alter_table_enabled = true;
 
+    public volatile int object_store_shared_chunk_cache_count = 64;
+    // Size of each prefetch buffer. Should be >= the sstable compression chunk length (chunk_length_in_kb).
+    // Defaults to 1 MB to match the 1 MB compressed chunk size used by TS backup sstables,
+    // plus 8 bytes of padding for compressor framing overhead (e.g. LZ4's 4-byte length header).
+    public volatile int object_store_shared_chunk_cache_size = (1024 * 1024) + 8;
+    public volatile boolean object_store_prefetch_partition_enabled = true;
+    public volatile int object_store_chunk_cache_timeout_ms = 600;
+    public volatile int object_store_fetch_timeout_ms = 30000;
+
     public volatile int import_concurrency = 4;
     public volatile int import_max_disk_percentage = 75;
     public volatile DataRateSpec.LongBytesPerSecondBound import_disk_throughput = new DataRateSpec.LongBytesPerSecondBound("300MiB/s");
@@ -116,6 +125,7 @@ public class Config
 
     public volatile HeapBufferAllocatorType global_heap_buffer_allocator = HeapBufferAllocatorType.unpooled;
     public int native_slow_pool_max_threads = 64;
+    public int netflix_pool_size = 128;
 
     public volatile int import_http_retry_max_attempts = 3;
     public volatile DurationSpec.IntMillisecondsBound import_http_retry_initial_delay = new DurationSpec.IntMillisecondsBound("1000ms");

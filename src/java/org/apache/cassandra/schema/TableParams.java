@@ -147,6 +147,7 @@ public final class TableParams
     {
         compaction.validate();
         compression.validate();
+        memtable.validate();
 
         double minBloomFilterFpChanceValue = BloomCalculations.minSupportedBloomFilterFpChance();
         if (bloomFilterFpChance <= minBloomFilterFpChanceValue || bloomFilterFpChance > 1)

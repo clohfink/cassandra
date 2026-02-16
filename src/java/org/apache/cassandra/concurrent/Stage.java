@@ -55,6 +55,7 @@ public enum Stage
     INTERNAL_RESPONSE (false, "InternalResponseStage", "internal", FBUtilities::getAvailableProcessors,             null,                                            Stage::multiThreadedStage),
     IMMEDIATE         (false, "ImmediateStage",        "internal", () -> 0,                                         null,                                            Stage::immediateExecutor),
     PAXOS_REPAIR      (false, "PaxosRepairStage",      "internal", FBUtilities::getAvailableProcessors,             null,                                            Stage::multiThreadedStage),
+    NETFLIX           (false, "NetflixStage",          "internal", DatabaseDescriptor::getNetflixPoolSize,          DatabaseDescriptor::setNetflixPoolSize,                              Stage::multiThreadedStage)
     ;
 
     public final String jmxName;

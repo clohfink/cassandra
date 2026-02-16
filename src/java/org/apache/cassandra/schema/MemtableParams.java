@@ -30,6 +30,7 @@ import com.google.common.collect.ImmutableMap;
 
 import org.slf4j.LoggerFactory;
 
+import com.netflix.cassandra.backups.BackupMemtableParams;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.config.InheritingClass;
 import org.apache.cassandra.config.ParameterizedClass;
@@ -46,12 +47,12 @@ import org.apache.cassandra.exceptions.ConfigurationException;
  *
  * See Memtable_API.md for further details on the configuration and usage of memtable implementations.
   */
-public final class MemtableParams
+public class MemtableParams
 {
     private final Memtable.Factory factory;
     private final String configurationKey;
 
-    private MemtableParams(Memtable.Factory factory, String configurationKey)
+    public MemtableParams(Memtable.Factory factory, String configurationKey)
     {
         this.configurationKey = configurationKey;
         this.factory = factory;
@@ -65,6 +66,10 @@ public final class MemtableParams
     public Memtable.Factory factory()
     {
         return factory;
+    }
+
+    public void validate()
+    {
     }
 
     @Override
@@ -150,7 +155,9 @@ public final class MemtableParams
     private static MemtableParams parseConfiguration(String configurationKey)
     {
         ParameterizedClass definition = CONFIGURATION_DEFINITIONS.get(configurationKey);
-
+        if (configurationKey.startsWith("backup")) {
+            return new BackupMemtableParams(configurationKey);
+        }
         if (definition == null)
             throw new ConfigurationException("Memtable configuration \"" + configurationKey + "\" not found.");
         return new MemtableParams(getMemtableFactory(definition), configurationKey);

@@ -44,7 +44,7 @@ public class RandomAccessReader extends RebufferingInputStream implements FileDa
      *
      * @param rebufferer Rebufferer to use
      */
-    RandomAccessReader(Rebufferer rebufferer)
+    public RandomAccessReader(Rebufferer rebufferer)
     {
         super(Rebufferer.EMPTY.buffer());
         this.rebufferer = rebufferer;
@@ -61,7 +61,7 @@ public class RandomAccessReader extends RebufferingInputStream implements FileDa
         reBufferAt(current());
     }
 
-    private void reBufferAt(long position)
+    public void reBufferAt(long position)
     {
         bufferHolder.release();
         bufferHolder = rebufferer.rebuffer(position);
