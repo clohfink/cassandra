@@ -20,6 +20,7 @@ package org.apache.cassandra.repair.autorepair;
 
 import com.google.common.annotations.VisibleForTesting;
 
+import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.db.ColumnFamilyStore;
 import org.apache.cassandra.db.Keyspace;
 import org.apache.cassandra.db.view.TableViews;
@@ -253,7 +254,7 @@ public abstract class AutoRepairState
         {
             RepairOption option = new RepairOption(RepairParallelism.PARALLEL, primaryRangeOnly, false, false,
                                                    AutoRepairService.instance.getAutoRepairConfig().getRepairThreads(repairType), ranges,
-                                                   !ranges.isEmpty(), false, false, PreviewKind.REPAIRED, false, true, false, false);
+                                                   !ranges.isEmpty(), false, false, PreviewKind.REPAIRED, DatabaseDescriptor.autoOptimisePreviewRepairStreams(), true, false, false);
 
             option.getColumnFamilies().addAll(tables);
 
@@ -273,7 +274,7 @@ public abstract class AutoRepairState
         {
             RepairOption option = new RepairOption(RepairParallelism.PARALLEL, primaryRangeOnly, true, false,
                                                    AutoRepairService.instance.getAutoRepairConfig().getRepairThreads(repairType), ranges,
-                                                   !ranges.isEmpty(), false, false, PreviewKind.NONE, true, true, false, false);
+                                                   !ranges.isEmpty(), false, false, PreviewKind.NONE, DatabaseDescriptor.autoOptimiseIncRepairStreams(), true, false, false);
 
             option.getColumnFamilies().addAll(filterOutUnsafeTables(keyspace, tables));
 
@@ -318,7 +319,7 @@ public abstract class AutoRepairState
         {
             RepairOption option = new RepairOption(RepairParallelism.PARALLEL, primaryRangeOnly, false, false,
                                                    AutoRepairService.instance.getAutoRepairConfig().getRepairThreads(repairType), ranges,
-                                                   !ranges.isEmpty(), false, false, PreviewKind.NONE, true, true, false, false);
+                                                   !ranges.isEmpty(), false, false, PreviewKind.NONE, DatabaseDescriptor.autoOptimiseFullRepairStreams(), true, false, false);
 
             option.getColumnFamilies().addAll(tables);
 

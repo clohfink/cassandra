@@ -29,8 +29,10 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
+import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.config.DurationSpec;
 import org.apache.cassandra.cql3.CQLTester;
+import org.apache.cassandra.repair.RepairRunnable;
 import org.apache.cassandra.repair.autorepair.AutoRepairConfig.RepairType;
 import org.apache.cassandra.repair.autorepair.AutoRepairUtils.AutoRepairHistory;
 import org.apache.cassandra.service.AutoRepairService;
@@ -38,6 +40,7 @@ import org.apache.cassandra.utils.progress.ProgressEvent;
 import org.mockito.Mock;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
@@ -311,5 +314,65 @@ public class AutoRepairStateTest extends CQLTester
         state.failedTokenRangesCount = 1;
 
         assertEquals(1, state.getFailedTokenRangesCount());
+    }
+
+    @Test
+    public void testOptimiseStreamsConfigRespected()
+    {
+        AutoRepairState state = RepairType.getAutoRepairState(repairType);
+        AutoRepairService.setup();
+
+        // Store original values
+        boolean originalIncValue = DatabaseDescriptor.autoOptimiseIncRepairStreams();
+        boolean originalFullValue = DatabaseDescriptor.autoOptimiseFullRepairStreams();
+        boolean originalPreviewValue = DatabaseDescriptor.autoOptimisePreviewRepairStreams();
+
+        try
+        {
+            // Test with config set to false
+            if (repairType == RepairType.INCREMENTAL)
+            {
+                DatabaseDescriptor.setAutoOptimiseIncRepairStreams(false);
+            }
+            else if (repairType == RepairType.FULL)
+            {
+                DatabaseDescriptor.setAutoOptimiseFullRepairStreams(false);
+            }
+            else if (repairType == RepairType.PREVIEW_REPAIRED)
+            {
+                DatabaseDescriptor.setAutoOptimisePreviewRepairStreams(false);
+            }
+
+            RepairRunnable runnable = state.getRepairRunnable(KEYSPACE, ImmutableList.of(testTable), ImmutableSet.of(), false);
+            assertNotNull(runnable);
+            assertFalse("optimiseStreams should be false when config is false for " + repairType,
+                       runnable.state.options.optimiseStreams());
+
+            // Test with config set to true
+            if (repairType == RepairType.INCREMENTAL)
+            {
+                DatabaseDescriptor.setAutoOptimiseIncRepairStreams(true);
+            }
+            else if (repairType == RepairType.FULL)
+            {
+                DatabaseDescriptor.setAutoOptimiseFullRepairStreams(true);
+            }
+            else if (repairType == RepairType.PREVIEW_REPAIRED)
+            {
+                DatabaseDescriptor.setAutoOptimisePreviewRepairStreams(true);
+            }
+
+            runnable = state.getRepairRunnable(KEYSPACE, ImmutableList.of(testTable), ImmutableSet.of(), false);
+            assertNotNull(runnable);
+            assertTrue("optimiseStreams should be true when config is true for " + repairType,
+                      runnable.state.options.optimiseStreams());
+        }
+        finally
+        {
+            // Restore original values
+            DatabaseDescriptor.setAutoOptimiseIncRepairStreams(originalIncValue);
+            DatabaseDescriptor.setAutoOptimiseFullRepairStreams(originalFullValue);
+            DatabaseDescriptor.setAutoOptimisePreviewRepairStreams(originalPreviewValue);
+        }
     }
 }

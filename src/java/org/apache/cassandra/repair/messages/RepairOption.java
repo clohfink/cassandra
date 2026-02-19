@@ -407,7 +407,7 @@ public class RepairOption
         if (isPreview() && DatabaseDescriptor.autoOptimisePreviewRepairStreams())
             return true;
 
-        if (!isIncremental() && DatabaseDescriptor.autoOptimiseFullRepairStreams())
+        if (!isIncremental() && !isPreview() && DatabaseDescriptor.autoOptimiseFullRepairStreams())
             return true;
 
         return false;
