@@ -9,7 +9,7 @@ sudo apt-get install -y ant ant-optional
 
 # Set Java version if jenv is available
 if command -v jenv &> /dev/null; then
-    jenv global 21
+    jenv global 21 || echo "Warning: jdk21 is not installed"
 fi
 
 # Configure git remotes based on workspace owner
