@@ -115,7 +115,27 @@ public class Range<T extends RingPosition<T>> extends AbstractBounds<T> implemen
      */
     public boolean intersects(Range<T> that)
     {
-        return intersectionWith(that).size() > 0;
+        // Allocation-free check equivalent to intersectionWith(that).size() > 0
+        if (that.contains(this) || this.contains(that))
+            return true;
+
+        boolean thiswraps = isWrapAround(left, right);
+        boolean thatwraps = isWrapAround(that.left, that.right);
+        if (!thiswraps && !thatwraps)
+        {
+            // neither wraps
+            return left.compareTo(that.right) < 0 && that.left.compareTo(right) < 0;
+        }
+        if (thiswraps && thatwraps)
+        {
+            // both wrap and neither contains the other - always intersect
+            return true;
+        }
+        // one wraps, one doesn't
+        Range<T> wrapping = thiswraps ? this : that;
+        Range<T> other = thiswraps ? that : this;
+        return other.contains(wrapping.right)
+               || (other.contains(wrapping.left) && wrapping.left.compareTo(other.right) < 0);
     }
 
     public boolean intersects(AbstractBounds<T> that)
