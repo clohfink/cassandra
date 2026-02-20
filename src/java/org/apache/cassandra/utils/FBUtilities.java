@@ -912,9 +912,17 @@ public class FBUtilities
         File tempFile = new File(outputFile.path() + ".tmp");
         try
         {
+            // Serialize to bytes first so we can flush and fsync before close.
+            // Jackson's writeValue(OutputStream, ...) auto-closes the stream,
+            // which would prevent us from calling sync() afterwards.
+            byte[] data = jsonMapper.writeValueAsBytes(object);
             try (FileOutputStreamPlus out = tempFile.newOutputStream(OVERWRITE))
             {
-                jsonMapper.writeValue((OutputStream) out, object);
+                out.write(data);
+                // Force data to disk before rename to ensure durability.
+                // Without this, a crash after rename but before OS flushes to disk
+                // can leave the file with zero-filled or corrupted blocks.
+                out.sync();
             }
             tempFile.move(outputFile);
         }
@@ -931,6 +939,11 @@ public class FBUtilities
         {
             return jsonMapper.readValue((InputStream) in, tClass);
         }
+    }
+
+    public static <T> T deserializeFromJsonBytes(Class<T> tClass, byte[] bytes) throws IOException
+    {
+        return jsonMapper.readValue(bytes, tClass);
     }
 
     public static String prettyPrintMemory(long size)

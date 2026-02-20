@@ -46,6 +46,7 @@ import org.apache.cassandra.schema.KeyspaceMetadata;
 import org.apache.cassandra.schema.SchemaKeyspace;
 import org.apache.cassandra.utils.Clock;
 import org.apache.cassandra.utils.FBUtilities;
+import org.apache.cassandra.utils.Hex;
 import org.apache.cassandra.utils.Pair;
 
 import static java.lang.String.format;
@@ -90,7 +91,19 @@ public class DataResurrectionCheck implements StartupCheck
 
         public static Heartbeat deserializeFromJsonFile(File file) throws IOException
         {
-            return FBUtilities.deserializeFromJsonFile(Heartbeat.class, file);
+            byte[] bytes = java.nio.file.Files.readAllBytes(file.toPath());
+            try
+            {
+                return FBUtilities.deserializeFromJsonBytes(Heartbeat.class, bytes);
+            }
+            catch (IOException ex)
+            {
+                int maxLogBytes = Math.min(bytes.length, 1024);
+                String hexContent = bytes.length > 0 ? Hex.bytesToHex(bytes, 0, maxLogBytes) : "(empty)";
+                LOGGER.error("Failed to deserialize heartbeat file {} (length: {} bytes, first {} bytes hex: {})",
+                            file, bytes.length, maxLogBytes, hexContent, ex);
+                throw ex;
+            }
         }
 
         @Override
