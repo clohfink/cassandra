@@ -41,7 +41,8 @@ fi
 cassandra_storagedir="$CASSANDRA_HOME/data"
 
 # JAVA_HOME can optionally be set here
-JAVA_HOME=/usr/lib/jvm/zulu-11-$(dpkg --print-architecture)
+JAVA_HOME=/usr/lib/jvm/zulu-21-$(dpkg --print-architecture)
+
 
 for jar in "$CASSANDRA_HOME"/tools/lib/*.jar; do
     CLASSPATH="$CLASSPATH:$jar"
