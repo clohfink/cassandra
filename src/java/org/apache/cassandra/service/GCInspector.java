@@ -119,15 +119,17 @@ public class GCInspector implements NotificationListener, GCInspectorMXBean
         final GarbageCollectorMXBean gcBean;
         final boolean assumeGCIsPartiallyConcurrent;
         final boolean assumeGCIsOldGen;
+        final boolean isZGC;
         private String[] keys;
         long lastGcTotalDuration = 0;
 
 
-        GCState(GarbageCollectorMXBean gcBean, boolean assumeGCIsPartiallyConcurrent, boolean assumeGCIsOldGen)
+        GCState(GarbageCollectorMXBean gcBean, boolean assumeGCIsPartiallyConcurrent, boolean assumeGCIsOldGen, boolean isZGC)
         {
             this.gcBean = gcBean;
             this.assumeGCIsPartiallyConcurrent = assumeGCIsPartiallyConcurrent;
             this.assumeGCIsOldGen = assumeGCIsOldGen;
+            this.isZGC = isZGC;
         }
 
         String[] keys(GarbageCollectionNotificationInfo info)
@@ -139,6 +141,11 @@ public class GCInspector implements NotificationListener, GCInspectorMXBean
             Arrays.sort(keys);
 
             return keys;
+        }
+
+        public boolean isZGC()
+        {
+            return isZGC;
         }
     }
 
@@ -154,7 +161,7 @@ public class GCInspector implements NotificationListener, GCInspectorMXBean
             for (ObjectName name : MBeanWrapper.instance.queryNames(gcName, null))
             {
                 GarbageCollectorMXBean gc = ManagementFactory.newPlatformMXBeanProxy(MBeanWrapper.instance.getMBeanServer(), name.getCanonicalName(), GarbageCollectorMXBean.class);
-                gcStates.put(gc.getName(), new GCState(gc, assumeGCIsPartiallyConcurrent(gc), assumeGCIsOldGen(gc)));
+                gcStates.put(gc.getName(), new GCState(gc, assumeGCIsPartiallyConcurrent(gc), assumeGCIsOldGen(gc), isZGC(gc)));
             }
             ObjectName me = new ObjectName(MBEAN_NAME);
             if (!MBeanWrapper.instance.isRegistered(me))
@@ -177,32 +184,45 @@ public class GCInspector implements NotificationListener, GCInspectorMXBean
         }
     }
 
+    private static boolean isZGC(GarbageCollectorMXBean gc)
+    {
+        return gc.getName().contains("ZGC");
+    }
+
     /*
      * Assume that a GC type is at least partially concurrent and so a side channel method
      * should be used to calculate application stopped time due to the GC.
      *
      * If the GC isn't recognized then assume that is concurrent and we need to do our own calculation
-     * via the the side channel.
+     * via the side channel.
      */
     private static boolean assumeGCIsPartiallyConcurrent(GarbageCollectorMXBean gc)
     {
         switch (gc.getName())
         {
-                //First two are from the serial collector
+                // First two are from the serial collector
             case "Copy":
             case "MarkSweepCompact":
-                //Parallel collector
+                // Parallel collector
             case "PS MarkSweep":
             case "PS Scavenge":
             case "G1 Young Generation":
-                //CMS young generation collector
+                // CMS young generation collector
             case "ParNew":
+                // gen zgc
+            case "ZGC Minor Pauses":
+            case "ZGC Major Pauses":
+                // zgc
+            case "ZGC Pauses":
                 return false;
             case "ConcurrentMarkSweep":
             case "G1 Old Generation":
+            case "ZGC Minor Cycles":
+            case "ZGC Major Cycles":
+            case "ZGC Cycles":
                 return true;
             default:
-                //Assume possibly concurrent if unsure
+                // Assume possibly concurrent if unsure
                 return true;
         }
     }
@@ -221,15 +241,22 @@ public class GCInspector implements NotificationListener, GCInspectorMXBean
             case "PS Scavenge":
             case "G1 Young Generation":
             case "ParNew":
+            case "ZGC Minor Cycles":
+            case "ZGC Minor Pauses":
                 return false;
             case "MarkSweepCompact":
             case "PS MarkSweep":
             case "ConcurrentMarkSweep":
             case "G1 Old Generation":
+            case "ZGC Major Cycles":
+            case "ZGC Major Pauses":
+                // assume non-generational zgc is old gen
+            case "ZGC Cycles":
+            case "ZGC Pauses":
                 return true;
             default:
-                //Assume not old gen otherwise, don't call
-                //TransactionLogs.rescheduleFailedTasks()
+                // Assume not old gen otherwise, don't call
+                // TransactionLogs.rescheduleFailedTasks()
                 return false;
         }
     }
@@ -287,21 +314,53 @@ public class GCInspector implements NotificationListener, GCInspectorMXBean
                 if (state.compareAndSet(prev, new State(duration, bytes, prev)))
                     break;
             }
-            
-            if (getGcWarnThresholdInMs() != 0 && duration > getGcWarnThresholdInMs())
-                logger.warn(sb.toString());
-            else if (duration > getGcLogThresholdInMs())
-                logger.info(sb.toString());
-            else if (logger.isTraceEnabled())
-                logger.trace(sb.toString());
 
-            if (duration > this.getStatusThresholdInMs())
-                StatusLogger.log();
+            if (isConcurrentPhase(info.getGcCause(), info.getGcName()))
+            {
+                if (getGcConcurrentPhaseWarnThresholdInMs() != 0 && duration > getGcConcurrentPhaseWarnThresholdInMs())
+                    logger.warn(sb.toString());
+                else if (duration > getGcConcurrentPhaseLogThresholdInMs())
+                    logger.info(sb.toString());
+                else if (logger.isTraceEnabled())
+                    logger.trace(sb.toString());
+
+                if (duration > this.getConcurrentStatusThresholdInMs())
+                    StatusLogger.log();
+            }
+            else
+            {
+                if (getGcWarnThresholdInMs() != 0 && duration > getGcWarnThresholdInMs())
+                    logger.warn(sb.toString());
+                else if (duration > getGcLogThresholdInMs())
+                    logger.info(sb.toString());
+                else if (logger.isTraceEnabled())
+                    logger.trace(sb.toString());
+
+                if (duration > this.getStatusThresholdInMs())
+                    StatusLogger.log();
+            }
 
             // if we just finished an old gen collection and we're still using a lot of memory, try to reduce the pressure
             if (gcState.assumeGCIsOldGen)
                 LifecycleTransaction.rescheduleFailedDeletions();
         }
+    }
+
+    static boolean isConcurrentPhase(String cause, String name) {
+        // Mostly taken from: https://github.com/Netflix/spectator/blob/v1.7.x/spectator-ext-gc/src/main/java/com/netflix/spectator/gc/GcLogger.java
+        // So far the only indicator known is that the cause will be reported as "No GC"
+        // when using CMS.
+        //
+        // For ZGC, behavior was changed in JDK17: https://bugs.openjdk.java.net/browse/JDK-8265136
+        // For ZGC in older versions, there is no way to accurately get the amount of time
+        // in STW pauses.
+        //
+        // For G1, a new bean is added in JDK20 to indicate time spent in concurrent phases:
+        // https://bugs.openjdk.org/browse/JDK-8297247
+
+        return "No GC".equals(cause)                // CMS
+               || "G1 Concurrent GC".equals(name)   // G1 in JDK20+
+               || name.endsWith(" Cycles");          // Shenandoah, ZGC
     }
 
     public State getTotalSinceLastCheck()
@@ -375,9 +434,34 @@ public class GCInspector implements NotificationListener, GCInspectorMXBean
         return DatabaseDescriptor.getGCLogThreshold();
     }
 
+    public int getGcConcurrentPhaseWarnThresholdInMs()
+    {
+        return DatabaseDescriptor.getGCConcurrentPhaseWarnThreshold();
+    }
+
+    public void setGcConcurrentPhaseWarnThresholdInMs(int threshold)
+    {
+        DatabaseDescriptor.setGCConcurrentPhaseWarnThreshold(threshold);
+    }
+
+    public int getGcConcurrentPhaseLogThresholdInMs()
+    {
+        return DatabaseDescriptor.getGCConcurrentPhaseLogThreshold();
+    }
+
+    public void setGcConcurrentPhaseLogThresholdInMs(int threshold)
+    {
+        DatabaseDescriptor.setGCConcurrentPhaseLogThreshold(threshold);
+    }
+
     public long getStatusThresholdInMs()
     {
         return getGcWarnThresholdInMs() != 0 ? getGcWarnThresholdInMs() : getGcLogThresholdInMs();
+    }
+
+    public long getConcurrentStatusThresholdInMs()
+    {
+        return getGcConcurrentPhaseWarnThresholdInMs() != 0 ? getGcConcurrentPhaseWarnThresholdInMs() : getGcConcurrentPhaseLogThresholdInMs();
     }
 
 }

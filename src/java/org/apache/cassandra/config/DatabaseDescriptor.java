@@ -4215,6 +4215,42 @@ public class DatabaseDescriptor
         conf.gc_warn_threshold = new DurationSpec.IntMillisecondsBound(threshold);
     }
 
+    public static int getGCConcurrentPhaseLogThreshold()
+    {
+        return conf.gc_concurrent_phase_log_threshold.toMilliseconds();
+    }
+
+    public static void setGCConcurrentPhaseLogThreshold(int threshold)
+    {
+        if (threshold <= 0)
+            throw new IllegalArgumentException("Threshold must be greater than 0");
+
+        long gcConcurrentPhaseWarnThresholdInMs = getGCConcurrentPhaseWarnThreshold();
+        if (gcConcurrentPhaseWarnThresholdInMs != 0 && threshold > gcConcurrentPhaseWarnThresholdInMs)
+            throw new IllegalArgumentException("Threshold value for gc_concurrent_phase_log_threshold (" + threshold + ") must be less than gc_concurrent_phase_warn_threshold which is currently "
+                                               + gcConcurrentPhaseWarnThresholdInMs);
+
+        conf.gc_concurrent_phase_log_threshold = new DurationSpec.IntMillisecondsBound(threshold);
+    }
+
+    public static int getGCConcurrentPhaseWarnThreshold()
+    {
+        return conf.gc_concurrent_phase_warn_threshold.toMilliseconds();
+    }
+
+    public static void setGCConcurrentPhaseWarnThreshold(int threshold)
+    {
+        if (threshold < 0)
+            throw new IllegalArgumentException("Threshold value for gc_concurrent_phase_warn_threshold must be greater than or equal to 0");
+
+        long gcConcurrentPhaseLogThresholdInMs = getGCConcurrentPhaseLogThreshold();
+        if (threshold != 0 && threshold <= gcConcurrentPhaseLogThresholdInMs)
+            throw new IllegalArgumentException("Threshold value for gc_concurrent_phase_warn_threshold (" + threshold + ") must be greater than gc_concurrent_phase_log_threshold which is currently "
+                                               + gcConcurrentPhaseLogThresholdInMs);
+
+        conf.gc_concurrent_phase_warn_threshold = new DurationSpec.IntMillisecondsBound(threshold);
+    }
+
     public static boolean isCDCEnabled()
     {
         return conf.cdc_enabled;
