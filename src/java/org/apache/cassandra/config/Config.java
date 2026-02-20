@@ -137,6 +137,9 @@ public class Config
     public volatile DurationSpec.IntSecondsBound import_cleanup_period = new DurationSpec.IntSecondsBound("1h");
     public volatile DurationSpec.IntSecondsBound import_cleanup_min_age = new DurationSpec.IntSecondsBound("1d");
 
+    public volatile int import_cleanup_max_retries = 3;
+    public volatile DurationSpec.IntSecondsBound import_cleanup_retry_initial_delay = new DurationSpec.IntSecondsBound("300s");
+
     /**
      * end Netflix specific configuration options
      */

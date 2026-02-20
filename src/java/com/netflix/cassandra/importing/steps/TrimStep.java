@@ -21,7 +21,10 @@ package com.netflix.cassandra.importing.steps;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
 
+import com.google.common.annotations.VisibleForTesting;
+import com.google.common.util.concurrent.Uninterruptibles;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -29,7 +32,9 @@ import com.netflix.cassandra.importing.ImportJobManager;
 import com.netflix.cassandra.importing.ImportStatus;
 import com.netflix.cassandra.importing.ImportStep;
 import com.netflix.cassandra.metrics.ImportJobMetrics;
+import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.db.ColumnFamilyStore;
+import org.apache.cassandra.db.compaction.CompactionInterruptedException;
 
 /**
  * Performs cleanup operations to remove non-owned data after importing SSTables.
@@ -63,17 +68,60 @@ public class TrimStep implements ImportStep
     @Override
     public void init()
     {
+        int maxRetries = DatabaseDescriptor.getImportCleanupMaxRetries();
+        long initialDelayMillis = DatabaseDescriptor.getImportCleanupRetryInitialDelayMillis();
+
         try (var timer = ImportJobMetrics.instance.startTrimTimer())
         {
-            ColumnFamilyStore cfs = ColumnFamilyStore.getIfExists(targetKeyspace, targetTable);
-            cfs.forceCleanup(2);
-            trimCompleted = true;
+            for (int attempt = 0; attempt <= maxRetries; attempt++)
+            {
+                try
+                {
+                    performCleanup();
+                    trimCompleted = true;
+                    return;
+                }
+                catch (ExecutionException | RuntimeException e)
+                {
+                    if (findCompactionInterruptedException(e) == null)
+                        throw e;
+                    if (attempt == maxRetries)
+                    {
+                        logger.error("Cleanup for {}.{} interrupted after {} retries, giving up",
+                                     targetKeyspace, targetTable, maxRetries, e);
+                        throw e;
+                    }
+                    long delayMillis = initialDelayMillis * (1L << attempt);
+                    logger.warn("Cleanup for {}.{} was interrupted (attempt {}/{}), retrying in {}s",
+                                targetKeyspace, targetTable, attempt + 1, maxRetries + 1,
+                                TimeUnit.MILLISECONDS.toSeconds(delayMillis), e);
+                    Uninterruptibles.sleepUninterruptibly(delayMillis, TimeUnit.MILLISECONDS);
+                }
+            }
         }
         catch (ExecutionException | InterruptedException e)
         {
             ImportJobMetrics.instance.trimStepError();
             throw new RuntimeException(e);
         }
+    }
+
+    @VisibleForTesting
+    protected void performCleanup() throws ExecutionException, InterruptedException
+    {
+        ColumnFamilyStore cfs = ColumnFamilyStore.getIfExists(targetKeyspace, targetTable);
+        cfs.forceCleanup(2);
+    }
+
+    static Throwable findCompactionInterruptedException(Throwable t)
+    {
+        while (t != null)
+        {
+            if (t instanceof CompactionInterruptedException)
+                return t;
+            t = t.getCause();
+        }
+        return null;
     }
 
     @Override

@@ -2868,6 +2868,26 @@ public class DatabaseDescriptor
         conf.import_cleanup_min_age = new DurationSpec.IntSecondsBound(seconds, SECONDS);
     }
 
+    public static int getImportCleanupMaxRetries()
+    {
+        return conf.import_cleanup_max_retries;
+    }
+
+    public static void setImportCleanupMaxRetries(int retries)
+    {
+        conf.import_cleanup_max_retries = retries;
+    }
+
+    public static long getImportCleanupRetryInitialDelayMillis()
+    {
+        return conf.import_cleanup_retry_initial_delay.toMilliseconds();
+    }
+
+    public static void setImportCleanupRetryInitialDelaySeconds(int seconds)
+    {
+        conf.import_cleanup_retry_initial_delay = new DurationSpec.IntSecondsBound(seconds, SECONDS);
+    }
+
     public static int getInternodeApplicationSendQueueCapacityInBytes()
     {
         return conf.internode_application_send_queue_capacity.toBytes();
