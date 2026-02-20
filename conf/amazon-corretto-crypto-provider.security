@@ -27,34 +27,18 @@
 #
 
 security.provider.1=com.amazon.corretto.crypto.provider.AmazonCorrettoCryptoProvider
-security.provider.2=sun.security.provider.Sun
-security.provider.3=sun.security.rsa.SunRsaSign
-security.provider.4=sun.security.ec.SunEC
+security.provider.2=NetflixCryptoProvider
+security.provider.3=SUN
+security.provider.4=SunRsaSign
 security.provider.5=SunEC
-security.provider.6=com.sun.net.ssl.internal.ssl.Provider
-security.provider.7=com.sun.crypto.provider.SunJCE
-security.provider.8=sun.security.jgss.SunProvider
-security.provider.9=SunJGSS
-security.provider.10=com.sun.security.sasl.Provider
-security.provider.11=SunSASL
-security.provider.12=org.jcp.xml.dsig.internal.dom.XMLDSigRI
-security.provider.13=XMLDSig
-security.provider.14=sun.security.smartcardio.SunPCSC
-security.provider.15=SunPCSC
-security.provider.16=JdkLDAP
-security.provider.17=JdkSASL
-security.provider.18=SunPKCS11
-
-#
-# A list of known strong SecureRandom implementations.
-#
-# To help guide applications in selecting a suitable strong
-# java.security.SecureRandom implementation, Java distributions should
-# indicate a list of known strong implementations using the property.
-#
-# This is a comma-separated list of algorithm and/or algorithm:provider
-# entries.
-#
-securerandom.strongAlgorithms=NIST800-90A/AES-CTR-256:AmazonCorrettoCryptoProvider,NativePRNGBlocking:SUN,DRBG:SUN
+security.provider.6=SunJSSE
+security.provider.7=SunJCE
+security.provider.8=SunJGSS
+security.provider.9=SunSASL
+security.provider.10=XMLDSig
+security.provider.11=SunPCSC
+security.provider.12=JdkLDAP
+security.provider.13=JdkSASL
+security.provider.14=SunPKCS11
 
 jdk.tls.disabledAlgorithms=TLSv1,TLSv1.1
