@@ -259,12 +259,15 @@ public class DataResurrectionCheck implements StartupCheck
                 try
                 {
                     heartbeatFile.parent().createDirectoriesIfNotExists();
-                    DataResurrectionCheck.LOGGER.trace("writing heartbeat to file " + heartbeatFile);
+                    LOGGER.trace("writing heartbeat to file " + heartbeatFile);
+                    long startNanos = Clock.Global.nanoTime();
                     heartbeat.serializeToJsonFile(heartbeatFile);
+                    long elapsedMs = (Clock.Global.nanoTime() - startNanos) / 1_000_000;
+                    LOGGER.info("Wrote heartbeat {} to file {} in {} ms", heartbeat.lastHeartbeat, heartbeatFile, elapsedMs);
                 }
                 catch (IOException ex)
                 {
-                    DataResurrectionCheck.LOGGER.error("Unable to serialize heartbeat to " + heartbeatFile, ex);
+                    LOGGER.error("Unable to serialize heartbeat to " + heartbeatFile, ex);
                 }
             }, 0, CassandraRelevantProperties.CHECK_DATA_RESURRECTION_HEARTBEAT_PERIOD.getInt(), MILLISECONDS);
         }

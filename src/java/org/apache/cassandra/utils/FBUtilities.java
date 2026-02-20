@@ -925,6 +925,10 @@ public class FBUtilities
                 out.sync();
             }
             tempFile.move(outputFile);
+            // Fsync the parent directory to ensure the rename is durable.
+            // Without this, a crash after rename can revert to the old directory entry.
+            // See: https://transactional.blog/how-to-learn/disk-io
+            SyncUtil.trySyncDir(outputFile.parent());
         }
         catch (IOException ex)
         {
