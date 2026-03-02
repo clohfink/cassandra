@@ -171,6 +171,18 @@ public class BackupUtils
         }
     }
 
+    public static Optional<BackupManifest> parseManifest(byte[] bytes)
+    {
+        try
+        {
+            return Optional.of(mapper.readValue(bytes, BackupManifest.class));
+        }
+        catch (Exception e)
+        {
+            return Optional.empty();
+        }
+    }
+
     /**
      * Parses a BackupManifest from an InputStream.
      *

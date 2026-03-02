@@ -18,12 +18,18 @@
 
 package com.netflix.cassandra.db.virtual;
 
-import java.nio.ByteBuffer;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.stream.Collectors;
 
+import com.github.benmanes.caffeine.cache.CacheLoader;
+import com.github.benmanes.caffeine.cache.Caffeine;
+import com.github.benmanes.caffeine.cache.LoadingCache;
+import com.google.common.annotations.VisibleForTesting;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -31,28 +37,26 @@ import com.netflix.cassandra.backups.BackupContext;
 import com.netflix.cassandra.backups.BackupManifest;
 import com.netflix.cassandra.backups.BackupUtils;
 import com.netflix.cassandra.backups.ObjectStoreAccess;
+import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.db.DecoratedKey;
 import org.apache.cassandra.db.filter.ClusteringIndexFilter;
 import org.apache.cassandra.db.filter.ColumnFilter;
-import org.apache.cassandra.db.filter.RowFilter;
 import org.apache.cassandra.db.marshal.BooleanType;
 import org.apache.cassandra.db.marshal.CompositeType;
 import org.apache.cassandra.db.marshal.LongType;
 import org.apache.cassandra.db.marshal.UTF8Type;
-import org.apache.cassandra.db.partitions.SingletonUnfilteredPartitionIterator;
-import org.apache.cassandra.db.partitions.UnfilteredPartitionIterator;
 import org.apache.cassandra.db.rows.UnfilteredRowIterator;
 import org.apache.cassandra.db.virtual.SimpleDataSet;
 import org.apache.cassandra.dht.LocalPartitioner;
-import org.apache.cassandra.exceptions.InvalidRequestException;
-import org.apache.cassandra.schema.KeyspaceMetadata;
-import org.apache.cassandra.schema.Schema;
 import org.apache.cassandra.schema.TableMetadata;
+import org.apache.cassandra.utils.Clock;
 import org.apache.cassandra.utils.concurrent.Future;
 
 /**
  * Virtual table that lists available backups from S3 for the current node's token.
  * This table queries S3 for backup metadata files and exposes them as rows.
+ * Parsed manifests are cached using Caffeine with a configurable expiry
+ * ({@code backup_manifest_cache_expiry} in cassandra.yaml, default 10m).
  * <p>
  * This is a scoped table, meaning keyspace and table must be specified in queries.
  * <p>
@@ -90,6 +94,9 @@ public class BackupsTable extends ScopedTable
     private static final String APP_NAME = "app_name";
     private static final String TOTAL_SIZE = "total_size";
     private static final String UPLOADED = "uploaded";
+
+    // Cache stores in-flight or completed futures so concurrent queries share the same S3 fetch
+    private final LoadingCache<String, Future<Optional<BackupManifest>>> manifestCache;
     private final BackupContext backupContext;
     private final ObjectStoreAccess objectStore;
 
@@ -108,38 +115,54 @@ public class BackupsTable extends ScopedTable
                            .build());
         this.backupContext = backupContext;
         this.objectStore = objectStore;
+        this.manifestCache = buildCache();
     }
 
-    @Override
-    public UnfilteredPartitionIterator select(DecoratedKey partitionKey, ClusteringIndexFilter clusteringIndexFilter,
-                                              ColumnFilter columnFilter, RowFilter rowFilter)
+    private LoadingCache<String, Future<Optional<BackupManifest>>> buildCache()
     {
-        // Override the parent method to pass filters through
-        ByteBuffer[] key = ((CompositeType) this.metadata.partitionKeyType).split(partitionKey.getKey());
-        String keyspace = UTF8Type.instance.getString(key[0]);
-        String table = UTF8Type.instance.getString(key[1]);
+        int expiryMinutes = DatabaseDescriptor.getBackupManifestCacheExpiryMinutes();
+        int maxSize = DatabaseDescriptor.getBackupManifestCacheMaxSize();
+        return Caffeine.newBuilder()
+                       .expireAfterWrite(expiryMinutes, TimeUnit.MINUTES)
+                       .maximumSize(maxSize)
+                       .build(new CacheLoader<String, Future<Optional<BackupManifest>>>()
+                       {
+                           @Override
+                           public Future<Optional<BackupManifest>> load(String key)
+                           {
+                               return objectStore.getObjectAsBytes(backupContext.bucket(), key)
+                                                 .map(BackupUtils::parseManifest);
+                           }
 
-        // Verify keyspace and table exists (same as parent ScopedTable)
-        KeyspaceMetadata ksm = Schema.instance.getKeyspaceMetadata(keyspace);
-        if (ksm == null)
-        {
-            throw new InvalidRequestException("Keyspace " + keyspace + " does not exist");
-        }
-        TableMetadata metadata = ksm.getTableOrViewNullable(table);
-        if (metadata == null)
-        {
-            throw new InvalidRequestException("Table " + table + " does not exist in keyspace " + keyspace);
-        }
+                           @Override
+                           public Map<String, Future<Optional<BackupManifest>>> loadAll(Iterable<? extends String> keys)
+                           {
+                               Map<String, Future<Optional<BackupManifest>>> results = new HashMap<>();
+                               for (String key : keys)
+                                   results.put(key, objectStore.getObjectAsBytes(backupContext.bucket(), key)
+                                                               .map(BackupUtils::parseManifest));
+                               return results;
+                           }
+                       });
+    }
 
-        return new SingletonUnfilteredPartitionIterator(selectInternal(partitionKey, keyspace, table, clusteringIndexFilter, columnFilter));
+    @VisibleForTesting
+    public void clearManifestCache()
+    {
+        manifestCache.invalidateAll();
     }
 
     @Override
     public UnfilteredRowIterator select(DecoratedKey partitionKey, String keyspace, String table)
     {
-        // This method is called by ScopedTable but doesn't receive filters
-        // We can't properly filter here, so we return all data and let Cassandra filter
         return selectInternal(partitionKey, keyspace, table, null, null);
+    }
+
+    @Override
+    protected UnfilteredRowIterator select(DecoratedKey partitionKey, String keyspace, String table,
+                                           ClusteringIndexFilter clusteringFilter, ColumnFilter columnFilter)
+    {
+        return selectInternal(partitionKey, keyspace, table, clusteringFilter, columnFilter);
     }
 
     private UnfilteredRowIterator selectInternal(DecoratedKey partitionKey, String keyspace, String table,
@@ -154,33 +177,54 @@ public class BackupsTable extends ScopedTable
         }
 
         List<String> keys;
-        List<Future<byte[]>> manifestFutures;
         try
         {
             keys = objectStore.getObjectKeys(backupContext.bucket(), backupContext.metafilePrefix()).get();
-            manifestFutures = keys.stream()
-                                  .map(key -> objectStore.getObjectAsBytes(backupContext.bucket(), key))
-                                  .collect(Collectors.toList());
         }
         catch (Exception e)
         {
             logger.error("Failed to list backups for {}.{}", keyspace, table, e);
             return BackupUtils.toRowIterator(metadata, result, partitionKey, clusteringFilter, columnFilter);
         }
-        // Process each manifest
-        for (int i = 0; i < keys.size(); i++)
+
+        // getAll returns immediately for cached entries; uncached entries trigger parallel S3 fetches via loadAll
+        Map<String, Future<Optional<BackupManifest>>> futures = manifestCache.getAll(keys);
+        long deadlineNanos = Clock.Global.nanoTime() + TimeUnit.SECONDS.toNanos(DatabaseDescriptor.getBackupManifestFetchTimeoutSeconds());
+
+        for (String key : keys)
         {
-            String key = keys.get(i);
             long timestamp = BackupUtils.extractTimestampFromKey(key);
             if (timestamp == -1)
+                continue;
+
+            long remainingNanos = deadlineNanos - Clock.Global.nanoTime();
+            if (remainingNanos <= 0)
             {
+                logger.warn("Deadline exceeded fetching backup manifests, skipping remaining {} keys", keys.size() - keys.indexOf(key));
+                break;
+            }
+
+            Optional<BackupManifest> manifest;
+            try
+            {
+                manifest = futures.get(key).get(remainingNanos, TimeUnit.NANOSECONDS);
+            }
+            catch (TimeoutException e)
+            {
+                logger.warn("Timed out fetching backup manifests, skipping remaining keys");
+                manifestCache.invalidate(key);
+                break;
+            }
+            catch (Exception e)
+            {
+                logger.warn("Failed to fetch backup manifest: {}", key, e);
+                manifestCache.invalidate(key);
                 continue;
             }
-            Optional<BackupManifest> manifest = BackupUtils.getManifest(manifestFutures.get(i));
+
             if (manifest.isEmpty())
-            {
                 continue;
-            }
+
             try
             {
                 String appName = manifest.get().getInfo().getAppName();
@@ -207,7 +251,6 @@ public class BackupsTable extends ScopedTable
             catch (Exception e)
             {
                 logger.warn("Failed to process backup metadata file: {}", key, e);
-                // Continue processing other files
             }
         }
         return BackupUtils.toRowIterator(metadata, result, partitionKey, clusteringFilter, columnFilter);

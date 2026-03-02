@@ -79,6 +79,9 @@ public class Config
     public boolean upgrade_from_30_possible = false;
     public volatile DurationSpec.IntMinutesBound defaultMemtableFlushPeriod = new DurationSpec.IntMinutesBound("60m");
     public volatile DurationSpec.IntMinutesBound partition_count_cache_expiry_min = new DurationSpec.IntMinutesBound("30m");
+    public volatile DurationSpec.IntMinutesBound backup_manifest_cache_expiry = new DurationSpec.IntMinutesBound("10m");
+    public volatile int backup_manifest_cache_max_size = 1_000;
+    public volatile int backup_manifest_fetch_timeout_seconds = 30;
     public volatile boolean enable_dropped_columns = false;
 
     public volatile boolean enable_scheduled_compactions = false;

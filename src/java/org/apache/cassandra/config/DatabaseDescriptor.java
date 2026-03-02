@@ -1816,6 +1816,21 @@ public class DatabaseDescriptor
         conf.partition_count_cache_expiry_min = new DurationSpec.IntMinutesBound(partitionCountCacheExpiryMinutes);
     }
 
+    public static int getBackupManifestCacheExpiryMinutes()
+    {
+        return conf.backup_manifest_cache_expiry.toMinutes();
+    }
+
+    public static int getBackupManifestCacheMaxSize()
+    {
+        return conf.backup_manifest_cache_max_size;
+    }
+
+    public static int getBackupManifestFetchTimeoutSeconds()
+    {
+        return conf.backup_manifest_fetch_timeout_seconds;
+    }
+
     public static boolean getDieOnUnknownGossipState()
     {
         return conf.die_on_unknown_gossip_state;

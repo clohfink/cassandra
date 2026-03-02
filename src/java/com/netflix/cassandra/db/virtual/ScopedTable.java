@@ -80,6 +80,16 @@ public abstract class ScopedTable implements VirtualTable
 
     public abstract UnfilteredRowIterator select(DecoratedKey partitionKey, String keyspace, String table);
 
+    /**
+     * Override this to receive clustering and column filters for optimized reads.
+     * Default implementation delegates to {@link #select(DecoratedKey, String, String)}.
+     */
+    protected UnfilteredRowIterator select(DecoratedKey partitionKey, String keyspace, String table,
+                                           ClusteringIndexFilter clusteringFilter, ColumnFilter columnFilter)
+    {
+        return select(partitionKey, keyspace, table);
+    }
+
     @Override
     public UnfilteredPartitionIterator select(DecoratedKey partitionKey, ClusteringIndexFilter clusteringIndexFilter, ColumnFilter columnFilter, RowFilter rowFilter)
     {
@@ -97,7 +107,7 @@ public abstract class ScopedTable implements VirtualTable
         {
             throw invalidRequest("Table %s does not exist in keyspace %s", table, keyspace);
         }
-        return new SingletonUnfilteredPartitionIterator(select(partitionKey, keyspace, table));
+        return new SingletonUnfilteredPartitionIterator(select(partitionKey, keyspace, table, clusteringIndexFilter, columnFilter));
     }
 
     @Override
