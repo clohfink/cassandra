@@ -86,6 +86,8 @@ import org.apache.cassandra.net.MessagingServiceMBean;
 import org.apache.cassandra.service.ActiveRepairServiceMBean;
 import org.apache.cassandra.service.AutoRepairService;
 import org.apache.cassandra.service.AutoRepairServiceMBean;
+import org.apache.cassandra.service.MaintenanceCheckService;
+import org.apache.cassandra.service.MaintenanceCheckServiceMBean;
 import org.apache.cassandra.service.CacheService;
 import org.apache.cassandra.service.CacheServiceMBean;
 import org.apache.cassandra.service.GCInspector;
@@ -149,6 +151,7 @@ public class NodeProbe implements AutoCloseable
     protected PermissionsCacheMBean pcProxy;
     protected RolesCacheMBean rcProxy;
     protected AutoRepairServiceMBean autoRepairProxy;
+    protected MaintenanceCheckServiceMBean mcProxy;
     protected Output output;
     private boolean failed;
 
@@ -275,6 +278,8 @@ public class NodeProbe implements AutoCloseable
             rcProxy = JMX.newMBeanProxy(mbeanServerConn, name, RolesCacheMBean.class);
             name = new ObjectName(AutoRepairService.MBEAN_NAME);
             autoRepairProxy = JMX.newMBeanProxy(mbeanServerConn, name, AutoRepairServiceMBean.class);
+            name = new ObjectName(MaintenanceCheckService.MBEAN_NAME);
+            mcProxy = JMX.newMBeanProxy(mbeanServerConn, name, MaintenanceCheckServiceMBean.class);
         }
         catch (MalformedObjectNameException e)
         {
@@ -1156,6 +1161,11 @@ public class NodeProbe implements AutoCloseable
     public List<String> getNonLocalStrategyKeyspaces()
     {
         return ssProxy.getNonLocalStrategyKeyspaces();
+    }
+
+    public CompositeData checkStop(String endpoint)
+    {
+        return mcProxy.checkStop(endpoint);
     }
 
     public String getClusterName()

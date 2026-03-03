@@ -325,11 +325,11 @@ public abstract class ReplicaLayout<E extends Endpoints<E>>
      * @return the read layout for a token - this includes only live natural replicas, i.e. those that are not pending
      * and not marked down by the failure detector. these are reverse sorted by the badness score of the configured snitch
      */
-    public static ReplicaLayout.ForTokenRead forTokenReadLiveSorted(AbstractReplicationStrategy replicationStrategy, Token token)
+    public static ReplicaLayout.ForTokenRead forTokenReadLiveSorted(AbstractReplicationStrategy replicationStrategy, Token token, Predicate<Replica> isAlive)
     {
         EndpointsForToken replicas = replicationStrategy.getNaturalReplicasForToken(token);
         replicas = DatabaseDescriptor.getEndpointSnitch().sortedByProximity(FBUtilities.getBroadcastAddressAndPort(), replicas);
-        replicas = replicas.filter(FailureDetector.isReplicaAlive);
+        replicas = replicas.filter(isAlive);
         return new ReplicaLayout.ForTokenRead(replicationStrategy, replicas);
     }
 

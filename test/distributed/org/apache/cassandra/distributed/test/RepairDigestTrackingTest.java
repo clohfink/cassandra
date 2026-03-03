@@ -27,6 +27,7 @@ import java.util.Map;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Predicate;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
 
@@ -36,6 +37,7 @@ import org.apache.cassandra.dht.Token;
 import org.apache.cassandra.locator.AbstractReplicationStrategy;
 import org.apache.cassandra.locator.EndpointsForToken;
 import org.apache.cassandra.locator.InetAddressAndPort;
+import org.apache.cassandra.locator.Replica;
 import org.apache.cassandra.locator.ReplicaLayout;
 import org.apache.cassandra.locator.ReplicaUtils;
 import org.apache.cassandra.utils.Throwables;
@@ -431,7 +433,7 @@ public class RepairDigestTrackingTest extends TestBaseImpl
                                .load(classLoader, ClassLoadingStrategy.Default.INJECTION);
 
                 new ByteBuddy().rebase(ReplicaLayout.class)
-                               .method(named("forTokenReadLiveSorted").and(takesArguments(AbstractReplicationStrategy.class, Token.class)))
+                               .method(named("forTokenReadLiveSorted").and(takesArguments(AbstractReplicationStrategy.class, Token.class, Predicate.class)))
                                .intercept(MethodDelegation.to(BBHelper.class))
                                .make()
                                .load(classLoader, ClassLoadingStrategy.Default.INJECTION);
@@ -466,7 +468,7 @@ public class RepairDigestTrackingTest extends TestBaseImpl
         }
 
         @SuppressWarnings({ "unused" })
-        public static ReplicaLayout.ForTokenRead forTokenReadLiveSorted(AbstractReplicationStrategy replicationStrategy, Token token)
+        public static ReplicaLayout.ForTokenRead forTokenReadLiveSorted(AbstractReplicationStrategy replicationStrategy, Token token, Predicate<Replica> isAlive)
         {
             try
             {

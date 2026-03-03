@@ -257,6 +257,11 @@ public class NodeTool
                 .withDefaultCommand(CassHelp.class)
                 .withCommand(BootstrapResume.class);
 
+        builder.withGroup("maintenance-check")
+               .withDescription("Check if it's safe to take a node down for maintenance")
+               .withDefaultCommand(CassHelp.class)
+               .withCommand(MaintenanceCheck.StopCmd.class);
+
         builder.withGroup("repair_admin")
                .withDescription("list and fail incremental repair sessions")
                .withDefaultCommand(RepairAdmin.ListCmd.class)
