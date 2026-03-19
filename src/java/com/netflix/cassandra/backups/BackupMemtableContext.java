@@ -64,6 +64,7 @@ import static org.apache.cassandra.utils.Clock.Global.currentTimeMillis;
 class BackupMemtableContext implements Runnable
 {
     private static final Logger logger = LoggerFactory.getLogger(BackupMemtableContext.class);
+    private static final String TIMESTAMP_MARKER = ".timestamp";
 
     static final Component[] COMPONENTS_TO_DOWNLOAD = {
         Component.FILTER,
@@ -108,8 +109,25 @@ class BackupMemtableContext implements Runnable
 
     private void initialize() throws ExecutionException, InterruptedException
     {
-        // Download and load manifest
+        // Clear state so this method is safe to re-run on retry
+        descriptors.clear();
+        sstables.clear();
+        intervalTree = null;
+
+        // Prepare cache directory. If the timestamp changed (e.g. ALTER TABLE with new timestamp),
+        // delete only the meta file and marker — NOT the component files, since the old memtable
+        // may still be serving reads from its SSTableReaders in those files.
+        // The new timestamp's manifest references different SSTables with different file names,
+        // so new components are downloaded alongside the old ones without conflict.
         File cache = BackupDescriptor.prepareCacheDir(metadataRef);
+        if (isCacheStale(cache))
+        {
+            logger.info("Stale cache detected for timestamp {}, re-downloading manifest", params.getTimestamp());
+            new File(cache, "meta_v2.json").toJavaIOFile().delete();
+            new File(cache, TIMESTAMP_MARKER).toJavaIOFile().delete();
+        }
+
+        // Download and load manifest
         File meta = new File(cache, "meta_v2.json");
         if (!meta.exists())
             downloadClosestMeta(meta);
@@ -126,6 +144,9 @@ class BackupMemtableContext implements Runnable
         waitForDownloads(downloads);
         filterValidDescriptors(allDescriptors);
         intervalTree = SSTableIntervalTree.build(sstables);
+
+        // Mark cache as valid for this timestamp
+        writeTimestampMarker(cache);
     }
 
     List<BackupDescriptor> getDescriptors()
@@ -141,6 +162,42 @@ class BackupMemtableContext implements Runnable
     SSTableIntervalTree getIntervalTree()
     {
         return intervalTree;
+    }
+
+    /**
+     * Returns true if the cache directory contains data for a different timestamp than the current params.
+     * A missing marker (first run or failed previous run) is not considered stale.
+     */
+    private boolean isCacheStale(File cacheDir)
+    {
+        File marker = new File(cacheDir, TIMESTAMP_MARKER);
+        if (!marker.exists())
+            return false;
+        try
+        {
+            long cachedTs = Long.parseLong(
+                new String(java.nio.file.Files.readAllBytes(marker.toPath())).trim());
+            return cachedTs != params.getTimestamp();
+        }
+        catch (Exception e)
+        {
+            logger.warn("Failed to read timestamp marker, treating cache as stale", e);
+            return true;
+        }
+    }
+
+    private void writeTimestampMarker(File cacheDir)
+    {
+        File marker = new File(cacheDir, TIMESTAMP_MARKER);
+        try
+        {
+            java.nio.file.Files.write(marker.toPath(),
+                                      Long.toString(params.getTimestamp()).getBytes());
+        }
+        catch (IOException e)
+        {
+            logger.warn("Failed to write timestamp marker", e);
+        }
     }
 
     void downloadClosestMeta(File metaFile) throws ExecutionException, InterruptedException
@@ -264,11 +321,16 @@ class BackupMemtableContext implements Runnable
 
     private void waitForDownloads(List<AsyncPromise<?>> downloads)
     {
+        int timeoutMs = DatabaseDescriptor.getObjectStoreFetchTimeoutMs();
         for (AsyncPromise<?> download : downloads)
         {
             try
             {
-                download.syncUninterruptibly();
+                download.get(timeoutMs, TimeUnit.MILLISECONDS);
+            }
+            catch (TimeoutException e)
+            {
+                logger.warn("Timed out waiting for component download after {}ms", timeoutMs);
             }
             catch (CompletionException e)
             {
@@ -277,6 +339,22 @@ class BackupMemtableContext implements Runnable
                     S3Exception s3Exception = (S3Exception) e.getCause();
                     logger.debug("Failed to download components from S3: " + s3Exception.getMessage());
                 }
+            }
+            catch (ExecutionException e)
+            {
+                if (e.getCause() instanceof S3Exception)
+                {
+                    logger.debug("Failed to download components from S3: " + e.getCause().getMessage());
+                }
+                else
+                {
+                    logger.warn("Failed to download component from S3", e.getCause());
+                }
+            }
+            catch (InterruptedException e)
+            {
+                Thread.currentThread().interrupt();
+                throw new RuntimeException("Interrupted waiting for component downloads", e);
             }
         }
     }

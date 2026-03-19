@@ -30,6 +30,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import org.apache.cassandra.concurrent.ScheduledExecutors;
 import org.apache.cassandra.concurrent.Stage;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.db.ColumnFamilyStore;
@@ -63,6 +64,7 @@ import org.apache.cassandra.schema.TableMetadata;
 import org.apache.cassandra.schema.TableMetadataRef;
 import org.apache.cassandra.tracing.Tracing;
 import org.apache.cassandra.utils.FBUtilities;
+import org.apache.cassandra.utils.concurrent.AsyncPromise;
 import org.apache.cassandra.utils.concurrent.Future;
 import org.apache.cassandra.utils.concurrent.OpOrder;
 
@@ -76,7 +78,10 @@ public class BackupMemtable implements Memtable
     private final TableMetadataRef metadataRef;
     private final BackupMemtableParams params;
     private final BackupMemtableContext context;
-    private final Future<?> initializationFuture;
+    private volatile Future<?> initializationFuture;
+
+    private static final long INITIAL_RETRY_DELAY_MS = 1000;
+    private static final long MAX_RETRY_DELAY_MS = 60_000;
 
     public BackupMemtable(TableMetadataRef metadataRef,
                           BackupMemtableParams params)
@@ -84,7 +89,45 @@ public class BackupMemtable implements Memtable
         this.metadataRef = metadataRef;
         this.params = params;
         this.context = new BackupMemtableContext(params, metadataRef);
-        this.initializationFuture = Stage.NETFLIX.submit(context);
+        this.initializationFuture = submitInitialization(INITIAL_RETRY_DELAY_MS);
+    }
+
+    /**
+     * Submit initialization on Stage.NETFLIX, capturing any exception in the returned promise
+     * rather than letting it propagate as an uncaught exception on the executor thread.
+     * On failure, automatically schedules a retry with exponential backoff so reads always
+     * see the latest attempt without needing to trigger retries themselves.
+     */
+    private Future<?> submitInitialization(long retryDelayMs)
+    {
+        AsyncPromise<Void> promise = new AsyncPromise<>();
+        Stage.NETFLIX.execute(() -> {
+            try
+            {
+                context.run();
+                promise.setSuccess(null);
+            }
+            catch (Throwable t)
+            {
+                promise.setFailure(t);
+                scheduleRetry(retryDelayMs);
+            }
+        });
+        return promise;
+    }
+
+    /**
+     * Schedule a retry after a delay with exponential backoff. The new future replaces the
+     * current one so reads always block on the latest attempt.
+     */
+    private void scheduleRetry(long retryDelayMs)
+    {
+        long nextDelay = Math.min(retryDelayMs * 2, MAX_RETRY_DELAY_MS);
+        logger.info("Scheduling BackupMemtable initialization retry for {}.{} in {}ms",
+                     metadata().keyspace, metadata().name, retryDelayMs);
+        ScheduledExecutors.optionalTasks.schedule(() -> {
+            initializationFuture = submitInitialization(nextDelay);
+        }, retryDelayMs, TimeUnit.MILLISECONDS);
     }
 
     /**
@@ -95,6 +138,8 @@ public class BackupMemtable implements Memtable
     {
         return context.getDescriptors();
     }
+
+
 
     @Override
     public long put(PartitionUpdate update, UpdateTransaction indexer, OpOrder.Group opGroup)
@@ -281,7 +326,7 @@ public class BackupMemtable implements Memtable
     @Override
     public boolean shouldSwitch(ColumnFamilyStore.FlushReason reason)
     {
-        return false;
+        return reason == ColumnFamilyStore.FlushReason.SCHEMA_CHANGE;
     }
 
     @Override
@@ -336,10 +381,10 @@ public class BackupMemtable implements Memtable
             {
                 Throwable cause = e instanceof ExecutionException ? e.getCause() : e;
                 NoSpamLogger.log(logger, NoSpamLogger.Level.ERROR, 1, TimeUnit.MINUTES,
-                                 "BackupMemtable initialization failed, returning empty result for {}.{}: {}",
+                                 "BackupMemtable initialization failed for {}.{}: {}",
                                  metadata().keyspace, metadata().name, cause.getMessage());
                 Tracing.trace("BackupMemtable initialization failed for {}.{}: {}", metadata.keyspace, metadata.name, cause.getMessage());
-                return UnfilteredRowIterators.noRowsIterator(metadata(), key, Rows.EMPTY_STATIC_ROW, DeletionTime.LIVE, reversed);
+                throw new InvalidS3Exception("BackupMemtable initialization failed for " + metadata.keyspace + "." + metadata.name, cause);
             }
 
             List<BackupDescriptor> descriptors = context.getDescriptors();

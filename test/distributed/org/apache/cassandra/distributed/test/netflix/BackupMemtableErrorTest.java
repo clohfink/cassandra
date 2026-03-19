@@ -23,6 +23,12 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 
 import org.junit.Test;
@@ -31,6 +37,7 @@ import com.netflix.cassandra.backups.AwsAsyncS3FakeBackup;
 import org.apache.cassandra.distributed.Cluster;
 import org.apache.cassandra.distributed.api.ConsistencyLevel;
 import org.apache.cassandra.distributed.api.SimpleQueryResult;
+import org.assertj.core.api.Assertions;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
@@ -61,7 +68,7 @@ public class BackupMemtableErrorTest extends BackupMemtableTestBase
             }
             catch (Exception e)
             {
-                assertTrue(e.getMessage().contains("Backup memtable cannot be used for updates or deletions"));
+                Assertions.assertThat(e).hasMessageContaining("Backup memtable cannot be used for updates or deletions");
             }
 
             // Test range query fails
@@ -72,7 +79,7 @@ public class BackupMemtableErrorTest extends BackupMemtableTestBase
             }
             catch (Exception e)
             {
-                assertTrue(e.getMessage().contains("Range queries are not supported on S3 tables"));
+                Assertions.assertThat(e).hasMessageContaining("Range queries are not supported on S3 tables");
             }
         }
     }
@@ -101,11 +108,177 @@ public class BackupMemtableErrorTest extends BackupMemtableTestBase
             }
             catch (Exception e)
             {
-                assertTrue(e.getMessage().contains("Operation failed - received 0 responses and 1 failures"));
+                Assertions.assertThat(e).hasMessageContaining("Operation failed - received 0 responses and 1 failures");
             }
 
             SimpleQueryResult result = cluster.coordinator(1).executeWithResult("SELECT sub_id, value FROM test.test_table WHERE id = 1", ConsistencyLevel.ALL);
             assertTrue(result.toObjectArrays().length > 0);
+        }
+    }
+
+    @Test
+    public void testBackupMemtable_retriesInitializationOnFailure() throws IOException
+    {
+        try (Cluster cluster = init(Cluster.build(1)
+                                           .withDataDirCount(1)
+                                           .start()))
+        {
+            setupTable(cluster, "DESC");
+            insertTestData(cluster);
+
+            // Inject GET_OBJECT_AS_FILE failures to fail initialization.
+            // Validation uses getObjectKeys (not getObjectAsFile), so these only affect init.
+            // Each BackupMemtable instance retries downloadClosestMeta 3 times, and ALTER TABLE
+            // + TRUNCATE each create an instance, so 6 failures covers both.
+            setupBackupMemtable(
+                cluster,
+                new AwsAsyncS3FakeBackup.Injection.Failure<>(AwsAsyncS3FakeBackup.Method.GET_OBJECT_AS_FILE, new RuntimeException("Simulated S3 failure")),
+                new AwsAsyncS3FakeBackup.Injection.Failure<>(AwsAsyncS3FakeBackup.Method.GET_OBJECT_AS_FILE, new RuntimeException("Simulated S3 failure")),
+                new AwsAsyncS3FakeBackup.Injection.Failure<>(AwsAsyncS3FakeBackup.Method.GET_OBJECT_AS_FILE, new RuntimeException("Simulated S3 failure")),
+                new AwsAsyncS3FakeBackup.Injection.Failure<>(AwsAsyncS3FakeBackup.Method.GET_OBJECT_AS_FILE, new RuntimeException("Simulated S3 failure")),
+                new AwsAsyncS3FakeBackup.Injection.Failure<>(AwsAsyncS3FakeBackup.Method.GET_OBJECT_AS_FILE, new RuntimeException("Simulated S3 failure")),
+                new AwsAsyncS3FakeBackup.Injection.Failure<>(AwsAsyncS3FakeBackup.Method.GET_OBJECT_AS_FILE, new RuntimeException("Simulated S3 failure"))
+            );
+
+            // First read fails because initialization failed; retry is triggered
+            try
+            {
+                cluster.coordinator(1).executeWithResult(
+                    "SELECT sub_id, value FROM test.test_table WHERE id = 1", ConsistencyLevel.ALL);
+                fail("Expected read failure on failed initialization");
+            }
+            catch (Exception e)
+            {
+                Assertions.assertThat(e).hasMessageContaining("Operation failed");
+            }
+
+            // Subsequent reads succeed as initialization auto-retries in background and injections are exhausted
+            boolean success = false;
+            for (int i = 0; i < 10 && !success; i++)
+            {
+                try
+                {
+                    // Give background retry time to complete
+                    Thread.sleep(2000);
+                    SimpleQueryResult result = cluster.coordinator(1).executeWithResult(
+                        "SELECT sub_id, value FROM test.test_table WHERE id = 1", ConsistencyLevel.ALL);
+                    success = result.toObjectArrays().length > 0;
+                }
+                catch (Exception ignored)
+                {
+                    // Retry may still be in progress
+                }
+            }
+            assertTrue("Expected data after successful retry", success);
+        }
+    }
+
+    @Test
+    public void testBackupMemtable_alterTableTimestampChange() throws IOException
+    {
+        try (Cluster cluster = init(Cluster.build(1)
+                                           .withDataDirCount(1)
+                                           .start()))
+        {
+            setupTable(cluster, "DESC");
+            insertTestData(cluster);
+            setupBackupMemtable(cluster);
+
+            // Verify initial reads work
+            SimpleQueryResult result = cluster.coordinator(1).executeWithResult(
+                "SELECT sub_id, value FROM test.test_table WHERE id = 1", ConsistencyLevel.ALL);
+            assertTrue("Expected data from initial backup memtable", result.toObjectArrays().length > 0);
+
+            // ALTER TABLE with a different timestamp to trigger memtable switch.
+            // shouldSwitch(SCHEMA_CHANGE) returns true, so a new BackupMemtable is created.
+            // The new memtable detects stale cache (.timestamp marker has old value),
+            // deletes the meta file, and re-downloads for the new timestamp.
+            cluster.schemaChange("ALTER TABLE test.test_table WITH memtable = " +
+                "'backupmemtable:bucket=testbucket,NETFLIX_REGION=us-east-1,NETFLIX_ENVIRONMENT=test," +
+                "token=-1,NETFLIX_APP=testapp,timestamp=9999999999999'");
+
+            // Reads should still work — the new BackupMemtable re-downloaded the manifest
+            // and found the same backup data (timestamp 9999999999999 > backup timestamp)
+            result = cluster.coordinator(1).executeWithResult(
+                "SELECT sub_id, value FROM test.test_table WHERE id = 1", ConsistencyLevel.ALL);
+            assertTrue("Expected data after timestamp change", result.toObjectArrays().length > 0);
+        }
+    }
+
+    /**
+     * Burn test: fire concurrent reads while performing ALTER TABLE memtable switches.
+     * The old memtable may still be serving reads from its SSTableReaders while the new one
+     * is initializing, so this exercises the overlap window where both memtables are live.
+     */
+    @Test
+    public void testBackupMemtable_concurrentReadsWithTimestampSwitch() throws Exception
+    {
+        try (Cluster cluster = init(Cluster.build(1)
+                                           .withDataDirCount(1)
+                                           .start()))
+        {
+            setupTable(cluster, "DESC");
+            insertTestData(cluster);
+            setupBackupMemtable(cluster);
+
+            // Verify reads work before starting burn
+            SimpleQueryResult result = cluster.coordinator(1).executeWithResult(
+                "SELECT sub_id, value FROM test.test_table WHERE id = 1", ConsistencyLevel.ALL);
+            assertTrue("Expected data before burn test", result.toObjectArrays().length > 0);
+
+            int numReaders = 4;
+            int numSwitches = 5;
+            AtomicReference<Throwable> failure = new AtomicReference<>();
+            AtomicInteger successfulReads = new AtomicInteger();
+            CountDownLatch stopLatch = new CountDownLatch(1);
+            ExecutorService readers = Executors.newFixedThreadPool(numReaders);
+
+            // Start concurrent readers that query random partition keys continuously
+            for (int t = 0; t < numReaders; t++)
+            {
+                readers.submit(() -> {
+                    while (stopLatch.getCount() > 0 && failure.get() == null)
+                    {
+                        try
+                        {
+                            int key = (int) (Math.random() * 100);
+                            cluster.coordinator(1).executeWithResult(
+                                "SELECT sub_id, value FROM test.test_table WHERE id = " + key, ConsistencyLevel.ALL);
+                            successfulReads.incrementAndGet();
+                        }
+                        catch (Exception e)
+                        {
+                            // Init-in-progress failures are expected during switch; only
+                            // flag unexpected errors that aren't transient init failures
+                            if (!e.getMessage().contains("Operation failed") &&
+                                !e.getMessage().contains("initialization"))
+                            {
+                                failure.compareAndSet(null, e);
+                            }
+                        }
+                    }
+                });
+            }
+
+            // Perform memtable switches while reads are in flight
+            for (int i = 0; i < numSwitches; i++)
+            {
+                long ts = 9999999999999L - i;
+                cluster.schemaChange("ALTER TABLE test.test_table WITH memtable = " +
+                    "'backupmemtable:bucket=testbucket,NETFLIX_REGION=us-east-1,NETFLIX_ENVIRONMENT=test," +
+                    "token=-1,NETFLIX_APP=testapp,timestamp=" + ts + "'");
+                Thread.sleep(500);
+            }
+
+            stopLatch.countDown();
+            readers.shutdown();
+            assertTrue("Reader threads did not finish in time", readers.awaitTermination(30, TimeUnit.SECONDS));
+
+            if (failure.get() != null)
+                throw new AssertionError("Unexpected error during concurrent reads", failure.get());
+
+            assertTrue("Expected some successful reads during burn test, got " + successfulReads.get(),
+                       successfulReads.get() > 0);
         }
     }
 

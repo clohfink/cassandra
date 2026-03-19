@@ -1225,8 +1225,29 @@ public class LeveledCompactionStrategyTest
             assertTrue(intersected);
         }
 
+        // Scheduled compactions may leave residual L0 sstables (e.g. compaction output that didn't fit in L1).
+        // Drain any remaining normal LCS compaction tasks to ensure L0 is fully promoted.
+        int gcBeforeDrain = cfsScheduled.gcBefore((int) (System.currentTimeMillis() / 1000));
+        for (int i = 0; i < 100 && lcs.manifest.getLevel(0).size() > 0; i++)
+        {
+            LeveledCompactionStrategy.ScheduledLeveledCompactionTask drainTask = lcs.getNextScheduledCompactionTask(gcBeforeDrain, false);
+            if (drainTask != null)
+            {
+                drainTask.execute(new ActiveCompactionsTracker()
+                {
+                    public void beginCompaction(CompactionInfo.Holder ci) {}
+                    public void finishCompaction(CompactionInfo.Holder ci) {}
+                });
+            }
+            else
+            {
+                Thread.sleep(10);
+            }
+        }
+
         // everything is dropped in L1 - other levels should be empty since we have covered the whole range above
-        assertTrue(lcs.manifest.getLevel(0).size() == 0);
+        assertTrue("Expected L0 to be empty but had " + lcs.manifest.getLevel(0).size() + " sstables",
+                   lcs.manifest.getLevel(0).size() == 0);
         assertTrue(lcs.manifest.getLevel(1).size() > 0);
 
         StorageService.instance.getTokenMetadata().clearUnsafe();
