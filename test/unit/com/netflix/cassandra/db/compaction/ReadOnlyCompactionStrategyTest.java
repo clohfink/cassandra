@@ -221,7 +221,7 @@ public class ReadOnlyCompactionStrategyTest extends CQLTester
         createSSTableWithTokenRange(t3, e3, 3);  // [3000, 3500]
         
         ColumnFamilyStore cfs = getCurrentColumnFamilyStore();
-        ReadOnlyCompactionStrategy strategy = (ReadOnlyCompactionStrategy) cfs.getCompactionStrategyManager().getStrategies().get(0).get(0);
+        ReadOnlyCompactionStrategy strategy = (ReadOnlyCompactionStrategy) cfs.getCompactionStrategyManager().getStrategies().get(1).get(0);
         
         // Should detect overlaps: [t1,e2] overlaps [t3,e3] since t3=3000 < e2=4000
         Collection<SSTableReader> overlapping = strategy.getOverlappingSSTables();
@@ -243,7 +243,7 @@ public class ReadOnlyCompactionStrategyTest extends CQLTester
         createSSTableWithTokenRange(2001L, 3000L, 2);  // [2001, 3000] - no overlap
         
         ColumnFamilyStore cfs = getCurrentColumnFamilyStore();
-        ReadOnlyCompactionStrategy strategy = (ReadOnlyCompactionStrategy) cfs.getCompactionStrategyManager().getStrategies().get(0).get(0);
+        ReadOnlyCompactionStrategy strategy = (ReadOnlyCompactionStrategy) cfs.getCompactionStrategyManager().getStrategies().get(1).get(0);
         
         Collection<SSTableReader> overlapping = strategy.getOverlappingSSTables();
         assertEquals("Adjacent non-overlapping ranges should not be detected as overlapping", 0, overlapping.size());
@@ -259,7 +259,7 @@ public class ReadOnlyCompactionStrategyTest extends CQLTester
         createSSTableWithTokenRange(2000L, 3000L, 4);  // [2000, 3000] - touching at 2000
         
         ColumnFamilyStore cfs = getCurrentColumnFamilyStore();
-        ReadOnlyCompactionStrategy strategy = (ReadOnlyCompactionStrategy) cfs.getCompactionStrategyManager().getStrategies().get(0).get(0);
+        ReadOnlyCompactionStrategy strategy = (ReadOnlyCompactionStrategy) cfs.getCompactionStrategyManager().getStrategies().get(1).get(0);
         
         Collection<SSTableReader> overlapping = strategy.getOverlappingSSTables();
         assertTrue("Touching ranges should be detected as overlapping", overlapping.size() >= 2);
@@ -275,7 +275,7 @@ public class ReadOnlyCompactionStrategyTest extends CQLTester
         createSSTableWithTokenRange(2000L, 3000L, 6);  // [2000, 3000] - completely contained
         
         ColumnFamilyStore cfs = getCurrentColumnFamilyStore();
-        ReadOnlyCompactionStrategy strategy = (ReadOnlyCompactionStrategy) cfs.getCompactionStrategyManager().getStrategies().get(0).get(0);
+        ReadOnlyCompactionStrategy strategy = (ReadOnlyCompactionStrategy) cfs.getCompactionStrategyManager().getStrategies().get(1).get(0);
         
         Collection<SSTableReader> overlapping = strategy.getOverlappingSSTables();
         assertEquals("Completely contained ranges should be detected as overlapping", 2, overlapping.size());
@@ -291,7 +291,7 @@ public class ReadOnlyCompactionStrategyTest extends CQLTester
         createSSTableWithTokenRange(2000L, 4000L, 8);  // [2000, 4000] - overlaps 2000-3000
         
         ColumnFamilyStore cfs = getCurrentColumnFamilyStore();
-        ReadOnlyCompactionStrategy strategy = (ReadOnlyCompactionStrategy) cfs.getCompactionStrategyManager().getStrategies().get(0).get(0);
+        ReadOnlyCompactionStrategy strategy = (ReadOnlyCompactionStrategy) cfs.getCompactionStrategyManager().getStrategies().get(1).get(0);
         
         Collection<SSTableReader> overlapping = strategy.getOverlappingSSTables();
         assertEquals("Partially overlapping ranges should be detected", 2, overlapping.size());
@@ -320,7 +320,7 @@ public class ReadOnlyCompactionStrategyTest extends CQLTester
         // Wait for any ongoing compactions to complete
         waitForCompactionCompletion(cfs);
         
-        ReadOnlyCompactionStrategy strategy = (ReadOnlyCompactionStrategy) cfs.getCompactionStrategyManager().getStrategies().get(0).get(0);
+        ReadOnlyCompactionStrategy strategy = (ReadOnlyCompactionStrategy) cfs.getCompactionStrategyManager().getStrategies().get(1).get(0);
         Collection<SSTableReader> overlapping = strategy.getOverlappingSSTables();
         
         // A, B, C, D should all be detected as overlapping (4 SSTables)
@@ -345,7 +345,7 @@ public class ReadOnlyCompactionStrategyTest extends CQLTester
         createSSTableWithTokenRange(1000L, 2000L, 1);
         
         ColumnFamilyStore cfs = getCurrentColumnFamilyStore();
-        ReadOnlyCompactionStrategy strategy = (ReadOnlyCompactionStrategy) cfs.getCompactionStrategyManager().getStrategies().get(0).get(0);
+        ReadOnlyCompactionStrategy strategy = (ReadOnlyCompactionStrategy) cfs.getCompactionStrategyManager().getStrategies().get(1).get(0);
         
         Collection<SSTableReader> overlapping = strategy.getOverlappingSSTables();
         assertEquals("Single SSTable should not be detected as overlapping", 0, overlapping.size());
@@ -390,6 +390,36 @@ public class ReadOnlyCompactionStrategyTest extends CQLTester
         waitForCompactionCompletion(cfs);
     }
     
+    @Test
+    public void testBackgroundCompactionWithRepairedAndUnrepairedSSTables() throws Throwable
+    {
+        createTable("CREATE TABLE %s (k blob, v int, PRIMARY KEY (k)) WITH compaction = {'class': 'com.netflix.cassandra.db.compaction.ReadOnlyCompactionStrategy', 'enabled': 'false'}");
+
+        ColumnFamilyStore cfs = getCurrentColumnFamilyStore();
+
+        // Create overlapping SSTables with compaction disabled
+        createSSTableWithTokenRange(1000L, 3000L, 1);
+        createSSTableWithTokenRange(2000L, 4000L, 2);
+        createSSTableWithTokenRange(2500L, 3500L, 3);
+
+        assertEquals(3, cfs.getLiveSSTables().size());
+
+        // Mark one SSTable as repaired, leaving others unrepaired
+        SSTableReader first = cfs.getLiveSSTables().iterator().next();
+        cfs.getCompactionStrategyManager().mutateRepaired(Collections.singleton(first), System.currentTimeMillis(), null, false);
+
+        // Re-enable compaction and trigger background compaction
+        // Before the fix this would throw IllegalArgumentException: Cannot compact repaired and unrepaired sstables
+        // because getOverlappingSSTables() used cfs.getLiveSSTables() which returns all SSTables
+        cfs.enableAutoCompaction(true);
+        CompactionManager.instance.submitBackground(cfs);
+        Thread.sleep(100);
+        waitForCompactionCompletion(cfs);
+
+        // Verify data integrity
+        assertRows(execute("SELECT COUNT(*) FROM %s"), row(6L));
+    }
+
     @Test
     public void testSstableSizeInMbValidOption1024MB() throws Throwable
     {
@@ -485,7 +515,7 @@ public class ReadOnlyCompactionStrategyTest extends CQLTester
                    "'sstable_size_in_mb': '1'}"); // 1MB
         
         ColumnFamilyStore cfs = getCurrentColumnFamilyStore();
-        ReadOnlyCompactionStrategy strategy = (ReadOnlyCompactionStrategy) cfs.getCompactionStrategyManager().getStrategies().get(0).get(0);
+        ReadOnlyCompactionStrategy strategy = (ReadOnlyCompactionStrategy) cfs.getCompactionStrategyManager().getStrategies().get(1).get(0);
         
         // Verify strategy was created successfully with sstable_size_in_mb option
         assertNotNull("Strategy should be created with sstable_size_in_mb option", strategy);
@@ -512,7 +542,7 @@ public class ReadOnlyCompactionStrategyTest extends CQLTester
                    "WITH compaction = {'class': 'com.netflix.cassandra.db.compaction.ReadOnlyCompactionStrategy'}");
         
         ColumnFamilyStore cfs = getCurrentColumnFamilyStore();
-        ReadOnlyCompactionStrategy strategy = (ReadOnlyCompactionStrategy) cfs.getCompactionStrategyManager().getStrategies().get(0).get(0);
+        ReadOnlyCompactionStrategy strategy = (ReadOnlyCompactionStrategy) cfs.getCompactionStrategyManager().getStrategies().get(1).get(0);
         
         // Verify strategy was created successfully without sstable_size_in_mb option
         assertNotNull("Strategy should be created without sstable_size_in_mb option", strategy);

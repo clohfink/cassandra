@@ -19,6 +19,7 @@ package com.netflix.cassandra.db.compaction;
 
 import java.util.*;
 
+import com.google.common.collect.ImmutableSet;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -60,6 +61,7 @@ public class ReadOnlyCompactionStrategy extends AbstractCompactionStrategy
     private static final String MAX_SIZE_KEY = "sstable_size_in_mb";
     
     private final long maxSizeMb;
+    protected final Set<SSTableReader> sstables = new HashSet<>();
 
     public ReadOnlyCompactionStrategy(ColumnFamilyStore cfs, Map<String, String> options)
     {
@@ -93,13 +95,17 @@ public class ReadOnlyCompactionStrategy extends AbstractCompactionStrategy
         if (!isActive)
             return Collections.emptyList();
             
-        Collection<SSTableReader> sstables = cfs.getLiveSSTables();
-        if (sstables.isEmpty())
+        Set<SSTableReader> liveSSTables;
+        synchronized (this)
+        {
+            liveSSTables = ImmutableSet.copyOf(sstables);
+        }
+        if (liveSSTables.isEmpty())
             return Collections.emptyList();
-            
-        logger.info("Creating maximal compaction task for {} SSTables", sstables.size());
-        
-        LifecycleTransaction txn = cfs.getTracker().tryModify(sstables, OperationType.COMPACTION);
+
+        logger.info("Creating maximal compaction task for {} SSTables", liveSSTables.size());
+
+        LifecycleTransaction txn = cfs.getTracker().tryModify(liveSSTables, OperationType.COMPACTION);
         if (txn == null)
             return Collections.emptyList();
             
@@ -135,30 +141,25 @@ public class ReadOnlyCompactionStrategy extends AbstractCompactionStrategy
     }
     
     @Override
-    protected Set<SSTableReader> getSSTables()
+    protected synchronized Set<SSTableReader> getSSTables()
     {
-        return cfs.getLiveSSTables();
+        return ImmutableSet.copyOf(sstables);
     }
     
     @Override
-    public void addSSTable(SSTableReader added)
+    public synchronized void addSSTable(SSTableReader added)
     {
-        // For read-only strategy, we don't need to do anything special when SSTable is added
-        // The strategy will handle it in the next compaction cycle if needed
-        logger.debug("Added SSTable {} to ReadOnlyCompactionStrategy", added);
+        sstables.add(added);
     }
-    
+
     @Override
-    public void removeSSTable(SSTableReader sstable)
+    public synchronized void removeSSTable(SSTableReader sstable)
     {
-        // For read-only strategy, we don't maintain internal state for SSTables
-        // so there's nothing special to do when removing
-        logger.debug("Removed SSTable {} from ReadOnlyCompactionStrategy", sstable);
+        sstables.remove(sstable);
     }
     
-    public Collection<SSTableReader> getOverlappingSSTables()
+    public synchronized Collection<SSTableReader> getOverlappingSSTables()
     {
-        Collection<SSTableReader> sstables = cfs.getLiveSSTables();
         if (sstables.size() < 2)
             return Collections.emptyList();
 
