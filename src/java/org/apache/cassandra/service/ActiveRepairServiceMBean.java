@@ -65,4 +65,10 @@ public interface ActiveRepairServiceMBean
     public double getIncrementalRepairDiskHeadroomRejectRatio();
 
     public void setIncrementalRepairDiskHeadroomRejectRatio(double value);
+
+    /**
+     * Returns a comprehensive CompositeData containing all repair-related status information:
+     * autoRepairMetrics, incrementalRepairStats, consistentSessions, activeRepairs, and tableRepairConfigs.
+     */
+    CompositeData getRepairStatus();
 }

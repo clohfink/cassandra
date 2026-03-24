@@ -191,6 +191,7 @@ public class NodeTool
                 RelocateSSTables.class,
                 RemoveNode.class,
                 Repair.class,
+                RepairStatus.class,
                 ReplayBatchlog.class,
                 ResetFullQueryLog.class,
                 ResetLocalSchema.class,

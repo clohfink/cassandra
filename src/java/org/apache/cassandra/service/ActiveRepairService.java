@@ -49,7 +49,14 @@ import org.apache.cassandra.concurrent.ExecutorPlus;
 import org.apache.cassandra.config.Config;
 import org.apache.cassandra.config.DurationSpec;
 import org.apache.cassandra.db.compaction.CompactionManager;
+import org.apache.cassandra.metrics.AutoRepairMetrics;
+import org.apache.cassandra.metrics.AutoRepairMetricsManager;
+import org.apache.cassandra.repair.autorepair.AutoRepair;
+import org.apache.cassandra.repair.autorepair.AutoRepairConfig;
+import org.apache.cassandra.repair.autorepair.AutoRepairState;
 import org.apache.cassandra.repair.Scheduler;
+import org.apache.cassandra.schema.AutoRepairParams;
+import org.apache.cassandra.schema.SchemaConstants;
 import org.apache.cassandra.locator.AbstractReplicationStrategy;
 import org.apache.cassandra.locator.EndpointsByRange;
 import org.apache.cassandra.locator.EndpointsForRange;
@@ -1170,5 +1177,180 @@ public class ActiveRepairService implements IEndpointStateChangeSubscriber, IFai
                 return state;
         }
         return null;
+    }
+
+    @Override
+    public CompositeData getRepairStatus()
+    {
+        try
+        {
+            RepairStatusCompositeData.Builder builder = RepairStatusCompositeData.builder();
+            addAutoRepairMetrics(builder);
+            addIncrementalRepairStats(builder);
+            addConsistentSessions(builder);
+            addActiveRepairs(builder);
+            addTableRepairConfigs(builder);
+            return builder.build().toCompositeData();
+        }
+        catch (Exception e)
+        {
+            logger.error("Failed to generate repair status", e);
+            return RepairStatusCompositeData.builder().build().toCompositeData();
+        }
+    }
+
+    private void addAutoRepairMetrics(RepairStatusCompositeData.Builder builder)
+    {
+        for (AutoRepairConfig.RepairType repairType : AutoRepairConfig.RepairType.values())
+        {
+            try
+            {
+                AutoRepairState state = AutoRepair.instance.getRepairState(repairType);
+                AutoRepairMetrics repairMetrics = AutoRepairMetricsManager.getMetrics(repairType);
+                builder.addAutoRepairMetric(new RepairStatusCompositeData.AutoRepairMetric(
+                    repairType.name(),
+                    state.isRepairInProgress() ? 1 : 0,
+                    state.getNodeRepairTimeInSec(),
+                    state.getClusterRepairTimeInSec(),
+                    state.getLongestUnrepairedSec(),
+                    state.getSucceededTokenRangesCount(),
+                    state.getFailedTokenRangesCount(),
+                    state.getSkippedTokenRangesCount(),
+                    repairMetrics.repairTurnMyTurn.getCount(),
+                    repairMetrics.repairTurnMyTurnDueToPriority.getCount(),
+                    repairMetrics.repairTurnMyTurnForceRepair.getCount(),
+                    state.getTotalMVTablesConsideredForRepair(),
+                    state.getTotalDisabledTablesRepairCount()
+                ));
+            }
+            catch (Exception e)
+            {
+                logger.warn("Failed to gather auto repair metrics for {}", repairType, e);
+            }
+        }
+    }
+
+    private void addIncrementalRepairStats(RepairStatusCompositeData.Builder builder)
+    {
+        for (Keyspace keyspace : Keyspace.all())
+        {
+            if (SchemaConstants.isSystemKeyspace(keyspace.getName()))
+                continue;
+
+            for (ColumnFamilyStore cfs : keyspace.getColumnFamilyStores())
+            {
+                try
+                {
+                    long bytesRepaired = 0, bytesUnrepaired = 0, bytesPendingRepair = 0;
+                    int sstablesRepaired = 0, sstablesUnrepaired = 0, sstablesPendingRepair = 0;
+
+                    for (org.apache.cassandra.io.sstable.format.SSTableReader sstable : cfs.getSSTables(org.apache.cassandra.db.lifecycle.SSTableSet.CANONICAL))
+                    {
+                        long size = sstable.onDiskLength();
+                        if (sstable.isRepaired())
+                        {
+                            bytesRepaired += size;
+                            sstablesRepaired++;
+                        }
+                        else if (sstable.isPendingRepair())
+                        {
+                            bytesPendingRepair += size;
+                            sstablesPendingRepair++;
+                        }
+                        else
+                        {
+                            bytesUnrepaired += size;
+                            sstablesUnrepaired++;
+                        }
+                    }
+
+                    builder.addIncrementalRepairStat(new RepairStatusCompositeData.IncrementalRepairStat(
+                        keyspace.getName(), cfs.getTableName(),
+                        bytesRepaired, bytesUnrepaired, bytesPendingRepair,
+                        sstablesRepaired, sstablesUnrepaired, sstablesPendingRepair
+                    ));
+                }
+                catch (Exception e)
+                {
+                    logger.warn("Failed to gather incremental repair stats for {}.{}", keyspace.getName(), cfs.getTableName(), e);
+                }
+            }
+        }
+    }
+
+    private void addConsistentSessions(RepairStatusCompositeData.Builder builder)
+    {
+        for (Map<String, String> sessionMap : getSessions(true, null))
+            builder.addConsistentSession(RepairStatusCompositeData.ConsistentSession.fromSessionMap(sessionMap));
+    }
+
+    private void addActiveRepairs(RepairStatusCompositeData.Builder builder)
+    {
+        for (CoordinatorState coordinator : coordinators())
+        {
+            try
+            {
+                String type = "full";
+                if (coordinator.options.isIncremental())
+                    type = "incremental";
+                else if (coordinator.options.isPreview())
+                    type = "preview";
+
+                CoordinatorState.State status = coordinator.getStatus();
+                Set<InetAddressAndPort> participants = coordinator.getParticipants();
+                String participantsStr = participants != null
+                                         ? participants.stream().map(InetAddressAndPort::getHostAddressAndPort).collect(Collectors.joining(","))
+                                         : "";
+
+                List<CommonRange> ranges = coordinator.getCommonRanges();
+                String failureCause = coordinator.getFailureCause();
+
+                builder.addActiveRepair(new RepairStatusCompositeData.ActiveRepair(
+                    coordinator.id.toString(),
+                    coordinator.keyspace,
+                    type,
+                    status != null ? status.name() : "INIT",
+                    coordinator.getDurationMillis(),
+                    coordinator.getSessions().size(),
+                    participantsStr,
+                    ranges != null ? ranges.size() : 0,
+                    failureCause != null ? failureCause : ""
+                ));
+            }
+            catch (Exception e)
+            {
+                logger.warn("Failed to gather active repair info for {}", coordinator.id, e);
+            }
+        }
+    }
+
+    private void addTableRepairConfigs(RepairStatusCompositeData.Builder builder)
+    {
+        for (Keyspace keyspace : Keyspace.all())
+        {
+            if (SchemaConstants.isSystemKeyspace(keyspace.getName()))
+                continue;
+
+            for (ColumnFamilyStore cfs : keyspace.getColumnFamilyStores())
+            {
+                try
+                {
+                    TableMetadata meta = cfs.metadata();
+                    AutoRepairParams autoRepair = meta.params.autoRepair;
+                    builder.addTableRepairConfig(new RepairStatusCompositeData.TableRepairConfig(
+                        keyspace.getName(),
+                        cfs.getTableName(),
+                        autoRepair.repairEnabled(AutoRepairConfig.RepairType.INCREMENTAL),
+                        autoRepair.repairEnabled(AutoRepairConfig.RepairType.PREVIEW_REPAIRED),
+                        autoRepair.repairEnabled(AutoRepairConfig.RepairType.FULL),
+                        autoRepair.priority()
+                    ));
+                }
+                catch (Exception e)
+                {
+                    logger.warn("Failed to gather repair config for {}.{}", keyspace.getName(), cfs.getTableName(), e);
+                }
+            }
+        }
     }
 }
