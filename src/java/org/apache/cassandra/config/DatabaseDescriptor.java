@@ -328,6 +328,26 @@ public class DatabaseDescriptor
         return conf;
     }
 
+    public static String getLoadedConfigHash()
+    {
+        return YamlConfigurationLoader.getLoadedConfigHash();
+    }
+
+    public static String getCurrentConfigHash()
+    {
+        return YamlConfigurationLoader.getCurrentConfigHash();
+    }
+
+    public static String getLoadedConfigContent()
+    {
+        return YamlConfigurationLoader.getLoadedConfigContent();
+    }
+
+    public static String getCurrentConfigContent()
+    {
+        return YamlConfigurationLoader.getCurrentConfigContent();
+    }
+
     @VisibleForTesting
     public static Config loadConfig() throws ConfigurationException
     {

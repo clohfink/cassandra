@@ -767,6 +767,21 @@ public class NodeProbe implements AutoCloseable
         return ssProxy.getReleaseVersion();
     }
 
+    public String getLoadedConfigHash()
+    {
+        return ssProxy.getLoadedConfigHash();
+    }
+
+    public String getCurrentConfigHash()
+    {
+        return ssProxy.getFileConfigHash();
+    }
+
+    public CompositeData getConfigDelta()
+    {
+        return ssProxy.getConfigDelta();
+    }
+
     public int getCurrentGenerationNumber()
     {
         return ssProxy.getCurrentGenerationNumber();

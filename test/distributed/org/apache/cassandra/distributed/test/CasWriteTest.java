@@ -185,7 +185,9 @@ public class CasWriteTest extends TestBaseImpl
                            c -> {
                                c.filters().reset();
                                c.filters().verbs(Verb.PAXOS_PREPARE_REQ.id).from(1).to(3).drop();
+                               c.filters().verbs(Verb.PAXOS2_PREPARE_REQ.id).from(1).to(3).drop();
                                c.filters().verbs(Verb.PAXOS_PROPOSE_REQ.id).from(1).to(2).drop();
+                               c.filters().verbs(Verb.PAXOS2_PROPOSE_REQ.id).from(1).to(2).drop();
                            },
                            failure ->
                                failure.get() != null &&
@@ -206,8 +208,12 @@ public class CasWriteTest extends TestBaseImpl
         ExecutorService es = Executors.newFixedThreadPool(3);
         AtomicReference<Throwable> failure = new AtomicReference<>();
         Supplier<Boolean> hasExpectedException = () -> expectedException.apply(failure);
+        int maxAttempts = 50;
+        int attempts = 0;
         while (!hasExpectedException.get())
         {
+            if (++attempts > maxAttempts)
+                Assert.fail("Failed to produce expected exception after " + maxAttempts + " attempts. " + assertHintMessage);
             failure.set(null);
             setupForEachRound.accept(cluster);
 

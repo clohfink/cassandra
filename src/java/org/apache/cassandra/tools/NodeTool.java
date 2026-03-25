@@ -103,6 +103,7 @@ public class NodeTool
                 ClientStats.class,
                 Compact.class,
                 CompactionHistory.class,
+                ConfigCheck.class,
                 CompactionStats.class,
                 DataPaths.class,
                 Decommission.class,

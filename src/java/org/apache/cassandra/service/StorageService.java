@@ -121,6 +121,7 @@ import org.apache.cassandra.concurrent.ScheduledExecutors;
 import org.apache.cassandra.concurrent.Stage;
 import org.apache.cassandra.config.Config;
 import org.apache.cassandra.config.Config.PaxosStatePurging;
+import org.apache.cassandra.config.ConfigCheckCompositeData;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.config.DurationSpec;
 import org.apache.cassandra.cql3.QueryProcessor;
@@ -3918,6 +3919,24 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
     public String getReleaseVersion()
     {
         return FBUtilities.getReleaseVersionString();
+    }
+
+    public String getLoadedConfigHash()
+    {
+        return DatabaseDescriptor.getLoadedConfigHash();
+    }
+
+    public String getFileConfigHash()
+    {
+        return DatabaseDescriptor.getCurrentConfigHash();
+    }
+
+    public CompositeData getConfigDelta()
+    {
+        return ConfigCheckCompositeData.build(DatabaseDescriptor.getLoadedConfigHash(),
+                                              DatabaseDescriptor.getCurrentConfigHash(),
+                                              DatabaseDescriptor.getLoadedConfigContent(),
+                                              DatabaseDescriptor.getCurrentConfigContent());
     }
 
     public String getSchemaVersion()

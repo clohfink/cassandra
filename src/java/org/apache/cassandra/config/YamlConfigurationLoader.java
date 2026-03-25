@@ -21,6 +21,7 @@ import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URL;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -36,12 +37,14 @@ import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
+import com.google.common.hash.Hashing;
 import com.google.common.io.ByteStreams;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.io.util.File;
+import org.apache.cassandra.utils.Hex;
 import org.yaml.snakeyaml.LoaderOptions;
 import org.yaml.snakeyaml.TypeDescription;
 import org.yaml.snakeyaml.Yaml;
@@ -108,6 +111,12 @@ public class YamlConfigurationLoader implements ConfigurationLoader
 
     private static URL storageConfigURL;
 
+    /** MD5 hash of the config file bytes at load time */
+    private static volatile String loadedConfigHash;
+
+    /** Raw config file content at load time, stored for delta comparison */
+    private static volatile String loadedConfigContent;
+
     @Override
     public Config loadConfig() throws ConfigurationException
     {
@@ -133,6 +142,10 @@ public class YamlConfigurationLoader implements ConfigurationLoader
                 throw new AssertionError(e);
             }
 
+            storageConfigURL = url;
+            loadedConfigHash = hashHex(configBytes);
+            loadedConfigContent = new String(configBytes, StandardCharsets.UTF_8);
+
             SafeConstructor constructor = new CustomConstructor(Config.class, Yaml.class.getClassLoader());
             Map<Class<?>, Map<String, Replacement>> replacements = getNameReplacements(Config.class);
             verifyReplacements(replacements, configBytes);
@@ -148,6 +161,70 @@ public class YamlConfigurationLoader implements ConfigurationLoader
         {
             throw new ConfigurationException("Invalid yaml: " + url, e);
         }
+    }
+
+    /**
+     * Returns the SHA-256 hash of the config file as it was at load time.
+     */
+    public static String getLoadedConfigHash()
+    {
+        return loadedConfigHash;
+    }
+
+    /**
+     * Re-reads the config file from disk and returns its current SHA-256 hash.
+     * Returns null if the config file cannot be read.
+     */
+    public static String getCurrentConfigHash()
+    {
+        try
+        {
+            URL url = storageConfigURL != null ? storageConfigURL : getStorageConfigURL();
+            try (InputStream is = url.openStream())
+            {
+                return hashHex(ByteStreams.toByteArray(is));
+            }
+        }
+        catch (Exception e)
+        {
+            logger.warn("Failed to read current config file for hashing", e);
+            return null;
+        }
+    }
+
+    /**
+     * Returns the raw config file content as it was at load time.
+     */
+    public static String getLoadedConfigContent()
+    {
+        return loadedConfigContent;
+    }
+
+    /**
+     * Re-reads the config file from disk and returns its current content.
+     * Returns null if the config file cannot be read.
+     */
+    public static String getCurrentConfigContent()
+    {
+        try
+        {
+            URL url = storageConfigURL != null ? storageConfigURL : getStorageConfigURL();
+            try (InputStream is = url.openStream())
+            {
+                return new String(ByteStreams.toByteArray(is), StandardCharsets.UTF_8);
+            }
+        }
+        catch (Exception e)
+        {
+            logger.warn("Failed to read current config file", e);
+            return null;
+        }
+    }
+
+    @SuppressWarnings("deprecation")
+    private static String hashHex(byte[] data)
+    {
+        return Hex.bytesToHex(Hashing.md5().hashBytes(data).asBytes());
     }
 
     private static void maybeAddSystemProperties(Object obj)

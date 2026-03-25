@@ -1151,4 +1151,15 @@ public interface StorageServiceMBean extends NotificationEmitter
      */
     Map<String, long[]> getOutOfRangeOperationCounts();
 
+    /** hash of cassandra.yaml as it was when the node started */
+    String getLoadedConfigHash();
+
+    /** hash of cassandra.yaml as it currently is on disk */
+    String getFileConfigHash();
+
+    /**
+     * Returns a CompositeData with: changed (boolean), loaded_hash, file_hash, loaded_config, file_config.
+     */
+    CompositeData getConfigDelta();
+
 }
