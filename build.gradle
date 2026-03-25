@@ -115,11 +115,23 @@ java {
     }
 }
 
+// Build the dtest JAR by shelling out to Ant in a fresh process. We can't use the imported
+// Ant targets (antdtest-jar) because ant.importBuild caches Ant property conditions at Gradle
+// configuration time. After ./gradlew clean, the cached conditions are stale (e.g. Ant thinks
+// maven-ant-tasks.jar still exists) causing the build to fail. A fresh Ant process re-evaluates
+// everything correctly.
+tasks.register('buildDtestJar', Exec) {
+    commandLine 'ant', 'dtest-jar'
+    workingDir projectDir
+    outputs.file(file("${buildDir}/dtest-${ant.properties['base.version']}.jar"))
+}
+
 // Shade the Ant-built dtest JAR to relocate the AWS SDK, avoiding version conflicts
 // with consumers that bring their own AWS SDK version.
 import com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar
 
 tasks.register('shadeDtestJar', ShadowJar) {
+    dependsOn 'buildDtestJar'
     def dtestJar = file("${buildDir}/dtest-${ant.properties['base.version']}.jar")
     from({ zipTree(dtestJar) })
     archiveBaseName = 'nfcassandra-jvm-dtest'
@@ -127,6 +139,10 @@ tasks.register('shadeDtestJar', ShadowJar) {
     destinationDirectory = file("${buildDir}/dtest-shaded")
 
     relocate 'software.amazon', 'relocated.software.amazon'
+
+    doLast {
+        logger.lifecycle("shadeDtestJar: Produced ${archiveFile.get().asFile} (${archiveFile.get().asFile.length() / 1024 / 1024} MB)")
+    }
 }
 
 // Publish the shaded jvm-dtest JAR to Artifactory.

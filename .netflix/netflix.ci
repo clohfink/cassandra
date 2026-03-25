@@ -92,7 +92,7 @@ newt --app-type jenkins hollow-debs
 
 # Build, shade, and verify the jvm-dtest JAR (com.netflix.cde:nfcassandra-jvm-dtest).
 # Verification runs on every build (including PRs). Publishing only on merge.
-echo "Building jvm-dtest JAR..."
+echo "Building jvm-dtest JAR via Ant..."
 ant dtest-jar
 echo "Shading and verifying jvm-dtest JAR..."
 newt exec ./gradlew verifyShadedDtestJar publishJvmDtestPublicationToMavenLocal --info
