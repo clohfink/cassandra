@@ -1,6 +1,14 @@
+buildscript {
+    dependencies {
+        classpath 'com.gradleup.shadow:shadow-gradle-plugin:8.3.6'
+    }
+}
+
 apply plugin: 'netflix.nebula'
 apply plugin: 'netflix.ospackage'
 apply plugin: 'java'
+apply plugin: 'maven-publish'
+apply plugin: 'com.gradleup.shadow'
 
 nebula {
     moduleEmail = 'cde-team@netflix.com'
@@ -9,6 +17,7 @@ nebula {
 
 compileJava.enabled = false
 compileTestJava.enabled = false
+shadowJar.enabled = false
 
 ant.importBuild('build.xml') { antTargetName ->
     'ant' + antTargetName
@@ -103,5 +112,61 @@ java {
     toolchain {
         //this selection controlls which JDK is installed on the machine toghether with cassandra package
         languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+// Shade the Ant-built dtest JAR to relocate the AWS SDK, avoiding version conflicts
+// with consumers that bring their own AWS SDK version.
+import com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar
+
+tasks.register('shadeDtestJar', ShadowJar) {
+    def dtestJar = file("${buildDir}/dtest-${ant.properties['base.version']}.jar")
+    from({ zipTree(dtestJar) })
+    archiveBaseName = 'nfcassandra-jvm-dtest'
+    archiveClassifier = ''
+    destinationDirectory = file("${buildDir}/dtest-shaded")
+
+    relocate 'software.amazon', 'relocated.software.amazon'
+}
+
+// Publish the shaded jvm-dtest JAR to Artifactory.
+// Consumers can depend on com.netflix.cde:nfcassandra-jvm-dtest:<version>.
+// Usage: ./gradlew publishJvmDtest
+afterEvaluate {
+    publishing {
+        publications {
+            jvmDtest(MavenPublication) {
+                groupId = 'com.netflix.cde'
+                artifactId = 'nfcassandra-jvm-dtest'
+                artifact(tasks.named('shadeDtestJar'))
+
+                pom {
+                    name = 'nfcassandra jvm-dtest JAR'
+                    description = 'Fat JAR for running Cassandra jvm-dtest (in-JVM distributed tests). Contains all Cassandra classes, test infrastructure, and bundled dependencies. AWS SDK is relocated to avoid classpath conflicts.'
+                }
+            }
+        }
+    }
+}
+
+tasks.register('verifyShadedDtestJar') {
+    dependsOn 'shadeDtestJar'
+    doLast {
+        def jar = tasks.shadeDtestJar.archiveFile.get().asFile
+        def conflicts = zipTree(jar).matching { include 'software/amazon/**/*.class' }.files
+        assert conflicts.isEmpty() :
+            "Found ${conflicts.size()} unrelocated AWS SDK classes in ${jar.name}. " +
+            "These will cause classpath conflicts for consumers."
+    }
+}
+
+// Verification gates the publish — runs even if someone calls the publish task directly
+afterEvaluate {
+    tasks.named('publishJvmDtestPublicationToDistMavenRepository') {
+        dependsOn 'verifyShadedDtestJar'
+    }
+
+    tasks.register('publishJvmDtest') {
+        dependsOn 'publishJvmDtestPublicationToDistMavenRepository'
     }
 }
