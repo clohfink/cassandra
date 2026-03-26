@@ -128,12 +128,17 @@ java {
 // jvm-dtest JAR: build, shade, verify, and publish
 // ---------------------------------------------------------------------------
 // Publishes com.netflix.cde:nfcassandra-jvm-dtest:<version> to Artifactory.
+// Version scheme: {base.version}.{BUILD_NUMBER}, e.g. 4.1.8.911
 // Runs as part of ./gradlew publish (triggered by the build-artifacts Jenkins job).
 //
 // The chain: buildDtestJar (forks to ant) -> shadeDtestJar (relocates AWS SDK)
 //         -> verifyShadedDtestJar (asserts no unrelocated classes) -> publish
 
 import com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar
+
+// Compute dtest JAR version: {base.version}.{BUILD_NUMBER}
+// e.g. 4.1.8 + BUILD_NUMBER=911 -> 4.1.8.911
+ext.dtestVersion = "${ant.properties['base.version']}.${System.getenv('BUILD_NUMBER') ?: 'local'}"
 
 // Build the dtest fat JAR by launching Ant as a Java subprocess using the Ant JARs
 // bundled with the Gradle distribution. We can't use the imported Ant targets (antdtest-jar)
@@ -166,6 +171,7 @@ tasks.register('shadeDtestJar', ShadowJar) {
     def dtestJar = file("${buildDir}/dtest-${ant.properties['base.version']}.jar")
     from({ zipTree(dtestJar) })
     archiveBaseName = 'nfcassandra-jvm-dtest'
+    archiveVersion = project.ext.dtestVersion
     archiveClassifier = ''
     destinationDirectory = file("${buildDir}/dtest-shaded")
 
@@ -203,7 +209,7 @@ afterEvaluate {
             jvmDtestIvy(IvyPublication) {
                 organisation = 'com.netflix.cde'
                 module = 'nfcassandra-jvm-dtest'
-                revision = project.ext.cass_version
+                revision = project.ext.dtestVersion
                 artifact(tasks.named('shadeDtestJar'))
 
                 descriptor.description {
