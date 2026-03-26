@@ -19,6 +19,15 @@ compileJava.enabled = false
 compileTestJava.enabled = false
 shadowJar.enabled = false
 
+// Remove the shadow variant from the Java component. The Shadow plugin automatically registers
+// the shadowJar output as a variant, but since shadowJar is disabled, publishBuildInfoToArtifactory
+// tries to checksum the non-existent -all.jar and fails.
+afterEvaluate {
+    components.java {
+        withVariantsFromConfiguration(configurations.shadowRuntimeElements) { skip() }
+    }
+}
+
 ant.importBuild('build.xml') { antTargetName ->
     'ant' + antTargetName
 }
