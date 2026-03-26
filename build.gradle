@@ -115,21 +115,43 @@ java {
     }
 }
 
-// Build the dtest JAR by shelling out to a fresh Ant process via newt. We can't use the
-// imported Ant targets (antdtest-jar) because ant.importBuild caches Ant property conditions
-// at Gradle configuration time. After ./gradlew clean, the cached conditions are stale (e.g.
-// Ant thinks maven-ant-tasks.jar still exists) causing the build to fail. A fresh Ant process
-// re-evaluates everything correctly.
-tasks.register('buildDtestJar', Exec) {
-    commandLine 'newt', 'exec', 'ant', 'dtest-jar'
-    workingDir projectDir
-    outputs.file(file("${buildDir}/dtest-${ant.properties['base.version']}.jar"))
-}
+// ---------------------------------------------------------------------------
+// jvm-dtest JAR: build, shade, verify, and publish
+// ---------------------------------------------------------------------------
+// Publishes com.netflix.cde:nfcassandra-jvm-dtest:<version> to Artifactory.
+// Runs as part of ./gradlew publish (triggered by the build-artifacts Jenkins job).
+//
+// The chain: buildDtestJar (forks to ant) -> shadeDtestJar (relocates AWS SDK)
+//         -> verifyShadedDtestJar (asserts no unrelocated classes) -> publish
 
-// Shade the Ant-built dtest JAR to relocate the AWS SDK, avoiding version conflicts
-// with consumers that bring their own AWS SDK version.
 import com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar
 
+// Build the dtest fat JAR by launching Ant as a Java subprocess using the Ant JARs
+// bundled with the Gradle distribution. We can't use the imported Ant targets (antdtest-jar)
+// because ant.importBuild evaluates Ant <condition> properties at Gradle configuration time
+// and caches them as immutable. After ./gradlew clean deletes build/, the cached property
+// maven-ant-tasks.jar.exists is still 'true' so the download is skipped and the build fails.
+// A fresh Ant process re-evaluates all conditions correctly.
+tasks.register('buildDtestJar', JavaExec) {
+    def gradleHome = gradle.gradleHomeDir
+    def antJars = fileTree(gradleHome) { include 'lib/ant-launcher-*.jar', 'lib/ant-1*.jar' }
+    classpath = antJars
+    mainClass = 'org.apache.tools.ant.launch.Launcher'
+    args = ['-f', file('build.xml').absolutePath, 'dtest-jar']
+    workingDir projectDir
+    outputs.file(file("${buildDir}/dtest-${ant.properties['base.version']}.jar"))
+
+    doFirst {
+        logger.lifecycle("buildDtestJar: Gradle home: ${gradleHome}")
+        logger.lifecycle("buildDtestJar: Ant JARs: ${antJars.files.collect { it.name }}")
+        logger.lifecycle("buildDtestJar: JAVA_HOME: ${System.getenv('JAVA_HOME') ?: 'not set'}")
+        logger.lifecycle("buildDtestJar: Java version: ${System.getProperty('java.version')}")
+        logger.lifecycle("buildDtestJar: build.xml: ${file('build.xml').absolutePath}")
+        assert !antJars.empty : "No Ant JARs found in ${gradleHome}/lib/ — Gradle distribution may be incomplete"
+    }
+}
+
+// Shade the dtest JAR to relocate the AWS SDK, avoiding classpath conflicts with consumers.
 tasks.register('shadeDtestJar', ShadowJar) {
     dependsOn 'buildDtestJar'
     def dtestJar = file("${buildDir}/dtest-${ant.properties['base.version']}.jar")
@@ -140,14 +162,29 @@ tasks.register('shadeDtestJar', ShadowJar) {
 
     relocate 'software.amazon', 'relocated.software.amazon'
 
+    doFirst {
+        logger.lifecycle("shadeDtestJar: Input JAR: ${dtestJar} (${dtestJar.length() / 1024 / 1024} MB)")
+        logger.lifecycle("shadeDtestJar: Relocating software.amazon -> relocated.software.amazon")
+    }
     doLast {
         logger.lifecycle("shadeDtestJar: Produced ${archiveFile.get().asFile} (${archiveFile.get().asFile.length() / 1024 / 1024} MB)")
     }
 }
 
-// Publish the shaded jvm-dtest JAR to Artifactory.
-// Consumers can depend on com.netflix.cde:nfcassandra-jvm-dtest:<version>.
-// Usage: ./gradlew publishJvmDtest
+// Verify no unrelocated AWS SDK classes leaked into the shaded JAR.
+tasks.register('verifyShadedDtestJar') {
+    dependsOn 'shadeDtestJar'
+    doLast {
+        def jar = tasks.shadeDtestJar.archiveFile.get().asFile
+        def conflicts = zipTree(jar).matching { include 'software/amazon/**/*.class' }.files
+        assert conflicts.isEmpty() :
+            "Found ${conflicts.size()} unrelocated AWS SDK classes in ${jar.name}. " +
+            "These will cause classpath conflicts for consumers."
+        logger.lifecycle("verifyShadedDtestJar: Verified — 0 unrelocated AWS SDK classes")
+    }
+}
+
+// Publish the shaded JAR as com.netflix.cde:nfcassandra-jvm-dtest:<version>.
 afterEvaluate {
     publishing {
         publications {
@@ -163,21 +200,7 @@ afterEvaluate {
             }
         }
     }
-}
 
-tasks.register('verifyShadedDtestJar') {
-    dependsOn 'shadeDtestJar'
-    doLast {
-        def jar = tasks.shadeDtestJar.archiveFile.get().asFile
-        def conflicts = zipTree(jar).matching { include 'software/amazon/**/*.class' }.files
-        assert conflicts.isEmpty() :
-            "Found ${conflicts.size()} unrelocated AWS SDK classes in ${jar.name}. " +
-            "These will cause classpath conflicts for consumers."
-    }
-}
-
-// Verification gates the publish — runs even if someone calls the publish task directly
-afterEvaluate {
     tasks.named('publishJvmDtestPublicationToDistMavenRepository') {
         dependsOn 'verifyShadedDtestJar'
     }
