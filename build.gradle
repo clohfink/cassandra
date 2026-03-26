@@ -194,27 +194,32 @@ tasks.register('verifyShadedDtestJar') {
 }
 
 // Publish the shaded JAR as com.netflix.cde:nfcassandra-jvm-dtest:<version>.
+// Uses Ivy publication to piggyback on the existing Nebula Ivy upload path to
+// libs-snapshots-local, which is the only remote Artifactory repo configured for
+// this project. Consumers resolve it via Gradle's standard dependency syntax.
 afterEvaluate {
     publishing {
         publications {
-            jvmDtest(MavenPublication) {
-                groupId = 'com.netflix.cde'
-                artifactId = 'nfcassandra-jvm-dtest'
+            jvmDtestIvy(IvyPublication) {
+                organisation = 'com.netflix.cde'
+                module = 'nfcassandra-jvm-dtest'
+                revision = project.ext.cass_version
                 artifact(tasks.named('shadeDtestJar'))
 
-                pom {
-                    name = 'nfcassandra jvm-dtest JAR'
-                    description = 'Fat JAR for running Cassandra jvm-dtest (in-JVM distributed tests). Contains all Cassandra classes, test infrastructure, and bundled dependencies. AWS SDK is relocated to avoid classpath conflicts.'
+                descriptor.description {
+                    text = 'Fat JAR for running Cassandra jvm-dtest (in-JVM distributed tests). Contains all Cassandra classes, test infrastructure, and bundled dependencies. AWS SDK is relocated to avoid classpath conflicts.'
                 }
             }
         }
     }
 
-    tasks.named('publishJvmDtestPublicationToDistMavenRepository') {
+    // Wire verification and create convenience task.
+    // Find the actual task name at runtime since it depends on which repos Nebula configured.
+    tasks.matching { it.name.startsWith('publishJvmDtestIvy') && it.name.contains('Repository') }.configureEach {
         dependsOn 'verifyShadedDtestJar'
     }
 
     tasks.register('publishJvmDtest') {
-        dependsOn 'publishJvmDtestPublicationToDistMavenRepository'
+        dependsOn tasks.matching { it.name.startsWith('publishJvmDtestIvy') && it.name.contains('Repository') }
     }
 }
