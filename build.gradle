@@ -175,7 +175,9 @@ tasks.register('shadeDtestJar', ShadowJar) {
     archiveClassifier = ''
     destinationDirectory = file("${buildDir}/dtest-shaded")
 
-    relocate 'software.amazon', 'relocated.software.amazon'
+    relocate('software.amazon', 'relocated.software.amazon') {
+        exclude 'software.amazon.awssdk.crt.**'
+    }
 
     doFirst {
         logger.lifecycle("shadeDtestJar: Input JAR: ${dtestJar} (${dtestJar.length() / 1024 / 1024} MB)")
@@ -186,16 +188,67 @@ tasks.register('shadeDtestJar', ShadowJar) {
     }
 }
 
-// Verify no unrelocated AWS SDK classes leaked into the shaded JAR.
+// Verify the shaded JAR is safe for consumers:
+//  1. No unrelocated AWS SDK classes (would cause classpath conflicts with consumer's SDK version)
+//  2. No relocated JNI classes whose native methods won't resolve
+//
+// JNI native methods are resolved by symbol name derived from the fully qualified class name.
+// For example, the Java class software.amazon.awssdk.crt.CRT declaring native void awsCrtInit()
+// expects the symbol Java_software_amazon_awssdk_crt_CRT_awsCrtInit in the native library.
+// If the Shadow plugin relocates that class to relocated.software.amazon.awssdk.crt.CRT, the
+// JVM looks for Java_relocated_software_amazon_awssdk_crt_CRT_awsCrtInit — which doesn't exist
+// in the bundled .so/.dylib, causing UnsatisfiedLinkError at runtime.
+//
+// This task extracts relocated classes from the shaded JAR and uses javap to find any that
+// declare native methods. If found, the build fails — those classes must be excluded from
+// relocation. Only relocated/ classes are checked since those are the ones the Shadow plugin
+// may have broken; the original classes retain their correct JNI symbol mapping.
 tasks.register('verifyShadedDtestJar') {
     dependsOn 'shadeDtestJar'
     doLast {
         def jar = tasks.shadeDtestJar.archiveFile.get().asFile
-        def conflicts = zipTree(jar).matching { include 'software/amazon/**/*.class' }.files
+
+        // 1. No unrelocated AWS SDK classes, except CRT which must stay unrelocated for JNI.
+        def conflicts = zipTree(jar).matching {
+            include 'software/amazon/**/*.class'
+            exclude 'software/amazon/awssdk/crt/**'
+        }.files
         assert conflicts.isEmpty() :
             "Found ${conflicts.size()} unrelocated AWS SDK classes in ${jar.name}. " +
             "These will cause classpath conflicts for consumers."
-        logger.lifecycle("verifyShadedDtestJar: Verified — 0 unrelocated AWS SDK classes")
+        logger.lifecycle("verifyShadedDtestJar: Verified — 0 unrelocated AWS SDK classes (excluding CRT)")
+
+        // 2. No relocated classes with native methods (JNI symbol mismatch check).
+        //    Scan the JAR directly using ASM (bundled with Gradle) to check for the ACC_NATIVE
+        //    flag on methods in relocated classes. No extraction or subprocesses needed.
+        def nativeClasses = [] as Set
+        new java.util.zip.ZipFile(jar).withCloseable { zf ->
+            zf.entries().findAll { it.name.startsWith('relocated/') && it.name.endsWith('.class') }.each { entry ->
+                zf.getInputStream(entry).withCloseable { is ->
+                    def reader = new org.objectweb.asm.ClassReader(is)
+                    def className = reader.className.replace('/', '.')
+                    reader.accept(new org.objectweb.asm.ClassVisitor(org.objectweb.asm.Opcodes.ASM9) {
+                        @Override
+                        org.objectweb.asm.MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
+                            if ((access & org.objectweb.asm.Opcodes.ACC_NATIVE) != 0) {
+                                nativeClasses.add(className)
+                            }
+                            return null
+                        }
+                    }, org.objectweb.asm.ClassReader.SKIP_CODE | org.objectweb.asm.ClassReader.SKIP_DEBUG | org.objectweb.asm.ClassReader.SKIP_FRAMES)
+                }
+            }
+        }
+        if (!nativeClasses.isEmpty()) {
+            throw new GradleException(
+                "Found ${nativeClasses.size()} relocated class(es) with native methods.\n" +
+                "These will fail at runtime with UnsatisfiedLinkError because the bundled native\n" +
+                "libraries register JNI symbols under the original (unrelocated) class names.\n" +
+                "Fix: exclude the affected packages from the relocate block in shadeDtestJar.\n" +
+                "Classes:\n  " + nativeClasses.sort().take(10).join('\n  ') +
+                (nativeClasses.size() > 10 ? "\n  ... and ${nativeClasses.size() - 10} more" : ''))
+        }
+        logger.lifecycle("verifyShadedDtestJar: Verified — no relocated classes with native methods")
     }
 }
 
