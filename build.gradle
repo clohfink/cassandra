@@ -175,6 +175,13 @@ tasks.register('shadeDtestJar', ShadowJar) {
     archiveClassifier = ''
     destinationDirectory = file("${buildDir}/dtest-shaded")
 
+    // Strip JAR signature files from bundled dependencies (e.g. ECJ's ECLIPSE_.SF/.RSA).
+    // Shading invalidates signatures, and consumers loading the fat JAR via URLClassLoader
+    // get SecurityException if stale signatures are present.
+    exclude 'META-INF/*.SF'
+    exclude 'META-INF/*.RSA'
+    exclude 'META-INF/*.DSA'
+
     relocate('software.amazon', 'relocated.software.amazon') {
         exclude 'software.amazon.awssdk.crt.**'
     }
