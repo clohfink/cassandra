@@ -124,6 +124,47 @@ java {
     }
 }
 
+// Compute dtest JAR version. Used by both the shaded fat JAR and the bootstrap JAR.
+// - Tag builds (ROCKET_TAG=v4.1.139): use the tag stripped of 'v' prefix -> 4.1.139
+// - CI builds: use {base.version}.{BUILD_NUMBER} -> 4.1.8.915
+// - Local builds: use {base.version}.local
+ext.dtestVersion = {
+    String rocketTag = System.getenv('ROCKET_TAG')
+    if (rocketTag != null && rocketTag.matches('^v4\\.1\\.\\d+$')) {
+        return rocketTag.replaceFirst('^v', '')
+    }
+    return "${ant.properties['base.version']}.${System.getenv('BUILD_NUMBER') ?: 'local'}"
+}.call()
+
+// ---------------------------------------------------------------------------
+// jvm-dtest bootstrap JAR: Gradle plugin + DtestClusterFactory
+// ---------------------------------------------------------------------------
+// Published as com.netflix.cde:nfcassandra-jvm-dtest-bootstrap:<version>.
+// Contains the Gradle plugin, DtestClusterFactory (classloader isolation),
+// and logback-dtest.xml. Consumers apply the plugin and get pre-configured
+// JVM args, system properties, and classpath setup.
+
+sourceSets {
+    bootstrap {
+        java.srcDir 'src/bootstrap/java'
+        resources.srcDir 'src/bootstrap/resources'
+    }
+}
+
+dependencies {
+    bootstrapImplementation 'org.apache.cassandra:dtest-api:0.0.16'
+    bootstrapCompileOnly gradleApi()
+}
+
+tasks.register('bootstrapJar', Jar) {
+    from sourceSets.bootstrap.output
+    archiveBaseName = 'nfcassandra-jvm-dtest-bootstrap'
+    archiveVersion = project.ext.dtestVersion
+    manifest {
+        attributes('Implementation-Version': project.ext.dtestVersion)
+    }
+}
+
 // ---------------------------------------------------------------------------
 // jvm-dtest JAR: build, shade, verify, and publish
 // ---------------------------------------------------------------------------
@@ -136,9 +177,7 @@ java {
 
 import com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar
 
-// Compute dtest JAR version: {base.version}.{BUILD_NUMBER}
-// e.g. 4.1.8 + BUILD_NUMBER=911 -> 4.1.8.911
-ext.dtestVersion = "${ant.properties['base.version']}.${System.getenv('BUILD_NUMBER') ?: 'local'}"
+// dtestVersion is defined earlier, before the bootstrap section
 
 // Build the dtest fat JAR by launching Ant as a Java subprocess using the Ant JARs
 // bundled with the Gradle distribution. We can't use the imported Ant targets (antdtest-jar)
@@ -276,6 +315,16 @@ afterEvaluate {
                     text = 'Fat JAR for running Cassandra jvm-dtest (in-JVM distributed tests). Contains all Cassandra classes, test infrastructure, and bundled dependencies. AWS SDK is relocated to avoid classpath conflicts.'
                 }
             }
+            jvmDtestBootstrapIvy(IvyPublication) {
+                organisation = 'com.netflix.cde'
+                module = 'nfcassandra-jvm-dtest-bootstrap'
+                revision = project.ext.dtestVersion
+                artifact(tasks.named('bootstrapJar'))
+
+                descriptor.description {
+                    text = 'Gradle plugin and DtestClusterFactory for jvm-dtest classloader isolation. Apply the com.netflix.cde.cassandra-jvm-dtest-bootstrap plugin and use the cassandraJvmDtest extension.'
+                }
+            }
         }
     }
 
@@ -286,6 +335,9 @@ afterEvaluate {
     }
 
     tasks.register('publishJvmDtest') {
-        dependsOn tasks.matching { it.name.startsWith('publishJvmDtestIvy') && it.name.contains('Repository') }
+        dependsOn tasks.matching {
+            (it.name.startsWith('publishJvmDtestIvy') || it.name.startsWith('publishJvmDtestBootstrapIvy')) &&
+            it.name.contains('Repository')
+        }
     }
 }
