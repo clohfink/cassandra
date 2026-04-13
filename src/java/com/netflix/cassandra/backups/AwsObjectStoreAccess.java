@@ -18,8 +18,12 @@
 
 package com.netflix.cassandra.backups;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.ByteBuffer;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CompletionException;
@@ -108,11 +112,12 @@ public class AwsObjectStoreAccess implements ObjectStoreAccess
     public AsyncPromise<Void> getObjectAsFile(String bucket, String key, Path path)
     {
         Timer.Context time = metrics.objectFetchLatency.time();
+        Path tmp = path.resolveSibling(path.getFileName() + ".tmp");
         return toPromise(s3AsyncClient.getObject(builder -> builder
                                                             .bucket(bucket)
                                                             .key(key)
                                                             .build(),
-                                                 AsyncResponseTransformer.toFile(path))
+                                                 AsyncResponseTransformer.toFile(tmp))
                                       .whenComplete((response, error) -> {
                                           if (error == null)
                                               metrics.objectFetchBytes.update(response.contentLength());
@@ -121,7 +126,27 @@ public class AwsObjectStoreAccess implements ObjectStoreAccess
                                           successMetricReporting.accept(result, error);
                                           time.stop();
                                       })
-                                      .thenApply(__ -> null)
+                                      .thenApply(response -> {
+                                          try
+                                          {
+                                              long expected = response.contentLength();
+                                              long actual = Files.size(tmp);
+                                              if (expected != actual)
+                                              {
+                                                  Files.deleteIfExists(tmp);
+                                                  throw new IOException(
+                                                      "Size mismatch for " + key + ": expected " + expected + " but got " + actual);
+                                              }
+                                              Files.move(tmp, path,
+                                                  StandardCopyOption.ATOMIC_MOVE,
+                                                  StandardCopyOption.REPLACE_EXISTING);
+                                          }
+                                          catch (IOException e)
+                                          {
+                                              throw new UncheckedIOException(e);
+                                          }
+                                          return null;
+                                      })
         );
     }
 

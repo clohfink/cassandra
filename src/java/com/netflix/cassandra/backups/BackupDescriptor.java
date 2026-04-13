@@ -21,6 +21,8 @@ package com.netflix.cassandra.backups;
 import java.io.IOException;
 import java.nio.file.Files;
 
+import com.google.common.annotations.VisibleForTesting;
+
 import org.apache.cassandra.db.Directories;
 import org.apache.cassandra.io.sstable.Component;
 import org.apache.cassandra.io.sstable.Descriptor;
@@ -37,6 +39,12 @@ public class BackupDescriptor extends Descriptor
 
     public BackupDescriptor(BackupManifest.BackupSSTable sstable, TableMetadataRef metadataRef, String bucket)
     {
+        this(sstable, prepareCacheDir(metadataRef), bucket);
+    }
+
+    @VisibleForTesting
+    BackupDescriptor(BackupManifest.BackupSSTable sstable, File cacheDir, String bucket)
+    {
         // we pass a dummy File directory into the super ctor because we override baseFilename()
         super(getVersion(sstable),
               new File("."),
@@ -45,7 +53,7 @@ public class BackupDescriptor extends Descriptor
               getId(sstable),
               getType(sstable));
         this.sstable = sstable;
-        this.directory = prepareCacheDir(metadataRef);
+        this.directory = cacheDir;
         this.bucket = bucket;
     }
 

@@ -19,6 +19,7 @@
 package com.netflix.cassandra.backups;
 
 import java.io.IOException;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.EnumSet;
@@ -123,8 +124,8 @@ class BackupMemtableContext implements Runnable
         if (isCacheStale(cache))
         {
             logger.info("Stale cache detected for timestamp {}, re-downloading manifest", params.getTimestamp());
-            new File(cache, "meta_v2.json").toJavaIOFile().delete();
-            new File(cache, TIMESTAMP_MARKER).toJavaIOFile().delete();
+            deleteIfExists(new File(cache, "meta_v2.json"));
+            deleteIfExists(new File(cache, TIMESTAMP_MARKER));
         }
 
         // Download and load manifest
@@ -140,6 +141,7 @@ class BackupMemtableContext implements Runnable
         BackupManifest.Data manifest = params.findTableData(fullManifest, ks, tbl);
 
         List<BackupDescriptor> allDescriptors = collectDescriptors(manifest);
+        validateCachedComponents(allDescriptors);
         List<AsyncPromise<?>> downloads = downloadRequiredComponents(allDescriptors);
         waitForDownloads(downloads);
         filterValidDescriptors(allDescriptors);
@@ -176,7 +178,7 @@ class BackupMemtableContext implements Runnable
         try
         {
             long cachedTs = Long.parseLong(
-                new String(java.nio.file.Files.readAllBytes(marker.toPath())).trim());
+                new String(Files.readAllBytes(marker.toPath())).trim());
             return cachedTs != params.getTimestamp();
         }
         catch (Exception e)
@@ -191,7 +193,7 @@ class BackupMemtableContext implements Runnable
         File marker = new File(cacheDir, TIMESTAMP_MARKER);
         try
         {
-            java.nio.file.Files.write(marker.toPath(),
+            Files.write(marker.toPath(),
                                       Long.toString(params.getTimestamp()).getBytes());
         }
         catch (IOException e)
@@ -274,7 +276,62 @@ class BackupMemtableContext implements Runnable
         return allDescriptors;
     }
 
-    private List<AsyncPromise<?>> downloadRequiredComponents(List<BackupDescriptor> allDescriptors)
+    /**
+     * Validates that any already-cached component files match the expected size from the manifest.
+     * Deletes files with a size mismatch so they are re-downloaded.
+     */
+    void validateCachedComponents(List<BackupDescriptor> allDescriptors)
+    {
+        int checked = 0;
+        int deleted = 0;
+        for (BackupDescriptor desc : allDescriptors)
+        {
+            for (Component comp : COMPONENTS_TO_DOWNLOAD)
+            {
+                File local = new File(desc.filenameFor(comp));
+                if (!local.exists())
+                    continue;
+                checked++;
+                long expectedSize = expectedComponentSize(desc, comp);
+                if (expectedSize < 0)
+                    continue;
+                long localSize = local.length();
+                if (localSize != expectedSize)
+                {
+                    logger.warn("Cached {} has size {} but manifest reports {}, deleting",
+                                local, localSize, expectedSize);
+                    deleteIfExists(local);
+                    deleted++;
+                }
+            }
+        }
+        logger.info("Validated {} cached components across {} sstables, {} deleted for re-download",
+                     checked, allDescriptors.size(), deleted);
+    }
+
+    private static long expectedComponentSize(BackupDescriptor desc, Component comp)
+    {
+        for (BackupManifest.BackupSSTableComponent c : desc.sstable.getSstableComponents())
+        {
+            if (c.getFileName().endsWith(comp.name()))
+                return c.getFileSizeOnDisk();
+        }
+        return -1;
+    }
+
+    private static void deleteIfExists(File file)
+    {
+        try
+        {
+            Files.deleteIfExists(file.toPath());
+        }
+        catch (IOException e)
+        {
+            throw new RuntimeException("Failed to delete " + file, e);
+        }
+    }
+
+    List<AsyncPromise<?>> downloadRequiredComponents(List<BackupDescriptor> allDescriptors)
     {
         List<AsyncPromise<?>> downloads = new ArrayList<>();
 
@@ -284,10 +341,33 @@ class BackupMemtableContext implements Runnable
             for (Component comp : COMPONENTS_TO_DOWNLOAD)
             {
                 File local = new File(desc.filenameFor(comp));
+                // Clean up any leftover temp file from a previously interrupted download
+                deleteIfExists(new File(local.path() + ".tmp"));
                 if (!local.exists())
                 {
                     String key = desc.s3KeyFor(comp);
-                    AsyncPromise<Void> fileDownload = params.getS3().getObjectAsFile(params.getBucket(), key, local.toPath());
+                    long expectedSize = expectedComponentSize(desc, comp);
+                    AsyncPromise<Void> fileDownload = new AsyncPromise<>();
+                    params.getS3().getObjectAsFile(params.getBucket(), key, local.toPath())
+                          .addCallback(
+                              success -> {
+                                  try
+                                  {
+                                      if (expectedSize >= 0 && local.exists() && local.length() != expectedSize)
+                                      {
+                                          logger.warn("Downloaded {} has size {} but manifest reports {}, deleting",
+                                                      local, local.length(), expectedSize);
+                                          deleteIfExists(local);
+                                      }
+                                      fileDownload.setSuccess(null);
+                                  }
+                                  catch (Throwable t)
+                                  {
+                                      fileDownload.setFailure(t);
+                                  }
+                              },
+                              fileDownload::setFailure
+                          );
                     downloads.add(fileDownload);
                 }
             }
@@ -319,7 +399,7 @@ class BackupMemtableContext implements Runnable
         return downloads;
     }
 
-    private void waitForDownloads(List<AsyncPromise<?>> downloads)
+    void waitForDownloads(List<AsyncPromise<?>> downloads)
     {
         int timeoutMs = DatabaseDescriptor.getObjectStoreFetchTimeoutMs();
         for (AsyncPromise<?> download : downloads)
@@ -425,12 +505,12 @@ class BackupMemtableContext implements Runnable
             for (int i = 0; i < Integer.BYTES; i++)
                 buf[off + i] = (byte) (crcVal >>> (24 - i * 8));
 
-            java.nio.file.Files.write(file.toPath(), buf);
+            Files.write(file.toPath(), buf);
         }
 
         static long read(String path) throws IOException
         {
-            byte[] raw = java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(path));
+            byte[] raw = Files.readAllBytes(java.nio.file.Paths.get(path));
 
             if (raw.length != FILE_SIZE || raw[0] != MAGIC[0] || raw[1] != MAGIC[1])
                 throw new IOException("Invalid length file (expected 14-byte DL format): " + path);
