@@ -103,6 +103,7 @@ import org.apache.cassandra.repair.RepairJobDesc;
 import org.apache.cassandra.repair.RepairParallelism;
 import org.apache.cassandra.repair.RepairSession;
 import org.apache.cassandra.repair.consistent.CoordinatorSessions;
+import org.apache.cassandra.repair.consistent.LocalSessionInfo;
 import org.apache.cassandra.repair.consistent.LocalSessions;
 import org.apache.cassandra.repair.consistent.admin.CleanupSummary;
 import org.apache.cassandra.repair.consistent.admin.PendingStats;
@@ -1278,10 +1279,16 @@ public class ActiveRepairService implements IEndpointStateChangeSubscriber, IFai
         }
     }
 
+    private static final int CONSISTENT_SESSIONS_LIMIT = 5;
+
     private void addConsistentSessions(RepairStatusCompositeData.Builder builder)
     {
-        for (Map<String, String> sessionMap : getSessions(true, null))
-            builder.addConsistentSession(RepairStatusCompositeData.ConsistentSession.fromSessionMap(sessionMap));
+        List<Map<String, String>> sessions = new ArrayList<>(getSessions(true, null));
+        sessions.sort(Comparator.comparingInt(
+            (Map<String, String> m) -> Integer.parseInt(m.getOrDefault(LocalSessionInfo.LAST_UPDATE, "0"))).reversed());
+        sessions.stream()
+                .limit(CONSISTENT_SESSIONS_LIMIT)
+                .forEach(sessionMap -> builder.addConsistentSession(RepairStatusCompositeData.ConsistentSession.fromSessionMap(sessionMap)));
     }
 
     private void addActiveRepairs(RepairStatusCompositeData.Builder builder)
@@ -1290,6 +1297,9 @@ public class ActiveRepairService implements IEndpointStateChangeSubscriber, IFai
         {
             try
             {
+                if (coordinator.isComplete())
+                    continue;
+
                 String type = "full";
                 if (coordinator.options.isIncremental())
                     type = "incremental";
