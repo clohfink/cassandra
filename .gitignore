@@ -11,7 +11,9 @@ data/
 conf/hotspot_compiler
 doc/cql3/CQL.html
 doc/build/
-lib/
+lib/*
+!lib/sigar-bin
+pylib/lib/
 pylib/src/
 **/cqlshlib.xml
 pylib/cqlshlib/serverversion.py
