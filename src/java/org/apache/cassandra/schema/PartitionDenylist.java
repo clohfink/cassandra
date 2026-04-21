@@ -338,6 +338,35 @@ public class PartitionDenylist
     }
 
     /**
+     * @return the set of denylisted keys for the given table from the in-memory cache,
+     *         or an empty set if the table has no cached entry. Does not trigger a reload.
+     */
+    public Set<ByteBuffer> getDeniedKeys(final String keyspace, final String table)
+    {
+        final TableId tid = getTableId(keyspace, table);
+        if (tid == null)
+            return Collections.emptySet();
+        final DenylistEntry entry = denylist.getIfPresent(tid);
+        if (entry == null)
+            return Collections.emptySet();
+        return entry.keys;
+    }
+
+    /**
+     * @return a mapping of TableId to the set of denylisted keys currently held in the cache.
+     *         Only includes tables that have a cache entry populated.
+     */
+    public Map<TableId, Set<ByteBuffer>> getAllDeniedKeys()
+    {
+        final Map<TableId, Set<ByteBuffer>> result = new HashMap<>();
+        for (Map.Entry<TableId, DenylistEntry> cached : denylist.asMap().entrySet())
+        {
+            result.put(cached.getKey(), cached.getValue().keys);
+        }
+        return result;
+    }
+
+    /**
      * @return number of denylisted keys in range
      */
     public int getDeniedKeysInRangeCount(final String keyspace, final String table, final AbstractBounds<PartitionPosition> range)

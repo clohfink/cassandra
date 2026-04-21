@@ -3147,6 +3147,53 @@ public class StorageProxy implements StorageProxyMBean
         return !partitionDenylist.isKeyPermitted(keyspace, table, bytes);
     }
 
+    /**
+     * @return the list of currently cached denylisted partition keys for the given table, rendered as strings.
+     *         An empty list is returned when the keyspace/table is unknown or has no cache entry.
+     */
+    @Override
+    public List<String> getDenylistedKeys(String keyspace, String table)
+    {
+        final ColumnFamilyStore cfs = ColumnFamilyStore.getIfExists(keyspace, table);
+        if (cfs == null)
+            return Collections.emptyList();
+
+        final Set<ByteBuffer> keys = partitionDenylist.getDeniedKeys(keyspace, table);
+        if (keys.isEmpty())
+            return Collections.emptyList();
+
+        final List<String> result = new ArrayList<>(keys.size());
+        for (ByteBuffer key : keys)
+            result.add(cfs.metadata.get().partitionKeyType.getString(key));
+        Collections.sort(result);
+        return result;
+    }
+
+    /**
+     * @return all denylisted partition keys currently in cache, keyed by "keyspace.table".
+     *         Partition keys are rendered as strings using each table's partition key type.
+     */
+    @Override
+    public Map<String, List<String>> getAllDenylistedKeys()
+    {
+        final Map<String, List<String>> result = new HashMap<>();
+        for (Map.Entry<TableId, Set<ByteBuffer>> entry : partitionDenylist.getAllDeniedKeys().entrySet())
+        {
+            final TableMetadata tmd = Schema.instance.getTableMetadata(entry.getKey());
+            if (tmd == null)
+                continue;
+            final Set<ByteBuffer> keys = entry.getValue();
+            if (keys.isEmpty())
+                continue;
+            final List<String> stringKeys = new ArrayList<>(keys.size());
+            for (ByteBuffer key : keys)
+                stringKeys.add(tmd.partitionKeyType.getString(key));
+            Collections.sort(stringKeys);
+            result.put(tmd.keyspace + '.' + tmd.name, stringKeys);
+        }
+        return result;
+    }
+
     @Override
     public void logBlockingReadRepairAttemptsForNSeconds(int seconds)
     {

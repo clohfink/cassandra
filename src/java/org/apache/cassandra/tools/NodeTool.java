@@ -264,6 +264,14 @@ public class NodeTool
                .withDefaultCommand(CassHelp.class)
                .withCommand(MaintenanceCheck.StopCmd.class);
 
+        builder.withGroup("denylist")
+               .withDescription("Manage the partition denylist: add, remove, refresh, list")
+               .withDefaultCommand(Denylist.ListCmd.class)
+               .withCommand(Denylist.AddCmd.class)
+               .withCommand(Denylist.RemoveCmd.class)
+               .withCommand(Denylist.RefreshCmd.class)
+               .withCommand(Denylist.ListCmd.class);
+
         builder.withGroup("repair_admin")
                .withDescription("list and fail incremental repair sessions")
                .withDefaultCommand(RepairAdmin.ListCmd.class)
