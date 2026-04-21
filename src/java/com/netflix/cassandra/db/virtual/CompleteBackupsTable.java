@@ -18,12 +18,14 @@
 
 package com.netflix.cassandra.db.virtual;
 
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
+import com.google.common.collect.Multimap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -31,6 +33,7 @@ import com.netflix.cassandra.backups.BackupUtils;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.cql3.ColumnIdentifier;
 import org.apache.cassandra.db.DecoratedKey;
+import org.apache.cassandra.db.Keyspace;
 import org.apache.cassandra.db.ReadResponse;
 import org.apache.cassandra.db.SinglePartitionReadCommand;
 import org.apache.cassandra.db.Slices;
@@ -52,10 +55,15 @@ import org.apache.cassandra.db.virtual.VirtualKeyspace;
 import org.apache.cassandra.db.virtual.VirtualKeyspaceRegistry;
 import org.apache.cassandra.db.virtual.VirtualTable;
 import org.apache.cassandra.dht.LocalPartitioner;
+import org.apache.cassandra.locator.AbstractReplicationStrategy;
 import org.apache.cassandra.locator.InetAddressAndPort;
+import org.apache.cassandra.locator.NetworkTopologyStrategy;
+import org.apache.cassandra.locator.TokenMetadata;
 import org.apache.cassandra.net.Message;
 import org.apache.cassandra.schema.ColumnMetadata;
+import org.apache.cassandra.schema.Schema;
 import org.apache.cassandra.schema.TableMetadata;
+import org.apache.cassandra.service.StorageService;
 import org.apache.cassandra.utils.Clock;
 import org.apache.cassandra.utils.FBUtilities;
 import org.apache.cassandra.utils.concurrent.Future;
@@ -74,9 +82,9 @@ import org.apache.cassandra.utils.concurrent.Future;
  * - table_name (partition key): The table name (required)
  * - timestamp (clustering key): The backup timestamp in milliseconds
  * - total_size: Total size of all backup files across all nodes in bytes
- * - num_tokens: Number of nodes with data for this timestamp
+ * - num_tokens: Expected number of tokens across all nodes in the keyspace's replication DCs
  * - num_uploaded: Number of nodes where all components are uploaded
- * - uploaded: True when num_tokens == num_uploaded (all nodes fully uploaded)
+ * - uploaded: True when num_uploaded >= num_tokens (all expected nodes fully uploaded)
  * <p>
  * Example:
  * <pre>
@@ -132,6 +140,9 @@ public class CompleteBackupsTable extends ScopedTable
             logger.warn("Could not find backups table metadata");
             return BackupUtils.toRowIterator(metadata, result, partitionKey, null, null);
         }
+
+        // Compute expected token count from the keyspace replication topology
+        int expectedTokens = getExpectedTokenCount(keyspace);
 
         // Build a read command for the backups table with the same partition key
         int now = FBUtilities.nowInSeconds();
@@ -197,9 +208,9 @@ public class CompleteBackupsTable extends ScopedTable
             TimestampAggregation agg = entry.getValue();
             result.row(keyspace, table, timestamp)
                   .column(TOTAL_SIZE, agg.totalSize)
-                  .column(NUM_TOKENS, agg.numTokens)
+                  .column(NUM_TOKENS, expectedTokens)
                   .column(NUM_UPLOADED, agg.numUploaded)
-                  .column(UPLOADED, agg.numTokens == agg.numUploaded)
+                  .column(UPLOADED, expectedTokens > 0 && agg.numUploaded >= expectedTokens)
                   .column(MISSING_UPLOADS, agg.missingUploads);
         }
 
@@ -219,16 +230,49 @@ public class CompleteBackupsTable extends ScopedTable
         return null;
     }
 
+    /**
+     * Computes the total number of tokens across all nodes in the datacenters
+     * that the given keyspace replicates to.
+     */
+    private int getExpectedTokenCount(String keyspaceName)
+    {
+        Keyspace keyspace = Schema.instance.getKeyspaceInstance(keyspaceName);
+        if (keyspace == null)
+            return 0;
+
+        TokenMetadata tokenMetadata = StorageService.instance.getTokenMetadata().cloneOnlyTokenMap();
+        AbstractReplicationStrategy strategy = keyspace.getReplicationStrategy();
+
+        Set<String> replicationDCs;
+        if (strategy instanceof NetworkTopologyStrategy)
+            replicationDCs = ((NetworkTopologyStrategy) strategy).getDatacenters();
+        else
+            // SimpleStrategy or other: count all DCs
+            replicationDCs = tokenMetadata.getTopology().getDatacenterEndpoints().keySet();
+
+        Multimap<String, InetAddressAndPort> dcEndpoints = tokenMetadata.getTopology().getDatacenterEndpoints();
+        int totalTokens = 0;
+        for (String dc : replicationDCs)
+        {
+            Collection<InetAddressAndPort> endpoints = dcEndpoints.get(dc);
+            if (endpoints == null)
+                continue;
+            for (InetAddressAndPort endpoint : endpoints)
+            {
+                totalTokens += tokenMetadata.getTokens(endpoint).size();
+            }
+        }
+        return totalTokens;
+    }
+
     private static class TimestampAggregation
     {
         long totalSize;
-        int numTokens;
         int numUploaded;
         Set<String> missingUploads = new HashSet<>();
 
         void addToken(InetAddressAndPort endpoint, long size, boolean uploaded)
         {
-            numTokens++;
             totalSize += size;
             if (uploaded)
                 numUploaded++;

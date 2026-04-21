@@ -172,6 +172,31 @@ public class CompleteBackupsTableTest extends CQLTester
     }
 
     @Test
+    public void testIslandKeyspaceOnlyLocalDC() throws Throwable
+    {
+        // Island keyspace: NTS replicating only to datacenter1 (where the test node lives),
+        // not to datacenter2. num_tokens should reflect only datacenter1's tokens.
+        schemaChange("CREATE KEYSPACE IF NOT EXISTS island_ks WITH replication = " +
+                     "{'class': 'NetworkTopologyStrategy', 'datacenter1': 1}");
+        schemaChange("CREATE TABLE IF NOT EXISTS island_ks.island_table (id int PRIMARY KEY, value text)");
+
+        long timestamp = 1700000000000L;
+        writeManifest(timestamp, "island_ks", "island_table", 1000000L, true);
+
+        String query = "SELECT * FROM " + KS_NAME + ".complete_backups WHERE keyspace_name = 'island_ks' AND table_name = 'island_table'";
+        ResultSet result = executeNet(query);
+
+        assertTrue("Should return at least one row", result.iterator().hasNext());
+        Row row = result.one();
+        assertEquals("island_ks", row.getString("keyspace_name"));
+        assertEquals("island_table", row.getString("table_name"));
+        // Single test node in datacenter1 with 1 token
+        assertEquals(1, row.getInt("num_tokens"));
+        assertEquals(1, row.getInt("num_uploaded"));
+        assertTrue(row.getBool("uploaded"));
+    }
+
+    @Test
     public void testSelectWithInvalidKeyspace() throws Throwable
     {
         String query = "SELECT * FROM " + KS_NAME + ".complete_backups WHERE keyspace_name = 'nonexistent_ks' AND table_name = 'test_table'";
