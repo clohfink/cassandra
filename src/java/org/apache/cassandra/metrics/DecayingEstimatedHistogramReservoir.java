@@ -86,7 +86,7 @@ import static java.lang.Math.min;
 public class DecayingEstimatedHistogramReservoir implements SnapshottingReservoir
 {
     private static final Logger logger = LoggerFactory.getLogger(DecayingEstimatedHistogramReservoir.class);
-    private static final NoSpamLogger noSpamLogger = NoSpamLogger.getLogger(logger, 5L, TimeUnit.MINUTES);
+    private static final NoSpamLogger noSpamLogger = NoSpamLogger.getLogger(logger, 8L, TimeUnit.HOURS);
     /**
      * The default number of decayingBuckets. Use this bucket count to reduce memory allocation for bucket offsets.
      */
