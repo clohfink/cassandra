@@ -53,10 +53,10 @@ import java.util.stream.IntStream;
 import java.util.stream.Stream;
 import javax.annotation.concurrent.GuardedBy;
 
-import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Sets;
-import org.junit.Assume;
+// Removed: import org.junit.Assume — replaced with assumeTrue() below to avoid
+// requiring JUnit 4 on the classpath when jvm-dtest is used as a library.
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -135,6 +135,18 @@ import static org.apache.cassandra.utils.concurrent.Condition.newOneTimeConditio
  */
 public abstract class AbstractCluster<I extends IInstance> implements ICluster<I>, AutoCloseable
 {
+    /**
+     * Replaces {@code org.junit.Assume.assumeTrue} to avoid requiring JUnit 4 on the classpath
+     * when jvm-dtest is used as an external library. Throws {@link IllegalStateException} when
+     * the condition is false — in the library context, a violated assumption is a configuration
+     * error, not a silently skipped test.
+     */
+    private static void assumeTrue(String message, boolean condition)
+    {
+        if (!condition)
+            throw new IllegalStateException("Assumption violated: " + message);
+    }
+
     public static Versions.Version CURRENT_VERSION = new Versions.Version(FBUtilities.getReleaseVersionString(), Versions.getClassPath());
 
     // WARNING: we have this logger not (necessarily) for logging, but
@@ -185,8 +197,6 @@ public abstract class AbstractCluster<I extends IInstance> implements ICluster<I
     {
         private INodeProvisionStrategy.Strategy nodeProvisionStrategy = INodeProvisionStrategy.Strategy.MultipleNetworkInterfaces;
         private ShutdownExecutor shutdownExecutor = DEFAULT_SHUTDOWN_EXECUTOR;
-        private boolean dynamicPortAllocation = false;
-
         {
             // Indicate that we are running in the in-jvm dtest environment
             CassandraRelevantProperties.DTEST_IS_IN_JVM_DTEST.setBoolean(true);
@@ -201,11 +211,6 @@ public abstract class AbstractCluster<I extends IInstance> implements ICluster<I
             withSharedClasses(SHARED_PREDICATE);
         }
 
-        @SuppressWarnings("unchecked")
-        private B self()
-        {
-            return (B) this;
-        }
 
         public B withNodeProvisionStrategy(INodeProvisionStrategy.Strategy nodeProvisionStrategy)
         {
@@ -219,21 +224,6 @@ public abstract class AbstractCluster<I extends IInstance> implements ICluster<I
             return self();
         }
 
-        /**
-         * When {@code dynamicPortAllocation} is {@code true}, it will ask {@link INodeProvisionStrategy} to provision
-         * available storage, native and JMX ports in the given interface. When {@code dynamicPortAllocation} is
-         * {@code false} (the default behavior), it will use statically allocated ports based on the number of
-         * interfaces available and the node number.
-         *
-         * @param dynamicPortAllocation {@code true} for dynamic port allocation, {@code false} for static port
-         *                              allocation
-         * @return a reference to this Builder
-         */
-        public B withDynamicPortAllocation(boolean dynamicPortAllocation)
-        {
-            this.dynamicPortAllocation = dynamicPortAllocation;
-            return self();
-        }
 
         @Override
         public C createWithoutStarting() throws IOException
@@ -244,15 +234,15 @@ public abstract class AbstractCluster<I extends IInstance> implements ICluster<I
             // when token supplier is defined, use getTokenCount() to see if vnodes is supported or not
             if (isVnode())
             {
-                Assume.assumeTrue("vnode is not supported", isVNodeAllowed());
+                assumeTrue("vnode is not supported", isVNodeAllowed());
                 // if token count > 1 and isVnode, then good
-                Assume.assumeTrue("no-vnode is requested but not supported", getTokenCount() > 1);
+                assumeTrue("no-vnode is requested but not supported", getTokenCount() > 1);
             }
             else
             {
-                Assume.assumeTrue("single-token is not supported", isSingleTokenAllowed());
+                assumeTrue("single-token is not supported", isSingleTokenAllowed());
                 // if token count == 1 and isVnode == false, then goodAbstractClusterTest
-                Assume.assumeTrue("vnode is requested but not supported", getTokenCount() == 1);
+                assumeTrue("vnode is requested but not supported", getTokenCount() == 1);
             }
 
             return super.createWithoutStarting();
@@ -562,7 +552,7 @@ public abstract class AbstractCluster<I extends IInstance> implements ICluster<I
         this.filters = new MessageFilters();
         this.instanceInitializer = builder.getInstanceInitializer2();
         this.datadirCount = builder.getDatadirCount();
-        this.portMap = builder.dynamicPortAllocation ? new ConcurrentHashMap<>() : null;
+        this.portMap = builder.isDynamicPortAllocation() ? new ConcurrentHashMap<>() : null;
 
         for (int i = 0; i < builder.getNodeCount(); ++i)
         {
@@ -583,8 +573,8 @@ public abstract class AbstractCluster<I extends IInstance> implements ICluster<I
         return createInstanceConfig(size() + 1);
     }
 
-    @VisibleForTesting
-    InstanceConfig createInstanceConfig(int nodeNum)
+    @Override
+    public InstanceConfig createInstanceConfig(int nodeNum)
     {
         INodeProvisionStrategy provisionStrategy = nodeProvisionStrategy.create(subnet, portMap);
         Collection<String> tokens = tokenSupplier.tokens(nodeNum);
@@ -604,16 +594,16 @@ public abstract class AbstractCluster<I extends IInstance> implements ICluster<I
                 if (testTokenCount == 1)
                 {
                     // test is no-vnode, but running with vnode, so skip
-                    Assume.assumeTrue("vnode is not supported", false);
+                    assumeTrue("vnode is not supported", false);
                 }
                 else
                 {
-                    Assume.assumeTrue("no-vnode is requested but not supported", defaultTokenCount > 1);
+                    assumeTrue("no-vnode is requested but not supported", defaultTokenCount > 1);
                     // if the test controls initial_token or GOSSIP is enabled, then the test is safe to run
                     if (defaultTokens.equals(config.getString("initial_token")))
                     {
                         // test didn't define initial_token
-                        Assume.assumeTrue("vnode is enabled and num_tokens is defined in test without GOSSIP or setting initial_token", config.has(Feature.GOSSIP));
+                        assumeTrue("vnode is enabled and num_tokens is defined in test without GOSSIP or setting initial_token", config.has(Feature.GOSSIP));
                         config.remove("initial_token");
                     }
                     else

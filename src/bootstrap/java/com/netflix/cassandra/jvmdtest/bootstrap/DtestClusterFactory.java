@@ -36,12 +36,16 @@ import org.apache.cassandra.distributed.shared.AbstractBuilder;
 public final class DtestClusterFactory {
 
   private static ExecutorService bootstrapExecutor;
+  private static boolean initialized = false;
 
   /**
    * Sets up classpath isolation, creates the bootstrap thread, and calls {@link ICluster#setup()}.
-   * Must be called once before any cluster creation.
+   * Idempotent — safe to call from multiple test contexts; subsequent calls are no-ops.
    */
-  public static void init() throws Exception {
+  public static synchronized void init() throws Exception {
+    if (initialized) {
+      return;
+    }
     ClassLoader mainCl = Thread.currentThread().getContextClassLoader();
     System.out.println(
         "DtestClusterFactory: main thread classloader: "
@@ -117,6 +121,7 @@ public final class DtestClusterFactory {
         Executors.newSingleThreadExecutor(
             r -> {
               Thread t = new Thread(r, "dtest-bootstrap");
+              t.setDaemon(true);
               t.setContextClassLoader(bootstrapCl);
               return t;
             });
@@ -141,6 +146,7 @@ public final class DtestClusterFactory {
               return null;
             })
         .get();
+    initialized = true;
   }
 
   /**
@@ -173,6 +179,8 @@ public final class DtestClusterFactory {
               AbstractBuilder<IInvokableInstance, ?, ?> builder =
                   (AbstractBuilder<IInvokableInstance, ?, ?>)
                       clusterClass.getMethod("build", int.class).invoke(null, nodeCount);
+              // Dynamic port allocation lets multiple clusters coexist in the same JVM.
+              builder.withDynamicPortAllocation(true);
               configurator.accept(builder);
               ICluster<IInvokableInstance> cluster =
                   (ICluster<IInvokableInstance>) builder.createWithoutStarting();
@@ -182,7 +190,11 @@ public final class DtestClusterFactory {
         .get();
   }
 
-  /** Closes the cluster on the bootstrap thread, then shuts down the thread. */
+  /**
+   * Closes the cluster on the bootstrap thread. The bootstrap executor is kept alive so that
+   * subsequent calls to {@link #start} can create new clusters in the same JVM (e.g. when
+   * multiple Spring test contexts each need their own isolated Cassandra cluster).
+   */
   public static void shutdown(ICluster<?> cluster) throws Exception {
     if (cluster != null) {
       bootstrapExecutor
@@ -192,9 +204,6 @@ public final class DtestClusterFactory {
                 return null;
               })
           .get();
-    }
-    if (bootstrapExecutor != null) {
-      bootstrapExecutor.shutdownNow();
     }
   }
 

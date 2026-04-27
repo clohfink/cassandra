@@ -152,7 +152,7 @@ sourceSets {
 }
 
 dependencies {
-    bootstrapImplementation 'org.apache.cassandra:dtest-api:0.0.16'
+    bootstrapImplementation 'org.apache.cassandra:dtest-api:0.0.18'
     bootstrapCompileOnly gradleApi()
 }
 

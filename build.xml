@@ -256,7 +256,7 @@
     <property name="chronicle-affinity.version" value="3.23.3" />
     <property name="chronicle-posix.version" value="2.24ea6" />
 
-    <property name="dtest-api.version" value="0.0.16" />
+    <property name="dtest-api.version" value="0.0.18" />
 
     <condition property="maven-ant-tasks.jar.exists">
       <available file="${build.dir}/maven-ant-tasks-${maven-ant-tasks.version}.jar" />

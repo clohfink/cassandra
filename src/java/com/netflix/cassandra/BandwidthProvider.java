@@ -76,6 +76,11 @@ public class BandwidthProvider implements Closeable
     public long getBaselineBandwidthInMiB()
     {
         long totalBandwidthMiB = 0;
+        if (instanceType == null || ec2Client == null)
+        {
+            logger.info("Skipping bandwidth detection: instanceType={}, ec2Client={}", instanceType, ec2Client);
+            return 0L;
+        }
         try
         {
             DescribeInstanceTypesRequest request = DescribeInstanceTypesRequest.builder()
