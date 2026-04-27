@@ -26,6 +26,11 @@ import java.util.function.Consumer;
 import org.junit.AssumptionViolatedException;
 import org.junit.Test;
 
+// AbstractCluster's topology-violation checks may throw either AssumptionViolatedException
+// (Apache Cassandra's original behavior, when JUnit 4 is on the classpath) or
+// IllegalStateException (Netflix's behavior, used so that consumers of jvm-dtest as an
+// external library do not need a JUnit 4 dependency). Both code paths are validated below.
+
 import org.apache.cassandra.distributed.api.IInstanceConfig;
 import org.apache.cassandra.distributed.api.IInvokableInstance;
 import org.apache.cassandra.distributed.api.TokenSupplier;
@@ -63,8 +68,8 @@ public class AbstractClusterTest
         builder.withTokenCount(42);
 
         Assertions.assertThatThrownBy(() -> builder.createWithoutStarting())
-                  .isInstanceOf(AssumptionViolatedException.class)
-                  .hasMessage("vnode is not supported");
+                  .isInstanceOfAny(AssumptionViolatedException.class, IllegalStateException.class)
+                  .hasMessageEndingWith("vnode is not supported");
     }
 
 
@@ -89,8 +94,8 @@ public class AbstractClusterTest
         builder.withTokenSupplier((TokenSupplier) i -> Arrays.asList("a", "b", "c"));
 
         Assertions.assertThatThrownBy(() -> builder.createWithoutStarting())
-                  .isInstanceOf(AssumptionViolatedException.class)
-                  .hasMessage("vnode is not supported");
+                  .isInstanceOfAny(AssumptionViolatedException.class, IllegalStateException.class)
+                  .hasMessageEndingWith("vnode is not supported");
     }
 
     @Test
@@ -103,8 +108,8 @@ public class AbstractClusterTest
         builder.withTokenSupplier((TokenSupplier) i -> Arrays.asList("a", "b", "c"));
 
         Assertions.assertThatThrownBy(() -> builder.createWithoutStarting())
-                  .isInstanceOf(AssumptionViolatedException.class)
-                  .hasMessage("no-vnode is requested but not supported");
+                  .isInstanceOfAny(AssumptionViolatedException.class, IllegalStateException.class)
+                  .hasMessageEndingWith("no-vnode is requested but not supported");
     }
 
     @Test
@@ -117,8 +122,8 @@ public class AbstractClusterTest
         builder.withTokenSupplier((TokenSupplier) i -> Arrays.asList("a"));
 
         Assertions.assertThatThrownBy(() -> builder.createWithoutStarting())
-                  .isInstanceOf(AssumptionViolatedException.class)
-                  .hasMessage("vnode is requested but not supported");
+                  .isInstanceOfAny(AssumptionViolatedException.class, IllegalStateException.class)
+                  .hasMessageEndingWith("vnode is requested but not supported");
     }
 
     @Test
@@ -128,8 +133,8 @@ public class AbstractClusterTest
         AbstractCluster<?> cluster = cluster(4, config);
         config.check = true;
         Assertions.assertThatThrownBy(() -> cluster.createInstanceConfig(1))
-                  .isInstanceOf(AssumptionViolatedException.class)
-                  .hasMessage("vnode is not supported");
+                  .isInstanceOfAny(AssumptionViolatedException.class, IllegalStateException.class)
+                  .hasMessageEndingWith("vnode is not supported");
     }
 
     @Test
@@ -139,8 +144,8 @@ public class AbstractClusterTest
         AbstractCluster<?> cluster = cluster(1, config);
         config.check = true;
         Assertions.assertThatThrownBy(() -> cluster.createInstanceConfig(1))
-                  .isInstanceOf(AssumptionViolatedException.class)
-                  .hasMessage("no-vnode is requested but not supported");
+                  .isInstanceOfAny(AssumptionViolatedException.class, IllegalStateException.class)
+                  .hasMessageEndingWith("no-vnode is requested but not supported");
     }
 
     @Test
@@ -150,8 +155,8 @@ public class AbstractClusterTest
         AbstractCluster<?> cluster = cluster(2, config);
         config.check = true;
         Assertions.assertThatThrownBy(() -> cluster.createInstanceConfig(1))
-                  .isInstanceOf(AssumptionViolatedException.class)
-                  .hasMessage("vnode is enabled and num_tokens is defined in test without GOSSIP or setting initial_token");
+                  .isInstanceOfAny(AssumptionViolatedException.class, IllegalStateException.class)
+                  .hasMessageEndingWith("vnode is enabled and num_tokens is defined in test without GOSSIP or setting initial_token");
     }
 
     @Test
@@ -169,7 +174,7 @@ public class AbstractClusterTest
         {
             r.run();
         }
-        catch (AssumptionViolatedException e)
+        catch (AssumptionViolatedException | IllegalStateException e)
         {
             AssertionError e2 = new AssertionError(e.getMessage());
             e2.setStackTrace(e.getStackTrace());
