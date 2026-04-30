@@ -110,6 +110,10 @@ class BackupMemtableContext implements Runnable
 
     private void initialize() throws ExecutionException, InterruptedException
     {
+        // Release any SSTableReaders from a previous failed attempt before clearing
+        for (SSTableReader sstable : sstables)
+            sstable.selfRef().release();
+
         // Clear state so this method is safe to re-run on retry
         descriptors.clear();
         sstables.clear();
