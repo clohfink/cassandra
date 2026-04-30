@@ -501,13 +501,16 @@ public class Config
     public DataStorageSpec.IntKibibytesBound hinted_handoff_throttle = new DataStorageSpec.IntKibibytesBound("1024KiB");
 
     /** Enable dynamic hints throttling based on backlog and throughput */
-    public volatile boolean hinted_handoff_dynamic_throttle_enabled = false;
+    public volatile boolean hinted_handoff_dynamic_throttle_enabled = true;
 
     /** Maximum throttle rate for dynamic hints throttling (0 = auto-calculate as 10x base throttle) */
     public DataStorageSpec.IntKibibytesBound hinted_handoff_max_throttle = new DataStorageSpec.IntKibibytesBound("0KiB");
 
-    /** Number of pending hints that trigger urgency (dynamic throttle increase) */
-    public int hinted_handoff_throttle_backlog_threshold = 1000;
+    /**
+     * Total queued hint files (sum of per-destination dispatch deque sizes) above which dynamic throttle may
+     * increase toward hinted_handoff_max_throttle when measured throughput is high vs the current limit.
+     */
+    public int hinted_handoff_throttle_backlog_threshold = 10;
 
     /** How often to adjust the dynamic throttle rate (in seconds) */
     public int hinted_handoff_throttle_adjustment_interval_in_sec = 10;

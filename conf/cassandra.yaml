@@ -72,6 +72,14 @@ max_hint_window: 3h
 # Min unit: KiB
 hinted_handoff_throttle: 1024KiB
 
+# When true, periodically adjusts the shared hints delivery rate limit between the base throttle (after RF scaling)
+# and hinted_handoff_max_throttle based on queued hint files and measured throughput. Disable for a fixed rate only.
+hinted_handoff_dynamic_throttle_enabled: true
+
+# Sum of queued hint files across destinations; above this, dynamic throttle may increase if throughput is already
+# near the current cap (see hinted_handoff_throttle_adjustment_interval_in_sec).
+hinted_handoff_throttle_backlog_threshold: 10
+
 # Number of threads with which to deliver hints;
 # Consider increasing this number when you have multi-dc deployments, since
 # cross-dc handoff tends to be slower
