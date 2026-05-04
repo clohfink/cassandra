@@ -75,7 +75,10 @@ import com.google.common.util.concurrent.RateLimiter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.netflix.cassandra.backups.BackupContext;
+import com.netflix.cassandra.backups.BackupManifestBuilder;
 import com.netflix.cassandra.backups.BackupMemtable;
+import com.netflix.cassandra.backups.BackupUtils;
 import org.apache.cassandra.cache.CounterCacheKey;
 import org.apache.cassandra.cache.IRowCacheEntry;
 import org.apache.cassandra.cache.RowCacheKey;
@@ -2028,13 +2031,14 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean, Memtable.Owner
 
     public TableSnapshot snapshotWithoutMemtable(String snapshotName, Instant creationTime)
     {
-        return snapshotWithoutMemtable(snapshotName, null, false, null, null, creationTime);
+        return snapshotWithoutMemtable(snapshotName, null, false, null, null, creationTime, false);
     }
 
     /**
      * @param ephemeral If this flag is set to true, the snapshot will be cleaned during next startup
+     * @param netflixManifest if true, also write the Netflix backup_manifest.json (subject to {@link DatabaseDescriptor#isBackupManifestEnabled()})
      */
-    public TableSnapshot snapshotWithoutMemtable(String snapshotName, Predicate<SSTableReader> predicate, boolean ephemeral, DurationSpec.IntSecondsBound ttl, RateLimiter rateLimiter, Instant creationTime)
+    public TableSnapshot snapshotWithoutMemtable(String snapshotName, Predicate<SSTableReader> predicate, boolean ephemeral, DurationSpec.IntSecondsBound ttl, RateLimiter rateLimiter, Instant creationTime, boolean netflixManifest)
     {
         if (ephemeral && ttl != null)
         {
@@ -2061,10 +2065,10 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean, Memtable.Owner
             }
         }
 
-        return createSnapshot(snapshotName, ephemeral, ttl, snapshottedSSTables, creationTime);
+        return createSnapshot(snapshotName, ephemeral, ttl, snapshottedSSTables, creationTime, netflixManifest);
     }
 
-    protected TableSnapshot createSnapshot(String tag, boolean ephemeral, DurationSpec.IntSecondsBound ttl, Set<SSTableReader> sstables, Instant creationTime) {
+    protected TableSnapshot createSnapshot(String tag, boolean ephemeral, DurationSpec.IntSecondsBound ttl, Set<SSTableReader> sstables, Instant creationTime, boolean netflixManifest) {
         Set<File> snapshotDirs = sstables.stream()
                                          .map(s -> Directories.getSnapshotDirectory(s.descriptor, tag).toAbsolute())
                                          .filter(dir -> !Directories.isSecondaryIndexFolder(dir)) // Remove secondary index subdirectory
@@ -2082,6 +2086,29 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean, Memtable.Owner
             File schemaFile = getDirectories().getSnapshotSchemaFile(tag);
             writeSnapshotSchema(schemaFile);
             snapshotDirs.add(schemaFile.parent().toAbsolute()); // schema may create empty snapshot dir
+        }
+
+        // Write Netflix backup manifest alongside the snapshot when both the global
+        // config is on and the caller (e.g. nodetool snapshot --netflix-manifest) opted in.
+        if (netflixManifest && DatabaseDescriptor.isBackupManifestEnabled())
+        {
+            try
+            {
+                BackupContext ctx = BackupUtils.getBackupContext();
+                if (ctx.isValid())
+                {
+                    BackupManifestBuilder.build(sstables, ctx, creationTime, metadata(), manifestFile.parent());
+                    snapshotDirs.add(manifestFile.parent().toAbsolute());
+                }
+                else
+                {
+                    logger.debug("Skipping backup_manifest.json for snapshot {}: BackupContext not valid", tag);
+                }
+            }
+            catch (Throwable t)
+            {
+                logger.warn("Failed to write Netflix backup_manifest.json for snapshot {}", tag, t);
+            }
         }
 
         // Maybe create ephemeral marker
@@ -2221,7 +2248,7 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean, Memtable.Owner
 
     public TableSnapshot snapshot(String snapshotName, DurationSpec.IntSecondsBound ttl)
     {
-        return snapshot(snapshotName, false, ttl, null, now());
+        return snapshot(snapshotName, false, ttl, null, now(), false);
     }
 
     /**
@@ -2232,10 +2259,11 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean, Memtable.Owner
      * @param ttl duration after which the taken snapshot is removed automatically, if supplied with null, it will never be automatically removed
      * @param rateLimiter Rate limiter for hardlinks-per-second
      * @param creationTime time when this snapshot was taken
+     * @param netflixManifest if true, also write the Netflix backup_manifest.json (subject to {@link DatabaseDescriptor#isBackupManifestEnabled()})
      */
-    public TableSnapshot snapshot(String snapshotName, boolean skipMemtable, DurationSpec.IntSecondsBound ttl, RateLimiter rateLimiter, Instant creationTime)
+    public TableSnapshot snapshot(String snapshotName, boolean skipMemtable, DurationSpec.IntSecondsBound ttl, RateLimiter rateLimiter, Instant creationTime, boolean netflixManifest)
     {
-        return snapshot(snapshotName, null, false, skipMemtable, ttl, rateLimiter, creationTime);
+        return snapshot(snapshotName, null, false, skipMemtable, ttl, rateLimiter, creationTime, netflixManifest);
     }
 
 
@@ -2245,7 +2273,7 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean, Memtable.Owner
      */
     public TableSnapshot snapshot(String snapshotName, Predicate<SSTableReader> predicate, boolean ephemeral, boolean skipMemtable)
     {
-        return snapshot(snapshotName, predicate, ephemeral, skipMemtable, null, null, now());
+        return snapshot(snapshotName, predicate, ephemeral, skipMemtable, null, null, now(), false);
     }
 
     /**
@@ -2254,9 +2282,10 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean, Memtable.Owner
      * @param ttl duration after which the taken snapshot is removed automatically, if supplied with null, it will never be automatically removed
      * @param rateLimiter Rate limiter for hardlinks-per-second
      * @param creationTime time when this snapshot was taken
+     * @param netflixManifest if true, also write the Netflix backup_manifest.json (subject to {@link DatabaseDescriptor#isBackupManifestEnabled()})
      */
     @Nullable
-    public TableSnapshot snapshot(String snapshotName, Predicate<SSTableReader> predicate, boolean ephemeral, boolean skipMemtable, DurationSpec.IntSecondsBound ttl, RateLimiter rateLimiter, Instant creationTime)
+    public TableSnapshot snapshot(String snapshotName, Predicate<SSTableReader> predicate, boolean ephemeral, boolean skipMemtable, DurationSpec.IntSecondsBound ttl, RateLimiter rateLimiter, Instant creationTime, boolean netflixManifest)
     {
         Memtable current = getTracker().getView().getCurrentMemtable();
         // we return null here for Netflix specific usecase. At time of change
@@ -2274,7 +2303,7 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean, Memtable.Owner
                     current.performSnapshot(snapshotName);
             }
         }
-        return snapshotWithoutMemtable(snapshotName, predicate, ephemeral, ttl, rateLimiter, creationTime);
+        return snapshotWithoutMemtable(snapshotName, predicate, ephemeral, ttl, rateLimiter, creationTime, netflixManifest);
     }
 
     public boolean snapshotExists(String snapshotName)

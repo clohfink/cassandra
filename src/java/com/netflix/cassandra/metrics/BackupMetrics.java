@@ -27,10 +27,10 @@ import org.slf4j.LoggerFactory;
 
 import static org.apache.cassandra.metrics.CassandraMetricsRegistry.Metrics;
 
-public class ColdTierMetrics
+public class BackupMetrics
 {
-    private static final Logger logger = LoggerFactory.getLogger(ColdTierMetrics.class);
-    public static final String TYPE_NAME = "ColdTier";
+    private static final Logger logger = LoggerFactory.getLogger(BackupMetrics.class);
+    public static final String TYPE_NAME = "Backups";
     public static final Histogram chunksPerRead = Metrics.histogram(
     DefaultNameFactory.createMetricName(TYPE_NAME, "ChunksPerRead", null), false
     );
@@ -68,5 +68,13 @@ public class ColdTierMetrics
 
     public static final Histogram backupMemtableInitTimeMs = Metrics.histogram(
     DefaultNameFactory.createMetricName(TYPE_NAME, "BackupMemtableInitTimeMs", null), false
+    );
+
+    public static final Histogram backupManifestBuildTimeMs = Metrics.histogram(
+    DefaultNameFactory.createMetricName(TYPE_NAME, "BackupManifestBuildTimeMs", null), false
+    );
+
+    public static final Histogram componentsPerBackupManifest = Metrics.histogram(
+    DefaultNameFactory.createMetricName(TYPE_NAME, "ComponentsPerBackupManifest", null), false
     );
 }

@@ -55,6 +55,7 @@ import com.google.common.io.ByteStreams;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.netflix.cassandra.backups.BackupService;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.cql3.QueryProcessor;
 import org.apache.cassandra.cql3.UntypedResultSet;
@@ -169,6 +170,7 @@ public final class SystemKeyspace
     public static final String PREPARED_STATEMENTS = "prepared_statements";
     public static final String REPAIRS = "repairs";
     public static final String TOP_PARTITIONS = "top_partitions";
+    public static final String BACKUP_SSTABLE_TRACKING = "backup_sstable_tracking";
 
     /**
      * By default the system keyspace tables should be stored in a single data directory to allow the server
@@ -200,6 +202,19 @@ public final class SystemKeyspace
               + "PRIMARY KEY ((id)))")
               .partitioner(new LocalPartitioner(TimeUUIDType.instance))
               .compaction(CompactionParams.stcs(singletonMap("min_threshold", "2")))
+              .build();
+
+    private static final TableMetadata BackupSSTableTracking =
+        parse(BACKUP_SSTABLE_TRACKING,
+              "maps an SSTable (ks, table, generation_id) to the backup_timestamp embedded in its S3 backup path",
+              "CREATE TABLE %s ("
+              + "keyspace_name text,"
+              + "table_name text,"
+              + "generation_id text,"
+              + "backup_timestamp bigint,"
+              + "PRIMARY KEY ((keyspace_name, table_name, generation_id)))")
+              .defaultTimeToLive((int) TimeUnit.DAYS.toSeconds(30))
+              .compaction(CompactionParams.lcs(singletonMap("unsafe_aggressive_sstable_expiration", "true")))
               .build();
 
     private static final TableMetadata Paxos =
@@ -550,7 +565,8 @@ public final class SystemKeyspace
                          ScheduledCompactionsCf,
                          PreparedStatements,
                          Repairs,
-                         TopPartitions);
+                         TopPartitions,
+                         BackupSSTableTracking);
     }
 
     private static Functions functions()
@@ -651,6 +667,44 @@ public final class SystemKeyspace
     {
         UntypedResultSet queryResultSet = executeInternal(format("SELECT * from system.%s", COMPACTION_HISTORY));
         return CompactionHistoryTabularData.from(queryResultSet);
+    }
+
+    private static final Object backupTrackingLock = new Object();
+
+    /**
+     * Returns the backup_timestamp already assigned for a given
+     * (keyspace, table, generation_id) — or assigns {@code candidateBackupTimestamp}
+     * and returns it if none exists yet. Used to keep the S3 backup path stable
+     * across snapshots that share the same SSTable.
+     *
+     * <p>Throughput can be capped at runtime via
+     * {@link com.netflix.cassandra.backups.BackupServiceMBean#setBackupTimestampRateLimit(double)}.
+     */
+    public static long getOrAssignBackupTimestamp(String keyspaceName,
+                                                  String tableName,
+                                                  String generationId,
+                                                  long candidateBackupTimestamp)
+    {
+        BackupService.instance.acquireBackupTimestampPermit();
+        synchronized (backupTrackingLock)
+        {
+            String select = "SELECT backup_timestamp FROM system.%s"
+                            + " WHERE keyspace_name=? AND table_name=? AND generation_id=?";
+            UntypedResultSet result = executeInternal(format(select, BACKUP_SSTABLE_TRACKING),
+                                                      keyspaceName, tableName, generationId);
+            if (result != null && !result.isEmpty())
+            {
+                UntypedResultSet.Row row = result.one();
+                if (row.has("backup_timestamp"))
+                    return row.getLong("backup_timestamp");
+            }
+
+            String insert = "INSERT INTO system.%s (keyspace_name, table_name, generation_id, backup_timestamp)"
+                            + " VALUES (?, ?, ?, ?)";
+            executeInternal(format(insert, BACKUP_SSTABLE_TRACKING),
+                            keyspaceName, tableName, generationId, candidateBackupTimestamp);
+            return candidateBackupTimestamp;
+        }
     }
 
     public static boolean isViewBuilt(String keyspaceName, String viewName)
@@ -1775,7 +1829,7 @@ public final class SystemKeyspace
 
             Instant creationTime = now();
             for (String keyspace : SchemaConstants.LOCAL_SYSTEM_KEYSPACE_NAMES)
-                Keyspace.open(keyspace).snapshot(snapshotName, null, false, null, null, creationTime);
+                Keyspace.open(keyspace).snapshot(snapshotName, null, false, null, null, creationTime, false);
         }
     }
 

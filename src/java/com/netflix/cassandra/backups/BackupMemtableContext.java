@@ -35,7 +35,7 @@ import java.util.zip.CRC32;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.netflix.cassandra.metrics.ColdTierMetrics;
+import com.netflix.cassandra.metrics.BackupMetrics;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.db.SerializationHeader;
 import org.apache.cassandra.db.lifecycle.SSTableIntervalTree;
@@ -104,7 +104,7 @@ class BackupMemtableContext implements Runnable
         }
         finally
         {
-            ColdTierMetrics.backupMemtableInitTimeMs.update(currentTimeMillis() - startMs);
+            BackupMetrics.backupMemtableInitTimeMs.update(currentTimeMillis() - startMs);
         }
     }
 

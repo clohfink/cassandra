@@ -980,6 +980,15 @@ rpc_keepalive: true
 # responsibility.
 incremental_backups: false
 
+# When true, every snapshot taken by this node writes a
+# backup_manifest.json alongside the snapshot files. The manifest
+# pre-computes the S3 destination for each SSTable component so a
+# separate uploader process can perform the actual uploads.
+# Requires the NETFLIX_ENVIRONMENT, NETFLIX_REGION, and NETFLIX_APP
+# environment variables to be set; otherwise the manifest is skipped
+# at snapshot time.
+backup_manifest_enabled: false
+
 # Whether or not to take a snapshot before each compaction.  Be
 # careful using this option, since Cassandra won't clean up the
 # snapshots for you.  Mostly useful if you're paranoid when there

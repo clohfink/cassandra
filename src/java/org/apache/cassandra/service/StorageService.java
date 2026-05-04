@@ -4276,13 +4276,14 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
         }
 
         boolean skipFlush = Boolean.parseBoolean(options.getOrDefault("skipFlush", "false"));
+        boolean netflixManifest = Boolean.parseBoolean(options.getOrDefault("netflixManifest", "false"));
         if (entities != null && entities.length > 0 && entities[0].contains("."))
         {
-            takeMultipleTableSnapshot(tag, skipFlush, ttl, entities);
+            takeMultipleTableSnapshot(tag, skipFlush, ttl, netflixManifest, entities);
         }
         else
         {
-            takeSnapshot(tag, skipFlush, ttl, entities);
+            takeSnapshot(tag, skipFlush, ttl, netflixManifest, entities);
         }
     }
 
@@ -4300,7 +4301,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
     public void takeTableSnapshot(String keyspaceName, String tableName, String tag)
             throws IOException
     {
-        takeMultipleTableSnapshot(tag, false, null, keyspaceName + "." + tableName);
+        takeMultipleTableSnapshot(tag, false, null, false, keyspaceName + "." + tableName);
     }
 
     public void setRepairedAt(String keyspaceName, String table, long timestamp) throws IOException
@@ -4404,7 +4405,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
      */
     public void takeSnapshot(String tag, String... keyspaceNames) throws IOException
     {
-        takeSnapshot(tag, false, null, keyspaceNames);
+        takeSnapshot(tag, false, null, false, keyspaceNames);
     }
 
     /**
@@ -4418,7 +4419,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
     public void takeMultipleTableSnapshot(String tag, String... tableList)
             throws IOException
     {
-        takeMultipleTableSnapshot(tag, false, null, tableList);
+        takeMultipleTableSnapshot(tag, false, null, false, tableList);
     }
 
     /**
@@ -4426,9 +4427,10 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
      *
      * @param tag the tag given to the snapshot; may not be null or empty
      * @param skipFlush Skip blocking flush of memtable
+     * @param netflixManifest if true, also write the Netflix backup_manifest.json (subject to netflix_backup_manifest_enabled)
      * @param keyspaceNames the names of the keyspaces to snapshot; empty means "all."
      */
-    private void takeSnapshot(String tag, boolean skipFlush, DurationSpec.IntSecondsBound ttl, String... keyspaceNames) throws IOException
+    private void takeSnapshot(String tag, boolean skipFlush, DurationSpec.IntSecondsBound ttl, boolean netflixManifest, String... keyspaceNames) throws IOException
     {
         if (operationMode == Mode.JOINING)
             throw new IOException("Cannot snapshot until bootstrap completes");
@@ -4459,7 +4461,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
 
         for (Keyspace keyspace : keyspaces)
         {
-            keyspace.snapshot(tag, null, skipFlush, ttl, snapshotRateLimiter, creationTime);
+            keyspace.snapshot(tag, null, skipFlush, ttl, snapshotRateLimiter, creationTime, netflixManifest);
         }
     }
 
@@ -4471,10 +4473,12 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
      *            the tag given to the snapshot; may not be null or empty
      * @param skipFlush
      *            Skip blocking flush of memtable
+     * @param netflixManifest
+     *            if true, also write the Netflix backup_manifest.json (subject to netflix_backup_manifest_enabled)
      * @param tableList
      *            list of tables from different keyspace in the form of ks1.cf1 ks2.cf2
      */
-    private void takeMultipleTableSnapshot(String tag, boolean skipFlush, DurationSpec.IntSecondsBound ttl, String... tableList)
+    private void takeMultipleTableSnapshot(String tag, boolean skipFlush, DurationSpec.IntSecondsBound ttl, boolean netflixManifest, String... tableList)
             throws IOException
     {
         Map<Keyspace, List<String>> keyspaceColumnfamily = new HashMap<Keyspace, List<String>>();
@@ -4526,7 +4530,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
         for (Entry<Keyspace, List<String>> entry : keyspaceColumnfamily.entrySet())
         {
             for (String table : entry.getValue())
-                entry.getKey().snapshot(tag, table, skipFlush, ttl, snapshotRateLimiter, creationTime);
+                entry.getKey().snapshot(tag, table, skipFlush, ttl, snapshotRateLimiter, creationTime, netflixManifest);
         }
     }
 

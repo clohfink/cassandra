@@ -57,6 +57,9 @@ public class Snapshot extends NodeToolCmd
     @Option(title = "ttl", name = {"--ttl"}, description = "Specify a TTL of created snapshot")
     private String ttl = null;
 
+    @Option(title = "netflix-manifest", name = {"--netflix-manifest"}, description = "Also write the Netflix backup_manifest.json alongside the snapshot (only effective when netflix_backup_manifest_enabled is true)")
+    private boolean netflixManifest = false;
+
     @Override
     public void execute(NodeProbe probe)
     {
@@ -69,6 +72,8 @@ public class Snapshot extends NodeToolCmd
 
             Map<String, String> options = new HashMap<String,String>();
             options.put("skipFlush", Boolean.toString(skipFlush));
+            if (netflixManifest)
+                options.put("netflixManifest", "true");
             if (null != ttl) {
                 DurationSpec.LongNanosecondsBound d = new DurationSpec.LongNanosecondsBound(ttl);
                 options.put("ttl", d.toString());

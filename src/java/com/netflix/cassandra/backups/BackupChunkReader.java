@@ -33,7 +33,7 @@ import org.slf4j.LoggerFactory;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import com.github.benmanes.caffeine.cache.RemovalCause;
-import com.netflix.cassandra.metrics.ColdTierMetrics;
+import com.netflix.cassandra.metrics.BackupMetrics;
 import org.apache.cassandra.concurrent.Stage;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.db.RowIndexEntry;
@@ -673,7 +673,7 @@ public class BackupChunkReader extends RandomAccessReader
         }
 
         long numChunks = endChunk - startChunk + 1;
-        ColdTierMetrics.chunksPerRead.update(numChunks);
+        BackupMetrics.chunksPerRead.update(numChunks);
 
         // Don't prefetch if it's just a single chunk
         if (numChunks <= 1)

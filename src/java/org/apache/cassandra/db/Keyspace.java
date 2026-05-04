@@ -250,9 +250,10 @@ public class Keyspace
      * @param columnFamilyName the column family to snapshot or all on null
      * @param skipFlush Skip blocking flush of memtable
      * @param rateLimiter Rate limiter for hardlinks-per-second
+     * @param netflixManifest if true, also write the Netflix backup_manifest.json (subject to netflix_backup_manifest_enabled)
      * @throws IOException if the column family doesn't exist
      */
-    public void snapshot(String snapshotName, String columnFamilyName, boolean skipFlush, DurationSpec.IntSecondsBound ttl, RateLimiter rateLimiter, Instant creationTime) throws IOException
+    public void snapshot(String snapshotName, String columnFamilyName, boolean skipFlush, DurationSpec.IntSecondsBound ttl, RateLimiter rateLimiter, Instant creationTime, boolean netflixManifest) throws IOException
     {
         assert snapshotName != null;
         boolean tookSnapShot = false;
@@ -261,7 +262,7 @@ public class Keyspace
             if (columnFamilyName == null || cfStore.name.equals(columnFamilyName))
             {
                 tookSnapShot = true;
-                cfStore.snapshot(snapshotName, skipFlush, ttl, rateLimiter, creationTime);
+                cfStore.snapshot(snapshotName, skipFlush, ttl, rateLimiter, creationTime, netflixManifest);
             }
         }
 
@@ -279,7 +280,7 @@ public class Keyspace
      */
     public void snapshot(String snapshotName, String columnFamilyName) throws IOException
     {
-        snapshot(snapshotName, columnFamilyName, false, null, null, now());
+        snapshot(snapshotName, columnFamilyName, false, null, null, now(), false);
     }
 
     /**

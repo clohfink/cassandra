@@ -1851,6 +1851,16 @@ public class DatabaseDescriptor
         return conf.backup_manifest_fetch_timeout_seconds;
     }
 
+    public static boolean isBackupManifestEnabled()
+    {
+        return conf.netflix_backup_manifest_enabled;
+    }
+
+    public static void setBackupManifestEnabled(boolean enabled)
+    {
+        conf.netflix_backup_manifest_enabled = enabled;
+    }
+
     public static boolean getDieOnUnknownGossipState()
     {
         return conf.die_on_unknown_gossip_state;

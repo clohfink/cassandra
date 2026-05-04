@@ -93,6 +93,26 @@ public class BackupContext
         return prefix() + '/' + token + "/SST_V2/";
     }
 
+    /**
+     * Build the full S3 key for a single SSTable component under the SST_V2 layout:
+     * {prefix}/{token}/SST_V2/{backupTs}/{keyspace}/{cfWithUuid}/{compression}/{encryption}/{fileName}
+     */
+    public String sstableComponentPath(long backupTs,
+                                       String keyspace,
+                                       String cfWithUuid,
+                                       String compression,
+                                       String encryption,
+                                       String fileName)
+    {
+        return sstV2Prefix()
+               + backupTs + '/'
+               + keyspace + '/'
+               + cfWithUuid + '/'
+               + compression + '/'
+               + encryption + '/'
+               + fileName;
+    }
+
     public boolean isValid()
     {
         return StringUtils.isNotBlank(env)
