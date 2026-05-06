@@ -92,7 +92,7 @@ public class BackupManifestBuilderTest extends CQLTester
         builder.accept(snapshot);
         builder.write();
 
-        File manifestFile = new File(new File(datadir, BackupManifestBuilder.MANIFESTS_DIRNAME), tag + ".json");
+        File manifestFile = pendingManifest(datadir, tag);
         assertTrue("manifest not written: " + manifestFile, manifestFile.exists());
 
         BackupManifest manifest = MAPPER.readValue(manifestFile.toJavaIOFile(), BackupManifest.class);
@@ -167,7 +167,7 @@ public class BackupManifestBuilderTest extends CQLTester
         cfs2.snapshotWithoutMemtable(tag, null, false, null, null, snapshotInstant, builder);
         builder.write();
 
-        File manifestFile = new File(new File(datadir(cfs1), BackupManifestBuilder.MANIFESTS_DIRNAME), tag + ".json");
+        File manifestFile = pendingManifest(datadir(cfs1), tag);
         assertTrue("manifest not written: " + manifestFile, manifestFile.exists());
         BackupManifest manifest = MAPPER.readValue(manifestFile.toJavaIOFile(), BackupManifest.class);
 
@@ -213,6 +213,13 @@ public class BackupManifestBuilderTest extends CQLTester
             assertEquals("schema.cql", schemaSidecar.getFileName());
             assertTrue(schemaSidecar.getBackupPath().endsWith("/schema.cql"));
         }
+    }
+
+    private static File pendingManifest(File datadir, String tag)
+    {
+        return new File(new File(new File(datadir, BackupManifestBuilder.MANIFESTS_DIRNAME),
+                                 BackupManifestBuilder.PENDING_SUBDIR),
+                        tag + ".json");
     }
 
     private static File datadir(ColumnFamilyStore cfs)
@@ -266,7 +273,7 @@ public class BackupManifestBuilderTest extends CQLTester
                                                                 -1L);
         assertEquals("first candidate should stick", 1_000_000L, stored);
 
-        File manifestFileB = new File(new File(datadir, BackupManifestBuilder.MANIFESTS_DIRNAME), tagB + ".json");
+        File manifestFileB = pendingManifest(datadir, tagB);
         BackupManifest manifestB = MAPPER.readValue(manifestFileB.toJavaIOFile(), BackupManifest.class);
         BackupManifest.BackupSSTable sstableEntry = manifestB.getData().get(0).getSstables().stream()
                 .filter(s -> s.getPrefix().startsWith("nb-"))

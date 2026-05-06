@@ -67,6 +67,12 @@ public final class BackupManifestBuilder implements Consumer<TableSnapshot>
     private static final ObjectMapper mapper = new ObjectMapper();
 
     public static final String MANIFESTS_DIRNAME = "backup_manifests";
+    /**
+     * Subdirectory of {@link #MANIFESTS_DIRNAME} where freshly-written manifests land.
+     * The upload tool drains from here. Sibling directories like {@code failed/} are
+     * managed by the upload tool — Cassandra only ever writes to {@code pending/}.
+     */
+    public static final String PENDING_SUBDIR = "pending";
     public static final String COMPRESSION = "NONE";
     public static final String ENCRYPTION = "PLAINTEXT";
 
@@ -81,7 +87,7 @@ public final class BackupManifestBuilder implements Consumer<TableSnapshot>
     /**
      * Returns a fresh builder for one snapshot run, or {@code null} if either the caller
      * didn't request a Netflix manifest or {@link BackupContext#isValid()} is false.
-     * The builder writes to {@code <first datadir>/backup_manifests/<snapshotTag>.json}.
+     * The builder writes to {@code <first datadir>/backup_manifests/pending/<snapshotTag>.json}.
      */
     public static BackupManifestBuilder tryCreate(String snapshotTag, Instant snapshotInstant, boolean enabled)
     {
@@ -129,16 +135,16 @@ public final class BackupManifestBuilder implements Consumer<TableSnapshot>
         manifestBuilder.addData(assembleData(snapshot));
     }
 
-    /** Atomically write {@code <datadir>/backup_manifests/<snapshotTag>.json}. */
+    /** Atomically write {@code <datadir>/backup_manifests/pending/<snapshotTag>.json}. */
     public void write() throws IOException
     {
         BackupManifest manifest = manifestBuilder.build();
 
-        File manifestsDir = new File(datadir, MANIFESTS_DIRNAME);
-        Files.createDirectories(manifestsDir.toPath());
+        File pendingDir = new File(new File(datadir, MANIFESTS_DIRNAME), PENDING_SUBDIR);
+        Files.createDirectories(pendingDir.toPath());
 
-        File manifestFile = new File(manifestsDir, snapshotTag + ".json");
-        File tmpFile = new File(manifestsDir, snapshotTag + ".json.tmp");
+        File manifestFile = new File(pendingDir, snapshotTag + ".json");
+        File tmpFile = new File(pendingDir, snapshotTag + ".json.tmp");
         try
         {
             mapper.writerWithDefaultPrettyPrinter()
