@@ -75,6 +75,7 @@ import com.google.common.base.Predicates;
 import com.google.common.collect.*;
 import com.google.common.util.concurrent.*;
 
+import com.netflix.cassandra.backups.BackupManifestBuilder;
 import com.netflix.cassandra.db.virtual.ClusterPartitionCount;
 import com.netflix.cassandra.db.virtual.NetflixViewsKeyspace;
 import com.netflix.cassandra.metrics.ResourcesMetrics;
@@ -4459,9 +4460,23 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
         RateLimiter snapshotRateLimiter = DatabaseDescriptor.getSnapshotRateLimiter();
         Instant creationTime = now();
 
+        BackupManifestBuilder backupManifest = BackupManifestBuilder.tryCreate(tag, creationTime, netflixManifest);
+
         for (Keyspace keyspace : keyspaces)
         {
-            keyspace.snapshot(tag, null, skipFlush, ttl, snapshotRateLimiter, creationTime, netflixManifest);
+            keyspace.snapshot(tag, null, skipFlush, ttl, snapshotRateLimiter, creationTime, backupManifest);
+        }
+
+        if (backupManifest != null)
+        {
+            try
+            {
+                backupManifest.write();
+            }
+            catch (Throwable t)
+            {
+                logger.warn("Failed to write Netflix backup manifest for snapshot {}", tag, t);
+            }
         }
     }
 
@@ -4527,10 +4542,24 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
         RateLimiter snapshotRateLimiter = DatabaseDescriptor.getSnapshotRateLimiter();
         Instant creationTime = now();
 
+        BackupManifestBuilder backupManifest = BackupManifestBuilder.tryCreate(tag, creationTime, netflixManifest);
+
         for (Entry<Keyspace, List<String>> entry : keyspaceColumnfamily.entrySet())
         {
             for (String table : entry.getValue())
-                entry.getKey().snapshot(tag, table, skipFlush, ttl, snapshotRateLimiter, creationTime, netflixManifest);
+                entry.getKey().snapshot(tag, table, skipFlush, ttl, snapshotRateLimiter, creationTime, backupManifest);
+        }
+
+        if (backupManifest != null)
+        {
+            try
+            {
+                backupManifest.write();
+            }
+            catch (Throwable t)
+            {
+                logger.warn("Failed to write Netflix backup manifest for snapshot {}", tag, t);
+            }
         }
     }
 

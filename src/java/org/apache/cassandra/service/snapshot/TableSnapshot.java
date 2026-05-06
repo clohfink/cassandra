@@ -85,6 +85,11 @@ public class TableSnapshot
         return tableName;
     }
 
+    public UUID getTableId()
+    {
+        return tableId;
+    }
+
     public String getTag()
     {
         return tag;

@@ -31,6 +31,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.Lock;
+import java.util.function.Consumer;
 import java.util.stream.Stream;
 
 import com.google.common.annotations.VisibleForTesting;
@@ -250,10 +251,10 @@ public class Keyspace
      * @param columnFamilyName the column family to snapshot or all on null
      * @param skipFlush Skip blocking flush of memtable
      * @param rateLimiter Rate limiter for hardlinks-per-second
-     * @param netflixManifest if true, also write the Netflix backup_manifest.json (subject to netflix_backup_manifest_enabled)
+     * @param snapshotConsumer if non-null, called with each per-CF {@link TableSnapshot} for combined-manifest writing
      * @throws IOException if the column family doesn't exist
      */
-    public void snapshot(String snapshotName, String columnFamilyName, boolean skipFlush, DurationSpec.IntSecondsBound ttl, RateLimiter rateLimiter, Instant creationTime, boolean netflixManifest) throws IOException
+    public void snapshot(String snapshotName, String columnFamilyName, boolean skipFlush, DurationSpec.IntSecondsBound ttl, RateLimiter rateLimiter, Instant creationTime, Consumer<TableSnapshot> snapshotConsumer) throws IOException
     {
         assert snapshotName != null;
         boolean tookSnapShot = false;
@@ -262,7 +263,7 @@ public class Keyspace
             if (columnFamilyName == null || cfStore.name.equals(columnFamilyName))
             {
                 tookSnapShot = true;
-                cfStore.snapshot(snapshotName, skipFlush, ttl, rateLimiter, creationTime, netflixManifest);
+                cfStore.snapshot(snapshotName, skipFlush, ttl, rateLimiter, creationTime, snapshotConsumer);
             }
         }
 
@@ -280,7 +281,7 @@ public class Keyspace
      */
     public void snapshot(String snapshotName, String columnFamilyName) throws IOException
     {
-        snapshot(snapshotName, columnFamilyName, false, null, null, now(), false);
+        snapshot(snapshotName, columnFamilyName, false, null, null, now(), null);
     }
 
     /**

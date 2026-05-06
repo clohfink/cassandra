@@ -84,12 +84,31 @@ public class BackupManifest {
     // static inner classes
     // ----------------------------------------------------
 
+    /**
+     * {@code backupPathPrefix} and {@code snapshotTag} live inside Info rather than at the top
+     * level so the manifest is parseable as-is by Priam's MetaFileReader: that reader's
+     * top-level switch trips on unknown field names, but Gson silently ignores unknown
+     * fields inside an Info value. See ods-data-tools BackupManifest doc for details.
+     */
     public static class Info {
         private int version;
         private String appName;
         private String region;
         private String rack;
         private List<String> backupIdentifier;
+        private long snapshotInstantMs;
+
+        /**
+         * Common path segment shared by every {@code backupPath} this manifest references —
+         * both the per-component {@code SST_V2/...} keys in {@link Data} and the
+         * {@code META_V2/...} key the upload tool derives for this manifest itself.
+         * Typically {@code <env>_backup/<hash>_<app>/<token>}: identifies a specific
+         * Cassandra node's backup namespace within the destination bucket. Recorded as a
+         * field so consumers don't have to parse it back out of {@code backupPath} strings.
+         */
+        private String backupPathPrefix;
+
+        private String snapshotTag;
 
         // For Jackson deserialization
         public Info() {}
@@ -101,6 +120,9 @@ public class BackupManifest {
             this.region = builder.region;
             this.rack = builder.rack;
             this.backupIdentifier = builder.backupIdentifier;
+            this.snapshotInstantMs = builder.snapshotInstantMs;
+            this.backupPathPrefix = builder.backupPathPrefix;
+            this.snapshotTag = builder.snapshotTag;
         }
 
         public int getVersion() { return version; }
@@ -120,6 +142,17 @@ public class BackupManifest {
             this.backupIdentifier = backupIdentifier;
         }
 
+        public long getSnapshotInstantMs() { return snapshotInstantMs; }
+        public void setSnapshotInstantMs(long snapshotInstantMs) {
+            this.snapshotInstantMs = snapshotInstantMs;
+        }
+
+        public String getBackupPathPrefix() { return backupPathPrefix; }
+        public void setBackupPathPrefix(String backupPathPrefix) { this.backupPathPrefix = backupPathPrefix; }
+
+        public String getSnapshotTag() { return snapshotTag; }
+        public void setSnapshotTag(String snapshotTag) { this.snapshotTag = snapshotTag; }
+
         public static Builder builder() {
             return new Builder();
         }
@@ -130,6 +163,9 @@ public class BackupManifest {
             private String region;
             private String rack;
             private List<String> backupIdentifier = new ArrayList<>();
+            private long snapshotInstantMs;
+            private String backupPathPrefix;
+            private String snapshotTag;
 
             public Builder version(int version) {
                 this.version = version;
@@ -158,6 +194,21 @@ public class BackupManifest {
 
             public Builder addBackupIdentifier(String identifier) {
                 this.backupIdentifier.add(identifier);
+                return this;
+            }
+
+            public Builder snapshotInstantMs(long snapshotInstantMs) {
+                this.snapshotInstantMs = snapshotInstantMs;
+                return this;
+            }
+
+            public Builder backupPathPrefix(String backupPathPrefix) {
+                this.backupPathPrefix = backupPathPrefix;
+                return this;
+            }
+
+            public Builder snapshotTag(String snapshotTag) {
+                this.snapshotTag = snapshotTag;
                 return this;
             }
 
@@ -295,7 +346,12 @@ public class BackupManifest {
         private String compression;
         private String encryption;
 
-        @JsonProperty("isUploaded")
+        // Annotated on getter+setter, not the field, so Jackson exposes a single
+        // "isUploaded" property — matching Priam's FileUploadResult JSON shape (it uses
+        // a getIsUploaded() / setUploaded() pair, which Gson serializes as "isUploaded").
+        // Without this, Jackson auto-discovers two properties: "isUploaded" from the
+        // annotated field and "uploaded" from the is-prefix-stripped getter+setter pair,
+        // duplicating the key in the JSON output.
         private boolean isUploaded;
 
         private String backupPath;
@@ -342,7 +398,10 @@ public class BackupManifest {
             this.encryption = encryption;
         }
 
+        @JsonProperty("isUploaded")
         public boolean isUploaded() { return isUploaded; }
+
+        @JsonProperty("isUploaded")
         public void setUploaded(boolean uploaded) { isUploaded = uploaded; }
 
         public String getBackupPath() { return backupPath; }

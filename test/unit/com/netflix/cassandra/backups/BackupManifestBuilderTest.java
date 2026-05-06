@@ -34,6 +34,7 @@ import org.apache.cassandra.db.Directories;
 import org.apache.cassandra.db.SystemKeyspace;
 import org.apache.cassandra.io.sstable.format.SSTableReader;
 import org.apache.cassandra.io.util.File;
+import org.apache.cassandra.service.snapshot.TableSnapshot;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -80,23 +81,29 @@ public class BackupManifestBuilderTest extends CQLTester
         assertFalse("need at least one SSTable to test", sstables.isEmpty());
 
         String tag = "manifest_test_" + System.nanoTime();
-        cfs.snapshotWithoutMemtable(tag);
+        TableSnapshot snapshot = cfs.snapshotWithoutMemtable(tag);
 
         SSTableReader first = sstables.iterator().next();
-        File snapshotDir = Directories.getSnapshotDirectory(first.descriptor, tag);
+        File datadir = Directories.getSnapshotDirectory(first.descriptor, tag)
+                                  .parent().parent().parent().parent();
 
         Instant snapshotInstant = Instant.ofEpochMilli(1775754001000L);
-        BackupManifestBuilder.build(sstables, ctx, snapshotInstant, cfs.metadata(), snapshotDir);
+        BackupManifestBuilder builder = new BackupManifestBuilder(tag, snapshotInstant, ctx, datadir);
+        builder.accept(snapshot);
+        builder.write();
 
-        File manifestFile = new File(snapshotDir, BackupManifestBuilder.MANIFEST_FILENAME);
-        assertTrue("manifest not written", manifestFile.exists());
+        File manifestFile = new File(new File(datadir, BackupManifestBuilder.MANIFESTS_DIRNAME), tag + ".json");
+        assertTrue("manifest not written: " + manifestFile, manifestFile.exists());
 
         BackupManifest manifest = MAPPER.readValue(manifestFile.toJavaIOFile(), BackupManifest.class);
         assertNotNull(manifest.getInfo());
+        assertEquals(tag, manifest.getInfo().getSnapshotTag());
         assertEquals(1, manifest.getInfo().getVersion());
         assertEquals("cass_test_app", manifest.getInfo().getAppName());
         assertEquals("us-east-1", manifest.getInfo().getRegion());
         assertEquals(Collections.singletonList("-100"), manifest.getInfo().getBackupIdentifier());
+        assertEquals(1775754001000L, manifest.getInfo().getSnapshotInstantMs());
+        assertEquals(ctx.prefix() + "/-100", manifest.getInfo().getBackupPathPrefix());
 
         assertEquals(1, manifest.getData().size());
         BackupManifest.Data data = manifest.getData().get(0);
@@ -104,7 +111,16 @@ public class BackupManifestBuilderTest extends CQLTester
         assertEquals(cfs.name, data.getColumnfamilyName());
 
         Collection<BackupManifest.BackupSSTable> sstableEntries = data.getSstables();
-        assertEquals(sstables.size(), sstableEntries.size());
+        // One group for the SSTable's nb-1-big prefix, plus one each for the sidecars
+        // Cassandra writes alongside (manifest.json, schema.cql) — both uploaded under
+        // the SST_V2 layout with prefix = filename-without-extension.
+        java.util.Set<String> prefixes = sstableEntries.stream()
+                                                      .map(BackupManifest.BackupSSTable::getPrefix)
+                                                      .collect(java.util.stream.Collectors.toSet());
+        assertTrue("expected SSTable group: " + prefixes,
+                   prefixes.stream().anyMatch(p -> p.startsWith("nb-")));
+        assertTrue("expected manifest sidecar: " + prefixes, prefixes.contains("manifest"));
+        assertTrue("expected schema sidecar: " + prefixes, prefixes.contains("schema"));
 
         String cfSegment = cfs.name + '-' + cfs.metadata().id.toHexString();
         for (BackupManifest.BackupSSTable entry : sstableEntries)
@@ -130,6 +146,93 @@ public class BackupManifestBuilderTest extends CQLTester
     }
 
     @Test
+    public void multiTableSnapshotProducesOneManifestWithAllCfsAndSidecars() throws Throwable
+    {
+        String table1 = createTable("CREATE TABLE %s (id int PRIMARY KEY, v int)");
+        String table2 = createTable("CREATE TABLE %s (id int PRIMARY KEY, v int)");
+        execute(String.format("INSERT INTO %s.%s (id, v) VALUES (1, 1)", KEYSPACE, table1));
+        execute(String.format("INSERT INTO %s.%s (id, v) VALUES (2, 2)", KEYSPACE, table2));
+
+        ColumnFamilyStore cfs1 = getColumnFamilyStore(KEYSPACE, table1);
+        ColumnFamilyStore cfs2 = getColumnFamilyStore(KEYSPACE, table2);
+        cfs1.forceBlockingFlush(ColumnFamilyStore.FlushReason.UNIT_TESTS);
+        cfs2.forceBlockingFlush(ColumnFamilyStore.FlushReason.UNIT_TESTS);
+
+        String tag = "multi_table_snap_" + System.nanoTime();
+        Instant snapshotInstant = Instant.ofEpochMilli(1777978801000L);
+        BackupManifestBuilder builder = new BackupManifestBuilder(tag, snapshotInstant, ctx, datadir(cfs1));
+
+        // Mirror StorageService's threading: feed each per-CF TableSnapshot to the same builder.
+        cfs1.snapshotWithoutMemtable(tag, null, false, null, null, snapshotInstant, builder);
+        cfs2.snapshotWithoutMemtable(tag, null, false, null, null, snapshotInstant, builder);
+        builder.write();
+
+        File manifestFile = new File(new File(datadir(cfs1), BackupManifestBuilder.MANIFESTS_DIRNAME), tag + ".json");
+        assertTrue("manifest not written: " + manifestFile, manifestFile.exists());
+        BackupManifest manifest = MAPPER.readValue(manifestFile.toJavaIOFile(), BackupManifest.class);
+
+        // Top-level fields.
+        assertEquals(tag, manifest.getInfo().getSnapshotTag());
+        assertEquals(ctx.prefix() + "/-100", manifest.getInfo().getBackupPathPrefix());
+        assertEquals(1777978801000L, manifest.getInfo().getSnapshotInstantMs());
+        assertEquals("cass_test_app", manifest.getInfo().getAppName());
+        assertEquals("us-east-1", manifest.getInfo().getRegion());
+
+        // Both CFs should appear, each with the full sidecar set.
+        assertEquals(2, manifest.getData().size());
+        for (String table : new String[] { table1, table2 })
+        {
+            BackupManifest.Data data = manifest.getData().stream()
+                    .filter(d -> table.equals(d.getColumnfamilyName()))
+                    .findFirst()
+                    .orElseThrow(() -> new AssertionError("missing CF " + table + " in manifest"));
+            assertEquals(KEYSPACE, data.getKeyspaceName());
+
+            Set<String> prefixes = new HashSet<>();
+            for (BackupManifest.BackupSSTable sst : data.getSstables())
+                prefixes.add(sst.getPrefix());
+
+            assertTrue("expected SSTable group for " + table + ": " + prefixes,
+                       prefixes.stream().anyMatch(p -> p.startsWith("nb-")));
+            assertTrue("expected manifest sidecar for " + table + ": " + prefixes, prefixes.contains("manifest"));
+            assertTrue("expected schema sidecar for " + table + ": " + prefixes, prefixes.contains("schema"));
+
+            // Spot-check the sidecar paths and required component fields.
+            BackupManifest.BackupSSTableComponent manifestSidecar = onlyComponentOf(data, "manifest");
+            assertEquals("manifest.json", manifestSidecar.getFileName());
+            assertEquals("NONE", manifestSidecar.getCompression());
+            assertEquals("PLAINTEXT", manifestSidecar.getEncryption());
+            assertFalse(manifestSidecar.isUploaded());
+            assertTrue("manifest.json size should be > 0", manifestSidecar.getFileSizeOnDisk() > 0);
+            assertTrue("sidecar backupPath must be SST_V2 with the snapshot ts: " + manifestSidecar.getBackupPath(),
+                       manifestSidecar.getBackupPath().contains("/SST_V2/1777978801000/" + KEYSPACE + "/"));
+            assertTrue("sidecar backupPath must end with the file name: " + manifestSidecar.getBackupPath(),
+                       manifestSidecar.getBackupPath().endsWith("/manifest.json"));
+
+            BackupManifest.BackupSSTableComponent schemaSidecar = onlyComponentOf(data, "schema");
+            assertEquals("schema.cql", schemaSidecar.getFileName());
+            assertTrue(schemaSidecar.getBackupPath().endsWith("/schema.cql"));
+        }
+    }
+
+    private static File datadir(ColumnFamilyStore cfs)
+    {
+        // .../data/<ks>/<cf-uuid>/ → ascend to the data directory root.
+        return cfs.getDirectories().getCFDirectories().get(0).parent().parent();
+    }
+
+    private static BackupManifest.BackupSSTableComponent onlyComponentOf(BackupManifest.Data data, String prefix)
+    {
+        BackupManifest.BackupSSTable group = data.getSstables().stream()
+                .filter(s -> prefix.equals(s.getPrefix()))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("no group with prefix=" + prefix));
+        assertEquals("expected exactly one component for sidecar prefix=" + prefix,
+                     1, group.getSstableComponents().size());
+        return group.getSstableComponents().get(0);
+    }
+
+    @Test
     public void reusesBackupTimestampAcrossCalls() throws Throwable
     {
         createTable("CREATE TABLE %s (id int PRIMARY KEY, v int)");
@@ -143,15 +246,19 @@ public class BackupManifestBuilderTest extends CQLTester
 
         String tagA = "reuse_a_" + System.nanoTime();
         String tagB = "reuse_b_" + System.nanoTime();
-        cfs.snapshotWithoutMemtable(tagA);
-        cfs.snapshotWithoutMemtable(tagB);
+        TableSnapshot snapA = cfs.snapshotWithoutMemtable(tagA);
+        TableSnapshot snapB = cfs.snapshotWithoutMemtable(tagB);
 
-        File dirA = Directories.getSnapshotDirectory(reader.descriptor, tagA);
-        File dirB = Directories.getSnapshotDirectory(reader.descriptor, tagB);
+        File datadir = Directories.getSnapshotDirectory(reader.descriptor, tagA)
+                                  .parent().parent().parent().parent();
 
-        BackupManifestBuilder.build(sstables, ctx, Instant.ofEpochMilli(1_000_000L), cfs.metadata(), dirA);
+        BackupManifestBuilder builderA = new BackupManifestBuilder(tagA, Instant.ofEpochMilli(1_000_000L), ctx, datadir);
+        builderA.accept(snapA);
+        builderA.write();
         // A later snapshot with a different candidate must not change the stored timestamp
-        BackupManifestBuilder.build(sstables, ctx, Instant.ofEpochMilli(9_000_000L), cfs.metadata(), dirB);
+        BackupManifestBuilder builderB = new BackupManifestBuilder(tagB, Instant.ofEpochMilli(9_000_000L), ctx, datadir);
+        builderB.accept(snapB);
+        builderB.write();
 
         long stored = SystemKeyspace.getOrAssignBackupTimestamp(cfs.keyspace.getName(),
                                                                 cfs.name,
@@ -159,14 +266,13 @@ public class BackupManifestBuilderTest extends CQLTester
                                                                 -1L);
         assertEquals("first candidate should stick", 1_000_000L, stored);
 
-        BackupManifest manifestB = MAPPER.readValue(new File(dirB, BackupManifestBuilder.MANIFEST_FILENAME).toJavaIOFile(),
-                                                    BackupManifest.class);
-        BackupManifest.BackupSSTableComponent component = manifestB.getData()
-                                                                   .get(0)
-                                                                   .getSstables()
-                                                                   .get(0)
-                                                                   .getSstableComponents()
-                                                                   .get(0);
+        File manifestFileB = new File(new File(datadir, BackupManifestBuilder.MANIFESTS_DIRNAME), tagB + ".json");
+        BackupManifest manifestB = MAPPER.readValue(manifestFileB.toJavaIOFile(), BackupManifest.class);
+        BackupManifest.BackupSSTable sstableEntry = manifestB.getData().get(0).getSstables().stream()
+                .filter(s -> s.getPrefix().startsWith("nb-"))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("no SSTable group in manifest B"));
+        BackupManifest.BackupSSTableComponent component = sstableEntry.getSstableComponents().get(0);
         assertTrue("manifest B must still reference the original backup_ts in path: " + component.getBackupPath(),
                    component.getBackupPath().contains("/SST_V2/1000000/"));
     }

@@ -20,13 +20,14 @@ package com.netflix.cassandra.backups;
 
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.time.Instant;
-import java.util.Collection;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -35,123 +36,169 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.netflix.cassandra.metrics.BackupMetrics;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.db.SystemKeyspace;
-import org.apache.cassandra.io.sstable.Component;
-import org.apache.cassandra.io.sstable.format.SSTableReader;
+import org.apache.cassandra.io.sstable.Descriptor;
 import org.apache.cassandra.io.util.File;
 import org.apache.cassandra.locator.IEndpointSnitch;
-import org.apache.cassandra.schema.TableMetadata;
+import org.apache.cassandra.schema.TableId;
+import org.apache.cassandra.service.snapshot.TableSnapshot;
 import org.apache.cassandra.utils.Clock;
 
 /**
- * Builds the {@link BackupManifest} JSON written alongside each Cassandra snapshot,
- * to be consumed by Priam (Netflix's Cassandra backup sidecar) when uploading to S3.
+ * Builds the {@link BackupManifest} JSON for one Cassandra snapshot run, to be consumed by
+ * the ods-java-data-tools upload tool
+ * (<a href="https://github.netflix.net/corp/ods-java-data-tools">github.netflix.net/corp/ods-java-data-tools</a>,
+ * see {@code com.netflix.ods.lib.conf.api.backup.Uploader}). One instance covers all
+ * column families snapshotted under a single tag: the snapshot coordinator (e.g.
+ * {@code StorageService.takeSnapshot}) creates a builder when {@code --netflix-manifest} is
+ * in play, passes it as the {@code Consumer<TableSnapshot>} threaded through per-CF
+ * snapshots, and calls {@link #write()} once everything's done.
  *
- * <p>Priam lays each node's data out in S3 under:
- * <pre>
- *   s3://{region}-cass-{env}-1/{env}_backup/{hashCode(app) % 10000}_{app}/{token}/
- *       META_V2/{ts}/{NONE|SNAPPY}/PLAINTEXT/meta_v2_{YYYYMMDDHHMM}.json
- *       SST_V2/{ts}/{keyspace}/{cf}-{uuid}/{NONE|SNAPPY}/PLAINTEXT/{component-file}
- *       SECONDARY_INDEX_V2/{ts}/{keyspace}/{cf}-{uuid}/.{idx}_idx/{NONE|SNAPPY}/PLAINTEXT/{component-file}
- * </pre>
- * {@code PLAINTEXT} is a legacy encryption marker from when backups were dual-written
- * to GCS (the alternative {@code PGP} is deprecated). SSTable objects are immutable
- * across backups, so a single meta_v2.json may reference components scattered across
- * multiple timestamp prefixes. The per-CF manifest produced here mirrors the SST_V2
- * layout for the components captured in this snapshot.
+ * <p>If any per-CF snapshot throws before {@code write()} is called, the manifest is never
+ * persisted and the upload tool sees nothing in {@code <datadir>/backup_manifests/} for
+ * this tag — partial backups can't be uploaded.
  *
- * @see <a href="https://docs.google.com/document/d/1eqnEr4DUW3CWVQrBO6umWesWwxU2N_uqM84XjKieNeY/edit?tab=t.0#heading=h.4uv0cwuufztl">Netflix Cassandra Backup Structure</a>
+ * <p>SSTable component info comes from filesystem walks of the snapshot directories;
+ * {@link Descriptor#fromFilenameWithComponent(File)} parses each component file back to its
+ * {@code (Descriptor, Component)} pair. No live {@code SSTableReader}s are referenced.
  */
-public class BackupManifestBuilder
+public final class BackupManifestBuilder implements Consumer<TableSnapshot>
 {
     private static final Logger logger = LoggerFactory.getLogger(BackupManifestBuilder.class);
     private static final ObjectMapper mapper = new ObjectMapper();
 
-    public static final String MANIFEST_FILENAME = "backup_manifest.json";
+    public static final String MANIFESTS_DIRNAME = "backup_manifests";
     public static final String COMPRESSION = "NONE";
     public static final String ENCRYPTION = "PLAINTEXT";
 
+    private final String snapshotTag;
+    private final long candidateBackupTs;
+    private final BackupContext ctx;
+    private final File datadir;
+    private final BackupManifest.Builder manifestBuilder;
+    /** Construction time, so the build-time metric covers per-CF assembly + final write. */
+    private final long startNanos;
+
     /**
-     * Builds a {@link BackupManifest} for the given set of snapshotted SSTables
-     * and writes it to {@code snapshotDir/backup_manifest.json}.
-     *
-     * @param sstables        readers that were included in the snapshot
-     * @param ctx             backup context (env, region, app, token)
-     * @param snapshotInstant the snapshot creation instant; the millis value
-     *                        is the candidate backup_timestamp for any newly
-     *                        tracked SSTable
-     * @param metadata        table metadata; id is used to build the {@code cf-uuid}
-     *                        folder segment
-     * @param snapshotDir     the snapshot directory; the manifest is written here
+     * Returns a fresh builder for one snapshot run, or {@code null} if either the caller
+     * didn't request a Netflix manifest or {@link BackupContext#isValid()} is false.
+     * The builder writes to {@code <first datadir>/backup_manifests/<snapshotTag>.json}.
      */
-    public static void build(Collection<SSTableReader> sstables,
-                             BackupContext ctx,
-                             Instant snapshotInstant,
-                             TableMetadata metadata,
-                             File snapshotDir) throws IOException
+    public static BackupManifestBuilder tryCreate(String snapshotTag, Instant snapshotInstant, boolean enabled)
     {
-        long startNanos = Clock.Global.nanoTime();
-        BackupManifest manifest = assemble(sstables, ctx, snapshotInstant, metadata, snapshotDir);
-        File manifestFile = new File(snapshotDir, MANIFEST_FILENAME);
-        mapper.writerWithDefaultPrettyPrinter()
-              .writeValue(manifestFile.toJavaIOFile(), manifest);
+        if (!enabled) return null;
+        BackupContext ctx = BackupUtils.getBackupContext();
+        if (!ctx.isValid())
+        {
+            // Misconfiguration: caller wanted a Netflix manifest but the env can't supply one.
+            // Don't break the snapshot — just make sure the operator notices.
+            logger.error("Skipping Netflix backup manifest for snapshot {}: BackupContext not valid", snapshotTag);
+            return null;
+        }
+        // TODO: multi-datadir — manifests for now live under the first datadir's backup_manifests/.
+        File datadir = new File(DatabaseDescriptor.getAllDataFileLocations()[0]);
+        return new BackupManifestBuilder(snapshotTag, snapshotInstant, ctx, datadir);
+    }
+
+    BackupManifestBuilder(String snapshotTag, Instant snapshotInstant, BackupContext ctx, File datadir)
+    {
+        this.snapshotTag = snapshotTag;
+        this.candidateBackupTs = snapshotInstant.toEpochMilli();
+        this.ctx = ctx;
+        this.datadir = datadir;
+        this.startNanos = Clock.Global.nanoTime();
+        // backupPathPrefix and snapshotTag live INSIDE info so the manifest parses cleanly
+        // through Priam's MetaFileReader (its top-level switch trips on unknown field names,
+        // but Gson silently ignores unknown fields inside Info).
+        this.manifestBuilder = BackupManifest.builder()
+                .info(BackupManifest.Info.builder()
+                              .version(1)
+                              .appName(ctx.app())
+                              .region(ctx.region())
+                              .rack(availabilityZoneOrNull(ctx.region()))
+                              .backupIdentifier(Collections.singletonList(ctx.token()))
+                              .snapshotInstantMs(candidateBackupTs)
+                              .backupPathPrefix(ctx.prefix() + '/' + ctx.token())
+                              .snapshotTag(snapshotTag)
+                              .build());
+    }
+
+    /** Append one CF's contribution to the in-progress manifest. */
+    @Override
+    public void accept(TableSnapshot snapshot)
+    {
+        manifestBuilder.addData(assembleData(snapshot));
+    }
+
+    /** Atomically write {@code <datadir>/backup_manifests/<snapshotTag>.json}. */
+    public void write() throws IOException
+    {
+        BackupManifest manifest = manifestBuilder.build();
+
+        File manifestsDir = new File(datadir, MANIFESTS_DIRNAME);
+        Files.createDirectories(manifestsDir.toPath());
+
+        File manifestFile = new File(manifestsDir, snapshotTag + ".json");
+        File tmpFile = new File(manifestsDir, snapshotTag + ".json.tmp");
+        try
+        {
+            mapper.writerWithDefaultPrettyPrinter()
+                  .writeValue(tmpFile.toJavaIOFile(), manifest);
+            Files.move(tmpFile.toPath(), manifestFile.toPath(),
+                       StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+        }
+        finally
+        {
+            // ATOMIC_MOVE leaves no tmp on success; on failure we don't want a stale .tmp lingering.
+            Files.deleteIfExists(tmpFile.toPath());
+        }
+
         BackupMetrics.backupManifestBuildTimeMs.update(TimeUnit.NANOSECONDS.toMillis(Clock.Global.nanoTime() - startNanos));
         BackupMetrics.componentsPerBackupManifest.update(countComponents(manifest));
-        logger.debug("Wrote Netflix backup manifest {}", manifestFile);
+        logger.info("Wrote Netflix backup manifest {}", manifestFile);
     }
 
-    private static int countComponents(BackupManifest manifest)
+    private BackupManifest.Data assembleData(TableSnapshot snapshot)
     {
-        int total = 0;
-        for (BackupManifest.Data data : manifest.getData())
-            for (BackupManifest.BackupSSTable sstable : data.getSstables())
-                total += sstable.getSstableComponents().size();
-        return total;
-    }
-
-    static BackupManifest assemble(Collection<SSTableReader> sstables,
-                                   BackupContext ctx,
-                                   Instant snapshotInstant,
-                                   TableMetadata metadata,
-                                   File snapshotDir)
-    {
-        String keyspace = metadata.keyspace;
-        String cfWithUuid = metadata.name + '-' + metadata.id.toHexString();
-        long candidateBackupTs = snapshotInstant.toEpochMilli();
+        String keyspace = snapshot.getKeyspaceName();
+        String cfName = snapshot.getTableName();
+        String cfWithUuid = cfName + '-' + TableId.fromUUID(snapshot.getTableId()).toHexString();
 
         Map<String, BackupManifest.BackupSSTable.Builder> byPrefix = new LinkedHashMap<>();
 
-        for (SSTableReader sstable : sstables)
+        for (File snapshotDir : snapshot.getDirectories())
         {
-            if (!metadata.keyspace.equals(sstable.descriptor.ksname)
-                || !metadata.name.equals(sstable.descriptor.cfname))
+            File[] entries = snapshotDir.tryList();
+            if (entries == null) continue;
+            for (File componentFile : entries)
             {
-                // snapshot can include sibling CFS (indexes); manifest is per-CF
-                continue;
-            }
+                if (!componentFile.isFile()) continue;
+                String fileName = componentFile.name();
 
-            String generationId = sstable.descriptor.id.toString();
-            String prefix = sstable.descriptor.version
-                            + "-" + generationId
-                            + "-" + sstable.descriptor.formatType.name;
-
-            long backupTs = SystemKeyspace.getOrAssignBackupTimestamp(keyspace,
-                                                                     metadata.name,
-                                                                     generationId,
-                                                                     candidateBackupTs);
-
-            BackupManifest.BackupSSTable.Builder sstableBuilder =
-                byPrefix.computeIfAbsent(prefix,
-                                         p -> BackupManifest.BackupSSTable.builder().prefix(p));
-
-            for (Component component : sstable.getComponents())
-            {
-                String fileName = sstable.descriptor.version
-                                  + "-" + generationId
-                                  + "-" + sstable.descriptor.formatType.name
-                                  + "-" + component.name();
-                File componentFile = new File(snapshotDir, fileName);
-                if (!componentFile.exists())
-                    continue;
+                // SSTable components parse via Descriptor; sidecars (manifest.json,
+                // schema.cql, ephemeral markers) get a synthetic prefix from the
+                // filename and the candidate backup_ts — matches the Priam meta_v2
+                // shape, which uploads these as components with prefix=basename.
+                String prefix;
+                long backupTs;
+                try
+                {
+                    Descriptor descriptor = Descriptor.fromFilename(componentFile);
+                    if (!keyspace.equals(descriptor.ksname) || !cfName.equals(descriptor.cfname))
+                    {
+                        // sibling files from secondary indexes happen to live in subdirectories,
+                        // not this dir, so this is a defensive skip.
+                        continue;
+                    }
+                    String generationId = descriptor.id.toString();
+                    prefix = descriptor.version + "-" + generationId + "-" + descriptor.formatType.name;
+                    backupTs = SystemKeyspace.getOrAssignBackupTimestamp(keyspace, cfName, generationId, candidateBackupTs);
+                }
+                catch (IllegalArgumentException notAnSSTable)
+                {
+                    int dot = fileName.lastIndexOf('.');
+                    prefix = dot < 0 ? fileName : fileName.substring(0, dot);
+                    backupTs = candidateBackupTs;
+                }
 
                 String backupPath = ctx.sstableComponentPath(backupTs,
                                                              keyspace,
@@ -175,30 +222,29 @@ public class BackupManifestBuilder
                                   .isUploaded(false)
                                   .backupPath(backupPath)
                                   .build();
-                sstableBuilder.addSstableComponent(componentEntry);
+
+                byPrefix.computeIfAbsent(prefix, p -> BackupManifest.BackupSSTable.builder().prefix(p))
+                        .addSstableComponent(componentEntry);
             }
         }
 
         BackupManifest.Data.Builder dataBuilder =
             BackupManifest.Data.builder()
                           .keyspaceName(keyspace)
-                          .columnfamilyName(metadata.name);
+                          .columnfamilyName(cfName);
         for (BackupManifest.BackupSSTable.Builder sstableBuilder : byPrefix.values())
             dataBuilder.addSstable(sstableBuilder.build());
 
-        BackupManifest.Info info =
-            BackupManifest.Info.builder()
-                          .version(1)
-                          .appName(ctx.app())
-                          .region(ctx.region())
-                          .rack(availabilityZoneOrNull(ctx.region()))
-                          .backupIdentifier(Collections.singletonList(ctx.token()))
-                          .build();
+        return dataBuilder.build();
+    }
 
-        return BackupManifest.builder()
-                             .info(info)
-                             .addData(dataBuilder.build())
-                             .build();
+    private static int countComponents(BackupManifest manifest)
+    {
+        int total = 0;
+        for (BackupManifest.Data data : manifest.getData())
+            for (BackupManifest.BackupSSTable sstable : data.getSstables())
+                total += sstable.getSstableComponents().size();
+        return total;
     }
 
     private static long readCreationTime(File file, long fallbackMillis)
@@ -215,11 +261,10 @@ public class BackupManifestBuilder
     }
 
     /**
-     * Reconstruct the full AWS availability zone (e.g. "us-east-1a") from the
-     * AWS region and the snitch's local rack. The Netflix snitch uses legacy
-     * naming where the rack is just the last "<digit><letter>" segment of the
-     * AZ; {@link #composeAz} combines it with the region (minus its trailing
-     * digits) to recover the original AZ.
+     * Reconstruct the full AWS availability zone (e.g. "us-east-1a") from the AWS region
+     * and the snitch's local rack. The Netflix snitch uses legacy naming where the rack
+     * is just the last "<digit><letter>" segment of the AZ; {@link #composeAz} combines
+     * it with the region (minus its trailing digits) to recover the original AZ.
      */
     static String availabilityZoneOrNull(String region)
     {
