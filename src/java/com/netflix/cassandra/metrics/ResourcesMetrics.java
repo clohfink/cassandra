@@ -48,9 +48,15 @@ public class ResourcesMetrics
     private static final MetricNameFactory factory = new DefaultNameFactory("Resources");
     private static final String SCHEDSTAT = System.getProperty("cassandra.schedstat_file", "/proc/schedstat");
     private static final String PSI = System.getProperty("cassandra.pressure_dir", "/proc/pressure");
-    // Why /mnt? We want to measure the entire volume that data is stored on— not just the data directory
-    // /mnt should point to that device, independent of ephemeral vs. EBS.
-    private static final String DISK_USAGE_ROOT = System.getProperty("cassandra.disk_usage_root", "/mnt");
+    // Measure the volume Cassandra writes data to. On instance-store AMIs the ephemeral
+    // disk is mounted at /mnt, so /mnt was historically the data volume. On Netflix's
+    // EBS AMIs the EBS volume is mounted at /mnt/data/cassandra (so cassandra.yaml's
+    // data_file_directories=/mnt/data/cassandra/data stays portable across fleets), and
+    // /mnt itself is an unmounted directory on the root volume. Querying /mnt there
+    // returns root-volume stats, which is unrelated to data capacity. The path below
+    // resolves to the data filesystem on both layouts.
+    private static final String DISK_USAGE_ROOT =
+        System.getProperty("cassandra.disk_usage_root", "/mnt/data/cassandra/data");
     public static final SchedStatReader schedStatReader = new SchedStatReader(SCHEDSTAT);
     public static final PSIReader psiReader = new PSIReader(PSI);
     public static final Gauge<Long> schedulingDelay = Metrics.register(
