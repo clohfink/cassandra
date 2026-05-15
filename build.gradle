@@ -1,6 +1,6 @@
 buildscript {
     dependencies {
-        classpath 'com.gradleup.shadow:shadow-gradle-plugin:8.3.6'
+        classpath 'com.gradleup.shadow:shadow-gradle-plugin:8.3.9'
     }
 }
 
@@ -49,12 +49,12 @@ dependencies {
 }
 
 task unpackTarball(type: Copy, dependsOn: antartifacts) {
-    from tarTree("${buildDir}/${project.ext.cass_filename}")
-    into "${buildDir}/tarball"
+    from tarTree(layout.buildDirectory.file(project.ext.cass_filename).get().asFile)
+    into layout.buildDirectory.dir("tarball").get().asFile
 }
 
 task copyFromTarball(type: Copy, dependsOn: unpackTarball) {
-    from "${buildDir}/tarball/nf-cassandra-${project.ext.cass_version}"
+    from layout.buildDirectory.dir("tarball/nf-cassandra-${project.ext.cass_version}").get().asFile
     into "root/${project.ext.cass_home_dir}"
 
     exclude "javadoc/**"
@@ -64,7 +64,7 @@ task copyFromTarball(type: Copy, dependsOn: unpackTarball) {
 }
 
 task copyConfig(type: Copy, dependsOn: copyFromTarball) {
-    from "${buildDir}/tarball/nf-cassandra-${project.ext.cass_version}/conf"
+    from layout.buildDirectory.dir("tarball/nf-cassandra-${project.ext.cass_version}/conf").get().asFile
     into "root/etc/cassandra"
 
     rename('cassandra-topology.properties', 'cassandra-topology.properties.upstream')
@@ -81,7 +81,7 @@ buildDeb {
 }
 
 ospackage {
-    packageName project.ext.pname
+    packageName = project.ext.pname
     version = project.ext.cass_version
 
     println "Building deb for nf-cassandra ${version}"
@@ -192,7 +192,7 @@ tasks.register('buildDtestJar', JavaExec) {
     mainClass = 'org.apache.tools.ant.launch.Launcher'
     args = ['-f', file('build.xml').absolutePath, 'dtest-jar']
     workingDir projectDir
-    outputs.file(file("${buildDir}/dtest-${ant.properties['base.version']}.jar"))
+    outputs.file(layout.buildDirectory.file("dtest-${ant.properties['base.version']}.jar").get().asFile)
 
     doFirst {
         logger.lifecycle("buildDtestJar: Gradle home: ${gradleHome}")
@@ -207,12 +207,12 @@ tasks.register('buildDtestJar', JavaExec) {
 // Shade the dtest JAR to relocate the AWS SDK, avoiding classpath conflicts with consumers.
 tasks.register('shadeDtestJar', ShadowJar) {
     dependsOn 'buildDtestJar'
-    def dtestJar = file("${buildDir}/dtest-${ant.properties['base.version']}.jar")
+    def dtestJar = layout.buildDirectory.file("dtest-${ant.properties['base.version']}.jar").get().asFile
     from({ zipTree(dtestJar) })
     archiveBaseName = 'nfcassandra-jvm-dtest'
     archiveVersion = project.ext.dtestVersion
     archiveClassifier = ''
-    destinationDirectory = file("${buildDir}/dtest-shaded")
+    destinationDirectory = layout.buildDirectory.dir("dtest-shaded").get().asFile
 
     // Strip JAR signature files from bundled dependencies (e.g. ECJ's ECLIPSE_.SF/.RSA).
     // Shading invalidates signatures, and consumers loading the fat JAR via URLClassLoader
