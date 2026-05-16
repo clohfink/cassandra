@@ -150,7 +150,14 @@ public class BigTableZeroCopyWriter extends SSTable implements SSTableMultiWrite
     public Collection<SSTableReader> finished()
     {
         if (finalReader == null)
+        {
+            // Wire format omits TOC.txt; write it locally so snapshot createLinks
+            // hardlinks it and the on-disk layout matches flush/compaction output.
+            components.add(Component.TOC);
+            appendTOC(descriptor, components);
+
             finalReader = SSTableReader.open(descriptor, components, metadata);
+        }
 
         return ImmutableList.of(finalReader);
     }

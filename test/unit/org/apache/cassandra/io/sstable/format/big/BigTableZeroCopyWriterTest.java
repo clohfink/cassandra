@@ -25,6 +25,8 @@ import java.nio.channels.ClosedChannelException;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.Collection;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 import java.util.function.Function;
 
@@ -63,6 +65,7 @@ import org.apache.cassandra.utils.Pair;
 import static org.apache.cassandra.io.util.DataInputPlus.DataInputStreamPlus;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotEquals;
+import static org.junit.Assert.assertTrue;
 
 public class BigTableZeroCopyWriterTest
 {
@@ -144,6 +147,51 @@ public class BigTableZeroCopyWriterTest
         }
     }
 
+
+    @Test
+    public void finished_writesTocAndIncludesItInComponents() throws Exception
+    {
+        // Zero-copy streaming receives the wire components (DATA, PRIMARY_INDEX, STATS, etc.)
+        // but never TOC.txt. finished() should still write a local TOC.txt and include
+        // Component.TOC in the resulting SSTableReader's component set so snapshot
+        // createLinks hardlinks it and downstream tools see a complete on-disk layout.
+        File dir = store.getDirectories().getDirectoryForNewSSTables();
+        Descriptor desc = store.newSSTableDescriptor(dir);
+        TableMetadataRef metadata = Schema.instance.getTableMetadataRef(desc);
+
+        LifecycleTransaction txn = LifecycleTransaction.offline(OperationType.STREAM);
+        Set<Component> componentsToWrite = ImmutableSet.of(Component.DATA, Component.PRIMARY_INDEX,
+                                                           Component.STATS);
+        assertTrue("Precondition: streamed component set must not contain TOC",
+                   !componentsToWrite.contains(Component.TOC));
+
+        BigTableZeroCopyWriter btzcw = new BigTableZeroCopyWriter(desc, metadata, txn, componentsToWrite);
+        for (Component component : componentsToWrite)
+        {
+            if (Files.exists(Paths.get(desc.filenameFor(component))))
+            {
+                Pair<DataInputPlus, Long> pair = getSSTableComponentData(
+                    sstable, component, b -> new DataInputStreamPlus(new ByteArrayInputStream(b.array())));
+                btzcw.writeComponent(component.type, pair.left, pair.right);
+            }
+        }
+
+        Collection<SSTableReader> readers = btzcw.finish(true);
+        SSTableReader reader = readers.iterator().next();
+
+        File tocFile = new File(desc.filenameFor(Component.TOC));
+        assertTrue("TOC.txt should be written to disk by finished()", tocFile.exists());
+
+        assertTrue("SSTableReader.components should include TOC after finished()",
+                   reader.getComponents().contains(Component.TOC));
+
+        List<String> tocLines = Files.readAllLines(Paths.get(tocFile.absolutePath()));
+        Set<String> tocNames = new HashSet<>(tocLines);
+        assertTrue("TOC.txt should list TOC.txt itself", tocNames.contains(Component.TOC.name));
+        for (Component c : componentsToWrite)
+            assertTrue("TOC.txt should list streamed component " + c.name,
+                       tocNames.contains(c.name));
+    }
 
     private void writeDataTestCycle(Function<ByteBuffer, DataInputPlus> bufferMapper)
     {
