@@ -86,8 +86,11 @@ public final class BackupManifestBuilder implements Consumer<TableSnapshot>
 
     /**
      * Returns a fresh builder for one snapshot run, or {@code null} if either the caller
-     * didn't request a Netflix manifest or {@link BackupContext#isValid()} is false.
-     * The builder writes to {@code <first datadir>/backup_manifests/pending/<snapshotTag>.json}.
+     * didn't request a Netflix manifest or {@link BackupContext#isValid()} is false. The
+     * builder writes to {@code <data_file_directories[0]>/../backup_manifests/pending/<snapshotTag>.json}
+     * — i.e. {@code backup_manifests/} is a sibling of the Cassandra data directory, not
+     * a child of it. See {@code com.netflix.ods.lib.conf.api.backup.SourceDirectories} on
+     * the upload-tool side for the full layout.
      */
     public static BackupManifestBuilder tryCreate(String snapshotTag, Instant snapshotInstant, boolean enabled)
     {
@@ -100,9 +103,9 @@ public final class BackupManifestBuilder implements Consumer<TableSnapshot>
             logger.error("Skipping Netflix backup manifest for snapshot {}: BackupContext not valid", snapshotTag);
             return null;
         }
-        // TODO: multi-datadir — manifests for now live under the first datadir's backup_manifests/.
-        File datadir = new File(DatabaseDescriptor.getAllDataFileLocations()[0]);
-        return new BackupManifestBuilder(snapshotTag, snapshotInstant, ctx, datadir);
+        // TODO: multi-datadir — manifests for now live next to the first data_file_directory.
+        File manifestRoot = new File(DatabaseDescriptor.getAllDataFileLocations()[0]).parent();
+        return new BackupManifestBuilder(snapshotTag, snapshotInstant, ctx, manifestRoot);
     }
 
     BackupManifestBuilder(String snapshotTag, Instant snapshotInstant, BackupContext ctx, File datadir)

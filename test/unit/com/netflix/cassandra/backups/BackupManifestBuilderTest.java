@@ -84,15 +84,16 @@ public class BackupManifestBuilderTest extends CQLTester
         TableSnapshot snapshot = cfs.snapshotWithoutMemtable(tag);
 
         SSTableReader first = sstables.iterator().next();
-        File datadir = Directories.getSnapshotDirectory(first.descriptor, tag)
-                                  .parent().parent().parent().parent();
+        // .../data/<ks>/<cf-uuid>/snapshots/<tag>/ → ascend to parent of data dir.
+        File manifestRoot = Directories.getSnapshotDirectory(first.descriptor, tag)
+                                       .parent().parent().parent().parent().parent();
 
         Instant snapshotInstant = Instant.ofEpochMilli(1775754001000L);
-        BackupManifestBuilder builder = new BackupManifestBuilder(tag, snapshotInstant, ctx, datadir);
+        BackupManifestBuilder builder = new BackupManifestBuilder(tag, snapshotInstant, ctx, manifestRoot);
         builder.accept(snapshot);
         builder.write();
 
-        File manifestFile = pendingManifest(datadir, tag);
+        File manifestFile = pendingManifest(manifestRoot, tag);
         assertTrue("manifest not written: " + manifestFile, manifestFile.exists());
 
         BackupManifest manifest = MAPPER.readValue(manifestFile.toJavaIOFile(), BackupManifest.class);
@@ -160,14 +161,14 @@ public class BackupManifestBuilderTest extends CQLTester
 
         String tag = "multi_table_snap_" + System.nanoTime();
         Instant snapshotInstant = Instant.ofEpochMilli(1777978801000L);
-        BackupManifestBuilder builder = new BackupManifestBuilder(tag, snapshotInstant, ctx, datadir(cfs1));
+        BackupManifestBuilder builder = new BackupManifestBuilder(tag, snapshotInstant, ctx, manifestRoot(cfs1));
 
         // Mirror StorageService's threading: feed each per-CF TableSnapshot to the same builder.
         cfs1.snapshotWithoutMemtable(tag, null, false, null, null, snapshotInstant, builder);
         cfs2.snapshotWithoutMemtable(tag, null, false, null, null, snapshotInstant, builder);
         builder.write();
 
-        File manifestFile = pendingManifest(datadir(cfs1), tag);
+        File manifestFile = pendingManifest(manifestRoot(cfs1), tag);
         assertTrue("manifest not written: " + manifestFile, manifestFile.exists());
         BackupManifest manifest = MAPPER.readValue(manifestFile.toJavaIOFile(), BackupManifest.class);
 
@@ -222,10 +223,11 @@ public class BackupManifestBuilderTest extends CQLTester
                         tag + ".json");
     }
 
-    private static File datadir(ColumnFamilyStore cfs)
+    private static File manifestRoot(ColumnFamilyStore cfs)
     {
-        // .../data/<ks>/<cf-uuid>/ → ascend to the data directory root.
-        return cfs.getDirectories().getCFDirectories().get(0).parent().parent();
+        // .../data/<ks>/<cf-uuid>/ → ascend to the parent of the data directory; this is
+        // where backup_manifests/ lives (sibling of the Cassandra data dir).
+        return cfs.getDirectories().getCFDirectories().get(0).parent().parent().parent();
     }
 
     private static BackupManifest.BackupSSTableComponent onlyComponentOf(BackupManifest.Data data, String prefix)
@@ -256,14 +258,14 @@ public class BackupManifestBuilderTest extends CQLTester
         TableSnapshot snapA = cfs.snapshotWithoutMemtable(tagA);
         TableSnapshot snapB = cfs.snapshotWithoutMemtable(tagB);
 
-        File datadir = Directories.getSnapshotDirectory(reader.descriptor, tagA)
-                                  .parent().parent().parent().parent();
+        File manifestRoot = Directories.getSnapshotDirectory(reader.descriptor, tagA)
+                                       .parent().parent().parent().parent().parent();
 
-        BackupManifestBuilder builderA = new BackupManifestBuilder(tagA, Instant.ofEpochMilli(1_000_000L), ctx, datadir);
+        BackupManifestBuilder builderA = new BackupManifestBuilder(tagA, Instant.ofEpochMilli(1_000_000L), ctx, manifestRoot);
         builderA.accept(snapA);
         builderA.write();
         // A later snapshot with a different candidate must not change the stored timestamp
-        BackupManifestBuilder builderB = new BackupManifestBuilder(tagB, Instant.ofEpochMilli(9_000_000L), ctx, datadir);
+        BackupManifestBuilder builderB = new BackupManifestBuilder(tagB, Instant.ofEpochMilli(9_000_000L), ctx, manifestRoot);
         builderB.accept(snapB);
         builderB.write();
 
@@ -273,7 +275,7 @@ public class BackupManifestBuilderTest extends CQLTester
                                                                 -1L);
         assertEquals("first candidate should stick", 1_000_000L, stored);
 
-        File manifestFileB = pendingManifest(datadir, tagB);
+        File manifestFileB = pendingManifest(manifestRoot, tagB);
         BackupManifest manifestB = MAPPER.readValue(manifestFileB.toJavaIOFile(), BackupManifest.class);
         BackupManifest.BackupSSTable sstableEntry = manifestB.getData().get(0).getSstables().stream()
                 .filter(s -> s.getPrefix().startsWith("nb-"))

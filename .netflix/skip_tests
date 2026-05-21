@@ -9,6 +9,7 @@ MemtableSizeTest
 SASIIndexTest
 ConnectionTest
 BatchUpgradeTest
+CustomIndexTest
 # mixed mode tests fail because upstream org.apache.cassandra.distributed.shared.Versions
 CompactStorageColumnDeleteTest
 CompactStorageHiddenColumnTest
