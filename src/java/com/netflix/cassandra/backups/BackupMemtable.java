@@ -109,6 +109,8 @@ public class BackupMemtable implements Memtable
             }
             catch (Throwable t)
             {
+                logger.warn("BackupMemtable initialization failed for {}.{}",
+                            metadata().keyspace, metadata().name, t);
                 promise.setFailure(t);
                 scheduleRetry(retryDelayMs);
             }

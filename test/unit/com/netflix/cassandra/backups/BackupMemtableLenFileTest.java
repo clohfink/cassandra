@@ -29,6 +29,8 @@ import org.junit.rules.TemporaryFolder;
 import org.apache.cassandra.io.util.File;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 
 public class BackupMemtableLenFileTest
 {
@@ -111,5 +113,103 @@ public class BackupMemtableLenFileTest
     {
         Path file = writeRawLenFile(new byte[BackupMemtableContext.DataLengthFileSerializer.FILE_SIZE]);
         BackupMemtableContext.DataLengthFileSerializer.read(file.toString());
+    }
+
+    @Test
+    public void testWriteOverwritesExisting() throws IOException
+    {
+        File file = new File(tempFolder.newFile("overwrite.len"));
+        BackupMemtableContext.DataLengthFileSerializer.write(file, 111L);
+        BackupMemtableContext.DataLengthFileSerializer.write(file, 222L);
+        assertEquals(222L, BackupMemtableContext.DataLengthFileSerializer.read(file.path().toString()));
+    }
+
+    @Test
+    public void testWriteLeavesNoTmp() throws IOException
+    {
+        File file = new File(tempFolder.newFile("clean.len"));
+        BackupMemtableContext.DataLengthFileSerializer.write(file, 42L);
+        Path tmp = Path.of(file.path() + ".tmp");
+        assertFalse("write() should not leave a .tmp behind", Files.exists(tmp));
+    }
+
+    @Test
+    public void testReadOrDelete_ValidFileIsKept() throws IOException
+    {
+        File file = new File(tempFolder.newFile("valid-keep.len"));
+        BackupMemtableContext.DataLengthFileSerializer.write(file, 12345L);
+
+        long value = BackupMemtableContext.DataLengthFileSerializer.readOrDelete(file);
+
+        assertEquals(12345L, value);
+        assertTrue("Valid .len should not be deleted", file.exists());
+    }
+
+    @Test
+    public void testReadOrDelete_BadMagicIsDeleted() throws IOException
+    {
+        File file = new File(tempFolder.newFile("bad-magic.len"));
+        // 14 bytes but wrong magic — size check would pass but read() rejects
+        Files.write(file.toPath(), new byte[BackupMemtableContext.DataLengthFileSerializer.FILE_SIZE]);
+
+        try
+        {
+            BackupMemtableContext.DataLengthFileSerializer.readOrDelete(file);
+            org.junit.Assert.fail("Expected IOException");
+        }
+        catch (IOException expected) { /* expected */ }
+
+        assertFalse("Corrupt .len should be deleted on read failure", file.exists());
+    }
+
+    @Test
+    public void testReadOrDelete_BadChecksumIsDeleted() throws IOException
+    {
+        File file = new File(tempFolder.newFile("bad-crc.len"));
+        BackupMemtableContext.DataLengthFileSerializer.write(file, 5000000L);
+        // Flip the last CRC byte to corrupt the checksum
+        byte[] raw = Files.readAllBytes(file.toPath());
+        raw[raw.length - 1] ^= 1;
+        Files.write(file.toPath(), raw);
+
+        try
+        {
+            BackupMemtableContext.DataLengthFileSerializer.readOrDelete(file);
+            org.junit.Assert.fail("Expected IOException");
+        }
+        catch (IOException expected) { /* expected */ }
+
+        assertFalse("CRC-corrupt .len should be deleted", file.exists());
+    }
+
+    @Test
+    public void testReadOrDelete_TruncatedFileIsDeleted() throws IOException
+    {
+        File file = new File(tempFolder.newFile("truncated.len"));
+        Files.write(file.toPath(), new byte[] { 'D', 'L', 0, 0 });
+
+        try
+        {
+            BackupMemtableContext.DataLengthFileSerializer.readOrDelete(file);
+            org.junit.Assert.fail("Expected IOException");
+        }
+        catch (IOException expected) { /* expected */ }
+
+        assertFalse("Truncated .len should be deleted", file.exists());
+    }
+
+    @Test
+    public void testWriteReplacesStaleTmp() throws IOException
+    {
+        // Simulate a leftover .tmp from a previously interrupted write.
+        // The write should still succeed because it truncates the tmp before writing.
+        File file = new File(tempFolder.newFile("with-stale-tmp.len"));
+        Path tmp = Path.of(file.path() + ".tmp");
+        Files.write(tmp, new byte[] { 1, 2, 3 });
+
+        BackupMemtableContext.DataLengthFileSerializer.write(file, 7L);
+
+        assertEquals(7L, BackupMemtableContext.DataLengthFileSerializer.read(file.path().toString()));
+        assertFalse(Files.exists(tmp));
     }
 }

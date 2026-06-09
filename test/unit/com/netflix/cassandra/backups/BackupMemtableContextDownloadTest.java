@@ -454,6 +454,112 @@ public class BackupMemtableContextDownloadTest
         }
     }
 
+    // ---- .len file resilience tests ----
+
+    @Test
+    public void testDownload_TruncatedLenFile_IsRewritten() throws IOException
+    {
+        // Reproduces the production scenario: a 0-byte .len left behind by a crash
+        // mid-write. Pre-fix, exists() returned true and the corrupt file was kept,
+        // breaking later read() in ForS3.<init>.
+        BackupManifest.BackupSSTable sstable = buildSSTable("nb-1-big", allComponentSizes(64));
+        BackupDescriptor desc = makeDescriptor(sstable);
+
+        // Pre-create cached components so only the .len needs rewriting
+        for (Component comp : BackupMemtableContext.COMPONENTS_TO_DOWNLOAD)
+            createCachedFile(desc, comp, 64);
+        ensureDataFileInS3(desc);
+
+        // Put a 0-byte .len file in cache
+        Path lenFile = Path.of(desc.filenameFor(Component.DATA) + ".len");
+        Files.createDirectories(lenFile.getParent());
+        Files.write(lenFile, new byte[0]);
+
+        List<AsyncPromise<?>> downloads = ctx.downloadRequiredComponents(Collections.singletonList(desc));
+        ctx.waitForDownloads(downloads);
+
+        File lenAsFile = new File(lenFile);
+        assertTrue(".len file should exist after download", lenAsFile.exists());
+        assertEquals(".len file should be the expected size",
+                     BackupMemtableContext.DataLengthFileSerializer.FILE_SIZE,
+                     lenAsFile.length());
+        // The rewritten file should be readable as a valid 14-byte DL record
+        assertEquals(1024L, BackupMemtableContext.DataLengthFileSerializer.read(lenFile.toString()));
+    }
+
+    @Test
+    public void testDownload_WrongSizedLenFile_IsRewritten() throws IOException
+    {
+        // A .len file with a plausible but wrong length (not 14 bytes) should be
+        // treated as corrupt and rewritten.
+        BackupManifest.BackupSSTable sstable = buildSSTable("nb-1-big", allComponentSizes(64));
+        BackupDescriptor desc = makeDescriptor(sstable);
+
+        for (Component comp : BackupMemtableContext.COMPONENTS_TO_DOWNLOAD)
+            createCachedFile(desc, comp, 64);
+        ensureDataFileInS3(desc);
+
+        Path lenFile = Path.of(desc.filenameFor(Component.DATA) + ".len");
+        Files.createDirectories(lenFile.getParent());
+        // 7 bytes — half-written
+        Files.write(lenFile, new byte[] { 'D', 'L', 0, 0, 0, 0, 0 });
+
+        List<AsyncPromise<?>> downloads = ctx.downloadRequiredComponents(Collections.singletonList(desc));
+        ctx.waitForDownloads(downloads);
+
+        assertEquals(".len file should be the expected size after rewrite",
+                     BackupMemtableContext.DataLengthFileSerializer.FILE_SIZE,
+                     new File(lenFile).length());
+        assertEquals(1024L, BackupMemtableContext.DataLengthFileSerializer.read(lenFile.toString()));
+    }
+
+    @Test
+    public void testDownload_ValidLenFile_NotRewritten() throws IOException
+    {
+        // A pre-existing valid .len file should be left alone — no download queued.
+        BackupManifest.BackupSSTable sstable = buildSSTable("nb-1-big", allComponentSizes(64));
+        BackupDescriptor desc = makeDescriptor(sstable);
+
+        for (Component comp : BackupMemtableContext.COMPONENTS_TO_DOWNLOAD)
+            createCachedFile(desc, comp, 64);
+        ensureDataFileInS3(desc);
+
+        File lenFile = new File(desc.filenameFor(Component.DATA) + ".len");
+        BackupMemtableContext.DataLengthFileSerializer.write(lenFile, 9999L);
+
+        List<AsyncPromise<?>> downloads = ctx.downloadRequiredComponents(Collections.singletonList(desc));
+        ctx.waitForDownloads(downloads);
+
+        assertEquals("No downloads should be queued when caches are complete and valid",
+                     0, downloads.size());
+        assertEquals("Valid .len content should be preserved",
+                     9999L,
+                     BackupMemtableContext.DataLengthFileSerializer.read(lenFile.path().toString()));
+    }
+
+    @Test
+    public void testDownload_LeftoverLenTmpFile_CleanedUp() throws IOException
+    {
+        // A leftover .len.tmp from a previously interrupted write should be removed
+        // when downloadRequiredComponents runs, mirroring the component .tmp cleanup.
+        BackupManifest.BackupSSTable sstable = buildSSTable("nb-1-big", allComponentSizes(64));
+        BackupDescriptor desc = makeDescriptor(sstable);
+
+        for (Component comp : BackupMemtableContext.COMPONENTS_TO_DOWNLOAD)
+            createCachedFile(desc, comp, 64);
+        ensureDataFileInS3(desc);
+
+        Path lenTmp = Path.of(desc.filenameFor(Component.DATA) + ".len.tmp");
+        Files.createDirectories(lenTmp.getParent());
+        Files.write(lenTmp, new byte[] { 1, 2, 3 });
+        assertTrue(".len.tmp should exist before download", Files.exists(lenTmp));
+
+        List<AsyncPromise<?>> downloads = ctx.downloadRequiredComponents(Collections.singletonList(desc));
+        ctx.waitForDownloads(downloads);
+
+        assertFalse("Leftover .len.tmp should be cleaned up", Files.exists(lenTmp));
+    }
+
     @Test
     public void testValidateThenDownload_ManifestSizeMismatchInS3_StillDetected() throws IOException
     {

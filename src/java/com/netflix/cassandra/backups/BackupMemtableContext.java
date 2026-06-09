@@ -51,6 +51,7 @@ import org.apache.cassandra.io.sstable.metadata.StatsMetadata;
 import org.apache.cassandra.io.util.File;
 import org.apache.cassandra.io.util.FileHandle;
 import org.apache.cassandra.schema.TableMetadataRef;
+import org.apache.cassandra.utils.Hex;
 import org.apache.cassandra.utils.concurrent.AsyncPromise;
 import software.amazon.awssdk.services.s3.model.S3Exception;
 
@@ -335,6 +336,20 @@ class BackupMemtableContext implements Runnable
         }
     }
 
+    private static String readHexPrefix(File file, int maxBytes)
+    {
+        try
+        {
+            byte[] all = Files.readAllBytes(file.toPath());
+            int len = Math.min(all.length, maxBytes);
+            return Hex.bytesToHex(all, 0, len);
+        }
+        catch (IOException e)
+        {
+            return "<unreadable: " + e.getMessage() + '>';
+        }
+    }
+
     List<AsyncPromise<?>> downloadRequiredComponents(List<BackupDescriptor> allDescriptors)
     {
         List<AsyncPromise<?>> downloads = new ArrayList<>();
@@ -378,6 +393,16 @@ class BackupMemtableContext implements Runnable
 
             // Fetch and store Data file length
             File dataLenFile = new File(desc.filenameFor(Component.DATA) + ".len");
+            // Clean up any leftover temp from a previously interrupted .len write
+            deleteIfExists(new File(dataLenFile.path() + ".tmp"));
+            // Treat a wrong-sized .len as missing so a partial/truncated file gets rewritten
+            if (dataLenFile.exists() && dataLenFile.length() != DataLengthFileSerializer.FILE_SIZE)
+            {
+                logger.warn("Cached {} has size {} but expected {}, first bytes (hex): {}, deleting",
+                            dataLenFile, dataLenFile.length(), DataLengthFileSerializer.FILE_SIZE,
+                            readHexPrefix(dataLenFile, 32));
+                deleteIfExists(dataLenFile);
+            }
             if (!dataLenFile.exists())
             {
                 String dataKey = desc.s3KeyFor(Component.DATA);
@@ -509,7 +534,38 @@ class BackupMemtableContext implements Runnable
             for (int i = 0; i < Integer.BYTES; i++)
                 buf[off + i] = (byte) (crcVal >>> (24 - i * 8));
 
-            Files.write(file.toPath(), buf);
+            // Write atomically: a crash mid-write would otherwise leave a truncated file
+            // that downloadRequiredComponents skips (exists() is true) and read() then rejects.
+            File tmp = new File(file.path() + ".tmp");
+            try
+            {
+                Files.write(tmp.toPath(), buf);
+                tmp.move(file);
+            }
+            catch (IOException ex)
+            {
+                tmp.deleteIfExists();
+                throw ex;
+            }
+        }
+
+        /**
+         * Reads the .len file; on any read failure (truncation, bad magic, CRC mismatch),
+         * deletes the file so the next initialize() refetches a fresh one instead of
+         * failing identically on every retry. The original IOException is rethrown.
+         */
+        static long readOrDelete(File lenFile) throws IOException
+        {
+            try
+            {
+                return read(lenFile.path());
+            }
+            catch (IOException e)
+            {
+                try { lenFile.deleteIfExists(); }
+                catch (RuntimeException suppressed) { e.addSuppressed(suppressed); }
+                throw e;
+            }
         }
 
         static long read(String path) throws IOException
@@ -553,7 +609,8 @@ class BackupMemtableContext implements Runnable
 
             this.loadSummary();
             this.bf = this.loadBloomFilter();
-            long compressedDataLength = DataLengthFileSerializer.read(desc.filenameFor(Component.DATA) + ".len");
+            long compressedDataLength = DataLengthFileSerializer.readOrDelete(
+                new File(desc.filenameFor(Component.DATA) + ".len"));
 
             // Create and immediately close the builder after getting the FileHandle
             FileHandle.Builder ifileBuilder = new FileHandle.Builder(descriptor.filenameFor(Component.PRIMARY_INDEX));
