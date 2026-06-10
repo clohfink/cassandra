@@ -214,7 +214,9 @@ public class CassandraDaemon
     public CassandraDaemon(boolean runManaged)
     {
         this.runManaged = runManaged;
-        this.startupChecks = new StartupChecks().withDefaultTests().withTest(new FileSystemOwnershipCheck());
+        this.startupChecks = new StartupChecks().withDefaultTests()
+                                                .withTest(new FileSystemOwnershipCheck())
+                                                .withTest(new com.netflix.cassandra.startup.DataVolumeStartupCheck());
         this.setupCompleted = false;
     }
 

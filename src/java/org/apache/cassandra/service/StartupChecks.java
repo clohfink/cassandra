@@ -108,7 +108,10 @@ public class StartupChecks
         check_filesystem_ownership(true),
         check_dc,
         check_rack,
-        check_data_resurrection;
+        check_data_resurrection,
+        // Netflix-specific: verify data dirs are on a real data volume (>15GB)
+        // rather than the 12GB root volume. See DataVolumeStartupCheck.
+        check_data_volume_size;
 
         public final boolean disabledByDefault;
 
