@@ -105,8 +105,11 @@ public class DynamicHintsThrottleTest extends TestBaseImpl
 
             waitUntilAsserted(() -> assertThat(countRows(node2)).isEqualTo(NUM_ROWS));
 
-            long hintsSucceeded = getHintsSucceeded(node1);
-            assertThat(hintsSucceeded).isGreaterThanOrEqualTo(NUM_ROWS);
+            // The coordinator only marks hintsSucceeded after it has awaited the responses for an entire dispatched
+            // page (HintsDispatcher#sendHintsAndAwait), while countRows observes rows node2 has already applied
+            // locally. Because the injected failures force the page to be re-dispatched, the success metric lags row
+            // application on node2 -- poll until it catches up rather than reading it once.
+            waitUntilAsserted(() -> assertThat(getHintsSucceeded(node1)).isGreaterThanOrEqualTo(NUM_ROWS));
         }
     }
 
@@ -215,7 +218,10 @@ public class DynamicHintsThrottleTest extends TestBaseImpl
 
             assertThat(finalTimedOut).isGreaterThanOrEqualTo(NUM_FAILURES_PER_NODE * 2);
 
-            assertThat(finalSucceeded).isGreaterThanOrEqualTo(NUM_ROWS);
+            // Same race as testDynamicThrottleWithBacklog: hintsSucceeded is marked on the coordinator only after it
+            // awaits the re-dispatched page's responses, so it can still trail the rows already applied on node2/node3
+            // when countRows reports complete. Poll until it reaches NUM_ROWS rather than reading it once above.
+            waitUntilAsserted(() -> assertThat(getHintsSucceeded(node1)).isGreaterThanOrEqualTo(NUM_ROWS));
 
             assertThat(output).doesNotContain("No hint delivery metrics available");
         }
