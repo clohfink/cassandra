@@ -1,0 +1,372 @@
+Netflix changes to Apache Cassandra 4.1
+=======================================
+This file records the changes specific to Netflix's internal fork of Apache Cassandra 4.1.
+Upstream Apache Cassandra changes are tracked separately in CHANGES.txt.
+
+Entries are grouped under the internal release tag in which they first shipped, newest first.
+PR references (#NNN) point to pull requests in git.netflix.net/cde/nfcassandra.
+
+unreleased
+  * Upgrade Gradle/Nebula build from 9.x to 10.x (#500)
+  * Place backup manifests alongside the data directory (backup_manifests/ as a sibling of data_file_directories[0], e.g. /mnt/data/cassandra/backup_manifests) instead of under the data directory (#494)
+
+4.1.144 (2026-05-17)
+  * Add and fix per-read histogram metric mappings (ObjectStore ChunksPerRead, PrefetchesPerRead, CacheHitsPerRead, BytesPerRead) in spectator.conf, including max-statistic correction (#496)
+  * Write TOC.txt on zero-copy streaming completion so on-disk SSTable layout matches flush/compaction output and snapshots hardlink it correctly (#499)
+  * Upgrade Gradle wrapper to Nebula 9.17.3 (#495)
+
+4.1.143 (2026-05-12)
+  * Fix disk utilization metric on EBS-backed instances: measure the data filesystem (default cassandra.disk_usage_root=/mnt/data/cassandra/data) instead of /mnt, which on EBS AMIs reported unrelated root-volume stats (#497)
+  * Write new backup manifests to a pending/ subdirectory (backup_manifests/pending/<snapshotTag>.json) that the upload tool drains (#493)
+  * Add backupPathPrefix, snapshotTag, and snapshotInstantMs to backup manifests and align isUploaded serialization with Priam's manifest format (#492)
+
+4.1.142 (2026-05-04)
+ Backups & object store:
+  * Add backup manifest to snapshots: write a BackupManifest alongside snapshots via BackupManifestBuilder, track backup state in system keyspace, and expose BackupService MBean and BackupMetrics; nodetool snapshot integration (#484)
+ Observability & metrics:
+  * Fix FetchBytes histogram mapping for objectstore metrics in spectator.conf (#489)
+ Config & startup:
+  * Enable dynamic hints throttling by default (hinted_handoff_dynamic_throttle_enabled=true) and lower hinted_handoff_throttle_backlog_threshold from 1000 to 10 queued hint files (#487)
+ Testing (jvm-dtest):
+  * jvm-dtest: support multiple clusters per JVM with port isolation and remove JUnit 4 requirement (#485)
+  * jvm-dtest: fix AbstractClusterTest (#486)
+ Bug fix:
+  * Fix SSTableReader reference leak when memtable backup context creation retries (#488)
+
+4.1.141 (2026-04-21)
+  * Add nodetool denylist command to add, remove, refresh, and list denylisted partition keys, backed by new StorageProxy MBean denylist operations (#483)
+  * Fix CompleteBackupsTable virtual table num_tokens and uploaded columns to reflect the expected number of tokens across the keyspace's replication DCs rather than the number present in S3 (#478)
+  * Clean up nodetool repairstatus output: sort consistent sessions by last update, limit to most recent 5, and skip completed coordinator sessions (#482)
+
+4.1.140 (2026-04-15)
+  * Add netflix_views.data_sample virtual table to sample raw SSTable cell values within a lookback window for building compression dictionaries (#481)
+  * Validate cached backup components against manifest sizes on startup, deleting mismatched files for re-download; download objects to a temp file and verify size before atomic move into place (#480)
+  * Publish jvm-dtest bootstrap Gradle plugin providing classpath isolation and JVM config for jvm-dtest consumers (#477)
+
+4.1.139 (2026-03-30)
+ Repair:
+  * Add nodetool repairstatus exposing comprehensive repair info (auto-repair metrics, incremental repair stats, consistent sessions, active repairs, table repair configs) with section filtering and json/yaml output (#460)
+ Backups & object store:
+  * Add netflix_views.complete_backups virtual table giving a cluster-wide view of backup completeness across all nodes to find valid restore points (#450)
+  * Backup memtable: make initialization retry-safe, detect and refresh stale timestamp caches, and bound component downloads with object_store_fetch_timeout instead of blocking indefinitely (#452)
+ nodetool & tooling:
+  * Add nodetool maintenance-check (stop) to verify it is safe to take a node down without breaking quorum (#451)
+ Compaction & storage:
+  * Support incremental repair with ReadOnlyCompactionStrategy by tracking SSTables in the strategy and guarding access with synchronization (#458)
+ Config & startup:
+  * Add nodetool configcheck to detect and diff drift between the on-disk cassandra.yaml and the running node's loaded config (json/yaml output, --diff) (#457)
+ Testing (jvm-dtest):
+  * Build and publish a shaded jvm-dtest JAR to Artifactory: version from base.version/BUILD_NUMBER, fix AWS CRT shading, strip JAR signature files, and override Versions.getClassPath() for custom dtest classpath (#461-#476)
+
+4.1.138 (2026-02-20)
+  * Fix data resurrection heartbeat file corruption on crash by fsync'ing the file before the atomic rename and the parent directory after; improve logging (#447-#448)
+
+4.1.137 (2026-02-20)
+  * Fix JCE security provider list in amazon-corretto-crypto-provider.security: correct duplicated/misnamed provider entries, register NetflixCryptoProvider, and drop the securerandom.strongAlgorithms override
+
+4.1.136 (2026-02-20)
+  * Fix AutoRepair to respect optimizeStreams configuration settings (autoOptimisePreviewRepairStreams/autoOptimiseIncRepairStreams/autoOptimiseFullRepairStreams) instead of unconditionally optimizing streams; also exclude preview repairs from full-repair stream optimization (#442)
+  * Fix CPU burn in optimized-streams repair by optimizing Range intersection in RangeDenormalizer (#439)
+  * Retry cleanups when they fail after repair-triggered import; add import_cleanup_max_retries and import_cleanup_retry_initial_delay config (#440)
+  * Reduce GC logging noise under ZGC; recognize ZGC collectors in GCInspector and add gc_concurrent_phase_log_threshold and gc_concurrent_phase_warn_threshold config (#446)
+  * Use JDK 21 instead of JDK 11 for tools (tools/bin/cassandra.in.sh)
+
+4.1.128 (2026-02-17)
+  * Add Spectator JMX mapping for object-store ChunksPerRead metric (cass.aws.objectstore.ChunksPerRead) (#438)
+
+4.1.127 (2026-02-16)
+  * Add object-store cold-tier read path: 'backup'-prefixed BackupMemtable implementation, offline BackupChunkReader, and shared object-store chunk cache with new object_store_shared_chunk_cache_count/_size, object_store_prefetch_partition_enabled, object_store_chunk_cache_timeout_ms, and object_store_fetch_timeout_ms config options and accessors; add dedicated NETFLIX stage (#435)
+  * Add cold-tier per-read TableMetrics (ObjectStoreChunksPerRead, ObjectStorePrefetchesPerRead) and ColdTierMetrics (#435)
+  * Add jvm-dtest and unit coverage for backup memtable and object-store chunk reader (BackupMemtable*Test, BackupChunkReaderTest, BackupMemtableParams validation) (#435)
+  * Stop GC log files from piling up by reusing a fixed gc.log name instead of a per-start timestamp, and remove duplicate GC-log configuration block in cassandra-env.sh (#437)
+
+4.1.126 (2026-01-26)
+  * Add netflix_views virtual tables (backups, backup_details) listing backups available in the S3 object store for a given keyspace/table and node token (#428)
+  * Add unsafe_aggressive_sstable_expiration option to LeveledCompactionStrategy to ignore overlaps and aggressively purge fully-expired SSTables and tombstones (for TTL-only, insert-only workloads) (#430)
+  * Fall back to heartbeat file last-modified time instead of failing startup when the data resurrection check cannot deserialize the heartbeat file (#433)
+
+4.1.125 (2026-01-07)
+  * Add CQL-driven remote SSTable import system: submit import jobs via system_distributed.remote_import, distributed trigger fans out per-node import jobs that download/unzip SSTables over HTTP (with configurable retry/backoff), enforce disk-percentage and throughput limits, and clean up stale jobs; monitor progress via netflix_views.local_import virtual table. Adds import_concurrency, import_max_disk_percentage, import_disk_throughput, HTTP retry, and cleanup config options plus ImportJob metrics. (#361)
+
+4.1.124 (2025-12-17)
+ Observability & metrics:
+  * Add compaction timer and throttle rate metrics (#427)
+  * Add per-repair RepairElapsedSec gauge and table metric flagging GC grace exceeding hinted handoff window (#424)
+  * Add per-table GcGraceSeconds gauge metric (#421)
+ nodetool & tooling:
+  * Add dynamic hints throttling based on hint backlog and throughput, with hinted_handoff_dynamic_throttle_enabled / hinted_handoff_max_throttle / hinted_handoff_throttle_backlog_threshold / hinted_handoff_throttle_adjustment_interval_in_sec config, nodetool enabledynamichintsthrottle, disabledynamichintsthrottle, and hintstats commands, plus hint delivery metrics (#417)
+ Streaming:
+  * Derive stream throttle defaults from EC2 instance type network bandwidth via new BandwidthProvider (queries EC2 DescribeInstanceTypes) (#374)
+ Testing (jvm-dtest):
+  * Shut down lingering threads (SocketFactory, AutoRepair) to stop classloader leak in jvm-dtests (#423)
+
+4.1.120 (2025-12-03)
+  * Add Phase 2 S3 backup infrastructure: object-store access (AwsObjectStoreAccess), backup descriptor and manifest, object-store configuration, and cold-tier/object-store metrics (#385)
+  * Fix tight compaction loop on L0 by disabling token-boundary SSTable splitting at level 0 in MaxSSTableSizeWriter (#422)
+  * Allow running locally after JDK 21: gate Netflix jemalloc path to Linux when present and move -XX:+UseTransparentHugePages into the Linux startup branch (#420)
+
+4.1.119 (2025-12-01)
+  * Port Cassandra 4.1 to build and run on JDK 21; add jvm21-server.options and jvm21-clients.options, update build.xml, launch scripts, and reflection/UDF/transport internals for JDK 21 compatibility (#416)
+  * Read disk-utilization metric from the /mnt volume (configurable via cassandra.disk_usage_root) so usage reflects the whole data device on both ephemeral and EBS instances (#414)
+  * Split LCS output SSTables on token boundaries by adding token-aware splitting to MaxSSTableSizeWriter; ReadOnlyCompactionStrategy reuses MaxSSTableSizeWriter (#413)
+  * Write the data-resurrection heartbeat file atomically via temp-file-and-rename (FBUtilities.serializeToJsonFileAtomic) to avoid corruption on process crash; include file name in delete-failure messages (#411)
+  * Set heartbeat-file deserialization IOException as the cause of the resulting StartupException in DataResurrectionCheck (#410)
+
+4.1.108 (2025-10-12)
+  * Remove unused AWS SDK netty-nio-client dependency and drop redundant io.netty exclusions from the S3 and aws-crt dependencies (#409)
+
+4.1.107 (2025-10-07)
+  * Exclude AWS SDK (s3, aws-crt, netty-nio-client) bundled Netty artifacts and pin Netty back to 4.1.58.Final / tcnative 2.0.36.Final to avoid Netty version conflicts (#407)
+
+4.1.106 (2025-10-06)
+  * Upgrade netty-tcnative-boringssl-static from 2.0.36.Final to 2.0.69.Final (#406)
+
+4.1.104 (2025-10-06)
+  * Upgrade Netty from 4.1.58.Final to 4.1.112.Final to match AWS version (#405)
+  * Fix various jvm-dtest distributed tests (#404)
+
+4.1.103 (2025-10-06)
+  * Add nodetool ping command to ping all live gossip nodes and report per-node response timing (with --json output) (#402)
+  * Add S3 object-store metrics (success/failure/access-denied rates, object/range-read/prefix/list/head latencies and byte histograms) exported via spectator (#384)
+  * Fix TokenService request URL not appending the endpoint path, causing token fetches to fail; log error response body on non-200 (#403)
+
+4.1.97 (2025-09-26)
+  * Make startup DataResurrectionCheck use the max of gc_grace_seconds and max hint window (not the min) when determining the effective grace window (#399)
+
+4.1.96 (2025-09-25)
+  * Fix postInstall.sh: remove broken /mnt/data/cassandra mkdir/chmod (invalid `chmod www-data:www-data` ownership call) (#397)
+
+4.1.95 (2025-09-25)
+  * Tolerate pre-existing symlink and data directory in postInstall.sh so package install does not fail on re-run (#396)
+
+4.1.94 (2025-09-25)
+  * Create /mnt/data/cassandra base directory during package install so Priam can start up and create backup directories on first boot (#395)
+
+4.1.93 (2025-09-23)
+ Repair:
+  * Rollback #354 to restore pre-autorepair version gating, allowing auto repair to be enabled in clusters running older (pre-4.1.8.75) versions (#392)
+ Observability & metrics:
+  * Reduce log noise: demote failed internode handshake error to debug and trim auto-repair logging (#390)
+  * Avoid logging certificate errors via logback configuration (#387)
+ nodetool & tooling:
+  * Add `nodetool incrementalrepairstats` command to report per-table incremental repair statistics, with `-H` human-readable and `-F json` output options (#394)
+ Config & startup:
+  * Enable the data resurrection startup check by default; cap effective grace period by max_hint_window and skip heartbeat writes until gossip and node setup are running (#389)
+  * Add postInstall.sh to the package, symlinking /var/lib/nflx-configs/cassandra/cassandra.yaml to /etc/cassandra/ods-cass-conf.yaml (#393)
+ Performance:
+  * Backport CASSANDRA-15452: add thread-local read-ahead buffer for compressed SSTable reads, with `compressed_read_ahead_buffer_size` config (default 256KiB) and a JMX setter (getCompressedReadAheadBufferInKB/setCompressedReadAheadBufferInKB) (#323)
+
+4.1.88/4.1.89 (2025-08-22)
+  * Use EC2_LOCAL_IPV4 environment variable to derive listen_address when unset, avoiding selection of the EC2 link-local address from InetAddress.getLocalHost() (#386)
+  * Add configurable max SSTable file size (sstable_size_in_mb, default 10GB via cassandra.readonly_compaction.size_threshold_bytes) to ReadOnlyCompactionStrategy (#373)
+
+4.1.86 (2025-08-04)
+  * Optimize ReadOnlyCompactionStrategy partition append to use a forward-scanning sequential token walk instead of a per-partition binary search when splitting SSTables by token range (#372)
+
+4.1.85 (2025-08-04)
+ Repair:
+  * Count incremental repair percent-repaired metrics only for tables with incremental repair enabled (#370)
+  * Fix assertion error in auto-repair by cloning token map in AutoRepairUtils range address lookup (#365)
+ Observability & metrics:
+  * Add per-datacenter quorum write latency and WriteFailedQuorum metrics on KeyspaceMetrics (#364)
+  * Implement cheap disk utilization query for DiskUtil gauge via filesystem total/usable space instead of DiskUsageMonitor; add cassandra.disk_usage_root override (#366)
+  * Add per-DC quorum write latency metric mappings to spectator.conf (#371)
+ Compaction & storage:
+  * Add read-only optimized compaction strategy (ReadOnlyCompactionStrategy) (#363)
+ Config & startup:
+  * Make hinted handoff throttle a true hot property by updating HintsService configuration on change (#333)
+  * Add Map-accepting constructor to TokenServiceSeedProvider for YAML-based initialization (#369)
+  * Increase default partition_count_cache_expiry_min from 10m to 30m
+ Performance:
+  * Route EACH_QUORUM native requests to a dedicated slow-query thread pool so cross-DC reads/writes don't block normal queries; add native_slow_pool_max_threads (default 64) as a hot property (#367)
+ Security:
+  * Suppress noisy Metatron certificate verification failure logs and downgrade peer handshake failures to info without stacktrace (#368)
+ CI & build:
+  * Default build to JDK11 when CASSANDRA_USE_JDK11 is unset (#362)
+
+4.1.77 (2025-06-25)
+  * Update Metatron (metatron-ipc-common-shaded) dependency from 1.307.6 to 1.468.0 (#358)
+  * Hollow out .deb files during Jenkins packaging (#357)
+
+4.1.76 (2025-06-05)
+  * Default runtime and packaging to Java 11 (Zulu 11): set JAVA_HOME to the zulu-11 path in cassandra.in.sh launch scripts and pin the Gradle build toolchain to Java 11; also print JAVA_HOME and PATH when the java executable cannot be found (#355)
+
+4.1.75 (2025-06-03)
+  * Return cluster partition_count estimate once a full rack has responded rather than waiting for all endpoints (#352)
+  * Disable full and preview-repaired autorepair by default; enable auto_migrate (#353)
+  * Stop writing the auto_repair schema column to avoid errors on pre-5.1 nodes during upgrades, and exclude the Netflix views keyspace from autorepair (#354)
+  * Use OpenSSL (tcnative) SSL provider for Metatron Netty contexts instead of JDK SSL (#348)
+  * Emit per-node CPU PSI (pressure stall information) gauge to Atlas as cass.psi.cpu (#350)
+
+4.1.71 (2025-05-07)
+  * Add global_heap_buffer_allocator config option and StorageService MBean getter/setter to switch the heap buffer allocator (unpooled/global) at runtime (#347)
+  * Make deterministic table id backward-safe with 4.1.8.50 by excluding the AUTO_REPAIR option from the id-generating string (#344)
+  * Add PSI (Pressure Stall Information) resource metrics read from /proc/pressure for cpu, io, and memory (#334)
+  * Add spectator JMX mappings for ClientMessageSize request/response byte metrics (#345)
+  * Expose logback metrics via InstrumentedAppender and add cass.logging.* spectator mapping (#343)
+
+4.1.68 (2025-04-25)
+  * Restore upstream Java executable resolution in cassandra.in.sh startup scripts: fall back to java on PATH when JAVA_HOME is unset and fail with a clear error instead of hardcoding /etc/alternatives/java; drop the Gradle Java 8 toolchain override (#341)
+
+4.1.67 (2025-04-25)
+  * Retain legacy automated_repair_full and automated_repair_incremental columns in system_schema.tables definition to allow parsing of older schema tables (#342)
+
+4.1.66 (2025-04-23)
+  * Default to /etc/alternatives/java in cassandra.in.sh startup scripts when no JDK is found via JAVA_HOME or PATH (#339)
+
+4.1.65 (2025-04-23)
+  * Add streaming, zero-allocation Murmur3_x64_128 digest (Murmur3Digest) for read-repair digest comparisons, replacing the Guava murmur3 hasher on the read response path; add DigestBench microbench and DigestTest coverage (#332)
+
+4.1.64 (2025-04-23)
+  * Point launcher scripts directly at /usr/bin/java symlink instead of resolving java via PATH when JAVA_HOME is unset (bin/ and tools/bin/cassandra.in.sh) (#338)
+
+4.1.62/4.1.63 (2025-04-21)
+  * Update the auto-repair framework from upstream (re-merge of the framework introduced in #290): AutoRepair framework with nodetool autorepairstatus/getautorepairconfig/setautorepairconfig, AutoRepairService MBean, AutoRepair virtual metrics, token-range splitters, and auto_repair config in cassandra.yaml (#300)
+  * Expose CPU running time alongside scheduling delay: read /proc/schedstat for both CpuDelay and new CpuRunningTime resource gauges (core-averaged) (#326)
+  * Revert move to Java 11; build with Java 8 toolchain in build.gradle and cassandra.in.sh (#337)
+  * Expose p99 partition size via PartitionHistogramTable virtual table in the Netflix views keyspace (#330)
+
+4.1.54 (2025-04-08)
+  * Add jvm-dtests for PartitionKeyStatsTable (ODS-1156); update CI test harness and skip_tests config (#331)
+
+4.1.52/4.1.53 (2025-03-31)
+  * Move runtime and build toolchain to Java 11 (Zulu 11) (#327)
+  * Do not block startup waiting on schema from endpoints that are no longer active Netflix instances (ODS-1068) (#321)
+  * Add optional instance ids to nodetool ring output (#325)
+  * Add PrepareRequests client metric for CQL prepare messages (#324)
+
+4.1.50 (2025-03-11)
+  * Add configurable read-repair digest hashing function (read_hashing: md5 or murmur3) with setReadHashing/getReadHashing JMX accessors on StorageServiceMBean (#217)
+  * Add resources virtual table exposing per-instance disk and CPU utilization, threads-waiting statistic (parsed from schedstat), backed by ResourcesMetrics, with spectator.conf mappings (#317, #320)
+
+4.1.49 (2025-02-11)
+  * Backport CASSANDRA-20102: support octet_length and length CQL functions (#302)
+  * Rename primary id virtual table to partition_key_statistics (PartitionKeyStatsTable) to match upstream OSS rename; add partitioner support methods (#314)
+
+4.1.48 (2025-01-29)
+  * Log large reads and enable read size thresholds by default: set read_thresholds_enabled=true and coordinator/local read size warn thresholds to 10MiB, with NoSpamLogger-throttled warnings for oversized coordinator and local reads (#313)
+  * Disable rejecting of out-of-token-range requests by default (reject_out_of_token_range_requests=false) (#311)
+  * Track EACH_QUORUM latencies by defaulting ideal_consistency_level to EACH_QUORUM (#307)
+  * Add PrimaryId virtual table to system_views keyspace (#308)
+
+4.1.47 (2025-01-15)
+ (Merged Apache Cassandra 4.1.7 and 4.1.8 (plus CASSANDRA-20084, CASSANDRA-20161))
+  * Merge Apache Cassandra 4.1.7 and 4.1.8, plus CASSANDRA-20084 and CASSANDRA-20161; includes CQL message size limit enforcement on multiframe messages, nodetool checktokenmetadata, safer handling of out-of-range tokens, batchlog endpoint strategies, client-auth connection rate limiting, and assorted fixes (#305)
+  * Derive build version from the Rocket release tag number (ROCKET_TAG), validating it matches v4.1.<n> (#304)
+  * Keep ant libs in the test classpath; revert exclusion of ant-*.jar pulled in by the 4.1.8 merge that broke the test build (#306)
+
+4.1.44-rc.1 (2024-11-21)
+ (Merged upstream OSS auto-repair framework (PR #290 "Auto repair merge from OSS"))
+ Repair:
+  * Add auto repair framework: scheduled repair orchestration with AutoRepairConfig/AutoRepairService, per-node token-range splitting, system_distributed scheduling keyspace, nodetool get/setautorepairconfig and autorepairstatus, and table-level auto-repair params (#290)
+  * Add AutoRepairMetrics and expose them via the system_views.repair_metrics virtual table (#294)
+ Observability & metrics:
+  * Add Atlas tracking of coordinator and local read sizes; default local_read_size_warn_threshold to 1GiB to warn on oversized local reads (#296)
+  * Add Messaging *-Latency JMX mappings to spectator.conf for messaging latency metrics (#293)
+ nodetool & tooling:
+  * Add JMX call to delete old keyspaces (#295)
+  * Add nodetool get/set commands for authenticator and authorizer (#289)
+  * Add nodetool get/set command for role manager (#291)
+  * Fix nodetool profileload to output partitions by row/tombstone/sstable count (#299)
+ Config & startup:
+  * Add TokenServiceSeedProvider as an alternative seed provider backed by the token service instead of Priam (#298)
+  * Make auto_snapshot_ttl a hot property (#247)
+ Security:
+  * Configure audit logging in 4.1: enable a FileAuditLoggerAppender writing to audit/audit.log with size-based rolling (#301)
+  * Fix auth cache reset for get/set authenticator/authorizer/rolemanager and add nodetool tests (#292)
+
+4.1.43 (2024-09-11)
+ (Merged Apache Cassandra 4.1.5 and 4.1.6 (includes CASSANDRA-19577 coordinator queries virtual table))
+ Observability & metrics:
+  * StatusLogger: report longest-running queries/tasks per stage instead of per-table memtable sizes when GC triggers the status logger
+  * Report unrepaired SSTable age (UnrepairedAgeInSeconds) to Atlas via spectator.conf
+ CI & build:
+  * Run unit tests as part of the build
+  * Run checkstyle under both Java 8 and Java 11 and remove unused imports
+ Bug fix:
+  * Fix Netflix scoped virtual tables to validate keyspace/table existence and cache the cardinality estimate rather than the single-use row iterator
+  * Fix DistributedJsonTable read timeout by using millisecond start time in waitForFutures
+ Other:
+  * Merge upstream Apache Cassandra 4.1.5 and 4.1.6, including coordinator-level visibility of queries in the system_views.queries virtual table (CASSANDRA-19577)
+
+4.1.4.3 (2024-08-02)
+  * Add ClusterPartitionCount virtual table to estimate approximate partition count across the cluster via HyperLogLog, with partition_count_cache_expiry_min config and StorageService MBean accessors; support composite keys and complex types in the distributed JSON table
+  * Fall back to old prepared statement ids when upgrade_from_30_possible is set
+  * Upgrade nfcassandra-authn-authz-lib-4.x to 2.0.4
+
+4.1.42 (2024-06-26)
+  * Use Python 3.10 for cqlsh3
+
+4.1.40 and earlier (initial Netflix divergence)
+ (Initial fork from Apache Cassandra 4.1.0; includes numerous upstream backports (CASSANDRA-18902, 18352, 18509, 18311, 18110, 18022, 19477, 17495, 17544, 17416))
+ Repair:
+  * Add repaired-at age TableMetric (using the unrepaired set, never negative, ignoring index tables) and JMX command to set repaired-at times
+ Observability & metrics:
+  * Add support for a separate issues/errors log file via logback appender to separate errors/warnings from INFO during incident debugging
+  * Add Netflix virtual keyspace and register Netflix-specific virtual tables (NetflixViewsKeyspace), including a PriamConfigTable exposing Priam config
+  * Add virtual table exposing currently running queries (system_views.queries) via DebuggableTask instrumentation; backport of CASSANDRA-15241
+  * Add DistributedJsonTable virtual table that collects query results across the cluster as JSON
+  * Add virtual table to count partitions per table (PartitionCountTable)
+  * Add virtual table to track excess SSTables and a virtual table revealing pending compactions; use minCompactionThreshold for L0 max
+  * Add cross-cluster system metrics, quotas, and disk-usage system_distributed table definitions
+  * Add int Gossiper metric for token ownership in the cluster and a per-keyspace unavailable meter
+  * Add metric for nodes with a missing DC (DynamicEndpointSnitch) and include cluster_name in unknown_dc log
+  * Add a spectator metrics configuration (spectator.conf)
+ nodetool & tooling:
+  * Netflixize cqlsh: add MetatronAuthenticator, support passing cluster name and env, default to port 7104, fix remote cqlsh for non us-east-1 island clusters, and require python3 (#78)
+  * Accommodate Python 3.11 in cqlsh saferscanner
+  * Add nodetool forcecompact to purge a specific bad partition by key, including overriding GC grace during the compaction (#109)
+  * Add hot property (StorageProxyMBean) to disable partition range (multi-partition) reads as a kill switch (#124)
+  * Add nodetool getunknowndc to list endpoints with an unknown DC
+  * Add nodetool calculateschemadigest to compute the schema digest for a node
+  * Add getSchemaVersionCount() to GossiperMBean for checking distinct schema versions
+  * Backport profileload support for row, tombstone, and SSTable counts (CASSANDRA-18022)
+  * Backport getsstables nodetool patch
+ Compaction & storage:
+  * Add scheduled compactions framework with cassandra.yaml config, CompactionManager support, and system table tracking
+  * Avoid RandomPartitioner split weirdness in scheduled/leveled compaction range handling
+  * Do not include overlapped SSTables when ignoring overlaps in compaction controllers
+  * Enable single_sstable_uplevel by default for LCS (backport of CASSANDRA-18509)
+  * Change default sstable_size_in_mb for LCS to 256 MB (#166)
+ Streaming:
+  * Fix streaming progress virtual table lock contention that could trigger TCP_USER_TIMEOUT and fail streaming (CASSANDRA-18110)
+  * Remove streaming throttle by default
+ Gossip & ring:
+  * Add EverywhereStrategy replication strategy (updated for 4.x) so OSS nodes can load DSE system_dse keyspaces; temporary fix for transient replication interaction
+  * Add LocateService-backed GossipingLocatorSnitch so GPFS can use the locate service to identify DC and rack when not present in gossip
+  * Add die_on_unknown_gossip_state behavior: apply disk failure policy / shut down on UNKNOWN_DC gossip state, with option to only log instead of shutting down (ODS-136)
+  * Make schema pull request/response P0 (urgent) messages to use the urgent channel
+  * Memoize Cassandra version and add a backoff interval for failed schema pulls; do not block on schema of downed nodes; backport of CASSANDRA-18902
+  * Force IP-only hostname in Gossiper and adjust Ec2MultiRegionSnitch (test fixes)
+ Config & startup:
+  * Support pluggable JVM agents dropped into CASSANDRA_HOME/agents and externally provided environment variables for launch configuration
+  * Move Cassandra configuration to /etc so mutable state (data, logs) lives outside /apps; drive log directory, GC log path, and heap dump path via environment variables
+  * Support GPFS (GossipingPropertyFileSnitch) deployment and upgrade Priam extensions
+  * Raise default cassandra.schema_delay_ms to 10 minutes
+  * Add upgradeInProgressPossible handling and skip the 3.0 startup check when no 3.0 nodes can exist, for efficiency on large clusters
+  * Add deterministic table id support (use_deterministic_table_id)
+  * Add ability to disable secondary index creation (disable_si) with reject support in StorageProxy
+  * Backport guardrail and config changes for minimum/maximum timestamp and collection size (CASSANDRA-18352)
+  * Add guardrail for ALTER TABLE ADD/DROP/RENAME column operations and rename DisableFlag to EnableFlag (CASSANDRA-17495 / 17544)
+  * Tune default GC options and JVM server options; carry over simultaneous moves and unsafe aggressive expiration
+  * Align config defaults to 3.x: autosnapshot TTL, batch_size_warn_threshold, memtable_flush_period, key_cache_size, and partitioner
+  * Start JMX early so Priam does not block HTTP threads waiting on it; only set JMXPORT if unset
+ Performance:
+  * Throttle hints only if they are going to be delivered (HintsReader)
+ Security:
+  * Add Metatron SSL for internode and client/server communication via custom SslContextFactory; default to optional encryption enabled
+  * Set internode_encryption to all and enable legacy SSL storage port in packaged cassandra.yaml
+  * Install and force Amazon Corretto Crypto Provider (ACCP) from CassandraDaemon with a startup check; add provider security file and JVM security params
+  * Remove explicit IMDS calls to 169.254.169.254 in EC2 snitches to address IMDSv1 vulnerability; bundle AWS Java SDK
+  * Disable DROP COLUMN and disallow DROP/TRUNCATE; silently ignore [dclocal_]read_repair_chance for programmatic schema changes
+ CI & build:
+  * Establish Netflix fork: rename apache-cassandra artifact to nf-cassandra, port cdecassandra functionality, add Gradle/Nebula packaging, and make Netflix dependencies optional for development (#78)
+  * Set base version to Apache Cassandra 4.1.0 and create the cassandra-4.1 fork branch (trunk bumped to 4.2)
+ Bug fix:
+  * Fix PartitionDenylist perpetual reload when the initial load fails (#131)
+  * Allow ValueTableMetric virtual table values to exceed zero (fix)
+  * Fix schema disagreement handling in DefaultSchemaUpdateHandler (add test)
+  * Fix BufferPool.memoryInUse counter to decrement by bytes actually returned to the pool (CASSANDRA-18311)
+  * Backport hints fix CASSANDRA-19477 for HintsDescriptor/HintsStore
+  * Skip unnecessary LogFile check in Netflix infra that caused issues
+  * Fix USE statement problems during upgrades in QueryProcessor
