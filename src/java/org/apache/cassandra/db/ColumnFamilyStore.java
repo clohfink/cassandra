@@ -3265,7 +3265,10 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean, Memtable.Owner
     @Override
     public boolean getNeverPurgeTombstones()
     {
-        return neverPurgeTombstones;
+        // Honor either the runtime flag (set via JMX/nodetool, reset on restart) or the durable
+        // 'never_purge_tombstones' compaction sub-option persisted in the table schema. ORing them means the
+        // schema option survives restarts while the JMX flag still works as a runtime override.
+        return neverPurgeTombstones || compactionStrategyManager.getCompactionParams().neverPurgeTombstones();
     }
 
     void onTableDropped()

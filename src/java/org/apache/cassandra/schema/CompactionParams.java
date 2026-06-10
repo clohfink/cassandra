@@ -49,7 +49,8 @@ public final class CompactionParams
         ENABLED,
         MIN_THRESHOLD,
         MAX_THRESHOLD,
-        PROVIDE_OVERLAPPING_TOMBSTONES;
+        PROVIDE_OVERLAPPING_TOMBSTONES,
+        NEVER_PURGE_TOMBSTONES;
 
         @Override
         public String toString()
@@ -76,6 +77,7 @@ public final class CompactionParams
     public static final int DEFAULT_MAX_THRESHOLD = 32;
 
     public static final boolean DEFAULT_ENABLED = true;
+    public static final boolean DEFAULT_NEVER_PURGE_TOMBSTONES = false;
     public static final TombstoneOption DEFAULT_PROVIDE_OVERLAPPING_TOMBSTONES =
             TombstoneOption.valueOf(System.getProperty("default.provide.overlapping.tombstones", TombstoneOption.NONE.toString()).toUpperCase());
 
@@ -84,19 +86,21 @@ public final class CompactionParams
                         Option.MAX_THRESHOLD.toString(), Integer.toString(DEFAULT_MAX_THRESHOLD));
 
     public static final CompactionParams DEFAULT =
-        new CompactionParams(SizeTieredCompactionStrategy.class, DEFAULT_THRESHOLDS, DEFAULT_ENABLED, DEFAULT_PROVIDE_OVERLAPPING_TOMBSTONES);
+        new CompactionParams(SizeTieredCompactionStrategy.class, DEFAULT_THRESHOLDS, DEFAULT_ENABLED, DEFAULT_PROVIDE_OVERLAPPING_TOMBSTONES, DEFAULT_NEVER_PURGE_TOMBSTONES);
 
     private final Class<? extends AbstractCompactionStrategy> klass;
     private final ImmutableMap<String, String> options;
     private final boolean isEnabled;
     private final TombstoneOption tombstoneOption;
+    private final boolean neverPurgeTombstones;
 
-    private CompactionParams(Class<? extends AbstractCompactionStrategy> klass, Map<String, String> options, boolean isEnabled, TombstoneOption tombstoneOption)
+    private CompactionParams(Class<? extends AbstractCompactionStrategy> klass, Map<String, String> options, boolean isEnabled, TombstoneOption tombstoneOption, boolean neverPurgeTombstones)
     {
         this.klass = klass;
         this.options = ImmutableMap.copyOf(options);
         this.isEnabled = isEnabled;
         this.tombstoneOption = tombstoneOption;
+        this.neverPurgeTombstones = neverPurgeTombstones;
     }
 
     public static CompactionParams create(Class<? extends AbstractCompactionStrategy> klass, Map<String, String> options)
@@ -115,6 +119,10 @@ public final class CompactionParams
         }
         TombstoneOption tombstoneOption = tombstoneOptional.get();
 
+        boolean neverPurgeTombstones = options.containsKey(Option.NEVER_PURGE_TOMBSTONES.toString())
+                                     ? Boolean.parseBoolean(options.get(Option.NEVER_PURGE_TOMBSTONES.toString()))
+                                     : DEFAULT_NEVER_PURGE_TOMBSTONES;
+
         Map<String, String> allOptions = new HashMap<>(options);
         if (supportsThresholdParams(klass))
         {
@@ -122,7 +130,7 @@ public final class CompactionParams
             allOptions.putIfAbsent(Option.MAX_THRESHOLD.toString(), Integer.toString(DEFAULT_MAX_THRESHOLD));
         }
 
-        return new CompactionParams(klass, allOptions, isEnabled, tombstoneOption);
+        return new CompactionParams(klass, allOptions, isEnabled, tombstoneOption, neverPurgeTombstones);
     }
 
     public static CompactionParams stcs(Map<String, String> options)
@@ -159,6 +167,17 @@ public final class CompactionParams
     public TombstoneOption tombstoneOption()
     {
         return tombstoneOption;
+    }
+
+    /**
+     * Whether tombstone purging is disabled entirely for this table via the {@code never_purge_tombstones} compaction
+     * sub-option. Unlike the {@code cassandra.never_purge_tombstones} JVM property (global) and
+     * {@link org.apache.cassandra.db.ColumnFamilyStore#setNeverPurgeTombstones(boolean)} (per-table, but reset on
+     * restart), this option lives in the table schema and so is durable across restarts.
+     */
+    public boolean neverPurgeTombstones()
+    {
+        return neverPurgeTombstones;
     }
 
     public void validate()

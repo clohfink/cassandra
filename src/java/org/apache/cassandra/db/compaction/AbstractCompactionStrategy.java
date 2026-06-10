@@ -496,6 +496,15 @@ public abstract class AbstractCompactionStrategy
             }
         }
 
+        String neverPurgeTombstones = options.get(CompactionParams.Option.NEVER_PURGE_TOMBSTONES.toString());
+        if (neverPurgeTombstones != null)
+        {
+            if (!neverPurgeTombstones.equalsIgnoreCase("true") && !neverPurgeTombstones.equalsIgnoreCase("false"))
+            {
+                throw new ConfigurationException(String.format("'%s' should either be 'true' or 'false', not %s", CompactionParams.Option.NEVER_PURGE_TOMBSTONES, neverPurgeTombstones));
+            }
+        }
+
         Map<String, String> uncheckedOptions = new HashMap<String, String>(options);
         uncheckedOptions.remove(TOMBSTONE_THRESHOLD_OPTION);
         uncheckedOptions.remove(TOMBSTONE_COMPACTION_INTERVAL_OPTION);
@@ -504,6 +513,7 @@ public abstract class AbstractCompactionStrategy
         uncheckedOptions.remove(COMPACTION_ENABLED);
         uncheckedOptions.remove(ONLY_PURGE_REPAIRED_TOMBSTONES);
         uncheckedOptions.remove(CompactionParams.Option.PROVIDE_OVERLAPPING_TOMBSTONES.toString());
+        uncheckedOptions.remove(CompactionParams.Option.NEVER_PURGE_TOMBSTONES.toString());
         return uncheckedOptions;
     }
 

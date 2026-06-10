@@ -738,6 +738,61 @@ public class CompactionsCQLTest extends CQLTester
          assertEquals(CompactionParams.TombstoneOption.ROW, getCurrentColumnFamilyStore().getCompactionStrategyManager().getCompactionParams().tombstoneOption());
      }
 
+    @Test
+    public void testNeverPurgeTombstonesCompactionOption() throws Throwable
+    {
+        // The never_purge_tombstones compaction sub-option disables tombstone purging for the whole table. Unlike
+        // setNeverPurgeTombstones(boolean), it lives in the table schema, so it is durable across restarts. Here we
+        // verify a major compaction retains tombstones while it is enabled, and purges them once it is turned off.
+        createTable("CREATE TABLE %s (id int primary key, b text) WITH gc_grace_seconds = 0 " +
+                    "AND compaction = {'class':'SizeTieredCompactionStrategy', 'never_purge_tombstones':'true'}");
+        ColumnFamilyStore cfs = getCurrentColumnFamilyStore();
+
+        // The option is parsed into the compaction params and reported by getNeverPurgeTombstones(), and - crucially
+        // for durability - it is stored in the schema's compaction options map (what gets persisted and reloaded).
+        assertTrue(cfs.getCompactionStrategyManager().getCompactionParams().neverPurgeTombstones());
+        assertTrue(cfs.metadata().params.compaction.neverPurgeTombstones());
+        assertEquals("true", cfs.metadata().params.compaction.options().get("never_purge_tombstones"));
+        assertTrue(cfs.getNeverPurgeTombstones());
+
+        for (int i = 0; i < 100; i++)
+            execute("INSERT INTO %s (id, b) VALUES (?, ?)", i, String.valueOf(i));
+        flush();
+        execute("DELETE FROM %s WHERE id = ?", 50);
+        flush();
+        Thread.sleep(1100); // let gc_grace_seconds (0) elapse so the tombstone would otherwise be purgeable
+        cfs.forceMajorCompaction();
+        assertTombstones(cfs.getLiveSSTables().iterator().next(), true);
+
+        // Turning the option off via ALTER (a durable schema change) lets the next major compaction purge the tombstone.
+        execute("ALTER TABLE %s WITH compaction = {'class':'SizeTieredCompactionStrategy', 'never_purge_tombstones':'false'}");
+        assertFalse(cfs.getCompactionStrategyManager().getCompactionParams().neverPurgeTombstones());
+        assertFalse(cfs.getNeverPurgeTombstones());
+        cfs.forceMajorCompaction();
+        assertTombstones(cfs.getLiveSSTables().iterator().next(), false);
+    }
+
+    @Test
+    public void testNeverPurgeTombstonesCompactionOptionDefault() throws Throwable
+    {
+        // When the option is not specified it must default to false and must not leak into the persisted options map,
+        // so existing tables keep purging tombstones and round-trip unchanged.
+        createTable("CREATE TABLE %s (id int primary key, b text)");
+        ColumnFamilyStore cfs = getCurrentColumnFamilyStore();
+        assertFalse(cfs.metadata().params.compaction.neverPurgeTombstones());
+        assertFalse(cfs.metadata().params.compaction.options().containsKey("never_purge_tombstones"));
+        assertFalse(cfs.getNeverPurgeTombstones());
+    }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void testBadNeverPurgeTombstonesOption()
+    {
+        createTable("CREATE TABLE %s (id text PRIMARY KEY)");
+        Map<String, String> localOptions = new HashMap<>();
+        localOptions.put("class", "SizeTieredCompactionStrategy");
+        localOptions.put("never_purge_tombstones", "IllegalValue");
+        getCurrentColumnFamilyStore().setCompactionParameters(localOptions);
+    }
 
     public boolean verifyStrategies(CompactionStrategyManager manager, Class<? extends AbstractCompactionStrategy> expected)
     {
