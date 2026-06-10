@@ -7,56 +7,50 @@
 # PR-referenced commit since the previous version tag.
 #
 # The section is generated DETERMINISTICALLY from `git log` (so it always works
-# and can never invent a PR number). If a Netflix GenAI Model Gateway project is
-# configured (GENAI_PROJECT_ID), the raw bullets are additionally sent to an LLM
-# to be reworded/grouped - but the LLM result is REJECTED and the raw bullets
-# used instead if the set of (#NNN) PR references changes in any way. The LLM can
-# only ever improve wording, never alter which PRs are listed.
+# and can never invent a PR number). The raw bullets are then sent to an LLM
+# (Netflix GenAI Model Gateway) to be reworded/grouped, automatically falling
+# back to the raw bullets on any failure - and the LLM result is REJECTED if the
+# set of (#NNN) PR references changes in any way. The LLM can only ever improve
+# wording, never alter which PRs are listed.
+#
+# On a real run it commits the new section straight onto the release branch
+# (cassandra-<major.minor>) and pushes it there - no pull request.
 #
 # Usage:
-#   .netflix/update-changelog.sh [--tag vX.Y.Z] [--prev vX.Y.Z] [--file PATH]
-#                                [--dry-run] [--no-llm] [--no-pr]
+#   .netflix/update-changelog.sh [--tag vX.Y.Z] [--prev vX.Y.Z] [--dry-run]
 #
 #   --tag      Release tag to finalize. Default: $ROCKET_TAG (set by Rocket on tag builds).
 #   --prev     Previous version tag (range base). Default: nearest vX.Y.Z before --tag.
-#   --file     Changelog file. Default: CHANGES-NETFLIX.txt at repo root.
-#   --dry-run  Print the generated section and a unified diff; write/commit/PR NOTHING.
-#   --no-llm   Skip the Model Gateway call; use raw git subjects only.
-#   --no-pr    Write the file in place but do not commit, push, or open a PR.
+#   --dry-run  Print the generated section and a unified diff; change/commit/push NOTHING.
 #
-# Env (LLM is optional - without GENAI_PROJECT_ID the script runs deterministically):
-#   GENAI_PROJECT_ID    Registered GenAI Model Gateway project id (auth/cost boundary).
-#                       Default: nfcassandra. Set --no-llm (or an empty value) to disable.
+# Env (all optional - the LLM polish is always attempted and silently falls back
+# to the raw git bullets if anything goes wrong):
+#   GENAI_PROJECT_ID    GenAI Model Gateway project id, auth/cost boundary (default: nfcassandra).
 #   GENAI_MODEL         Model id (default: claude-3-5-sonnet - verify against the GenAI
 #                       Supported Models list before relying on it).
 #   GENAI_URL           Gateway chat-completions URL (default: prod us-east-1 VIP).
 #   GENAI_METATRON_APP  Metatron app for `metatron curl -a` (default: copilotdppython).
-#   CHANGELOG_PR_BASE   Base branch for the opened PR (default: cassandra-<major.minor>).
+#   CHANGELOG_PR_BASE   Release branch the changelog is committed/pushed to (default: cassandra-<major.minor>).
+#   CHANGELOG_PUSH_ATTEMPTS  Retries if the push races a concurrent base update (default: 3).
 #   GIT_AUTHOR_NAME / GIT_AUTHOR_EMAIL  Commit identity (defaults: Rocket CI / jenkins@netflix.com).
 #
 set -uo pipefail
 
 MARKER='<!-- CI inserts new release sections directly below this line -->'
 
-# GenAI Model Gateway project id (auth/cost boundary). Defaults to this repo's project
-# when unset; an explicitly empty value (GENAI_PROJECT_ID=) disables the LLM polish.
-GENAI_PROJECT_ID="${GENAI_PROJECT_ID-nfcassandra}"
+# GenAI Model Gateway project id (auth/cost boundary); defaults to this repo's project.
+GENAI_PROJECT_ID="${GENAI_PROJECT_ID:-nfcassandra}"
 
 TAG="${ROCKET_TAG:-}"
 PREV=""
-FILE=""
 DRY_RUN=""
-NO_LLM=""
-NO_PR=""
+FILE="CHANGES-NETFLIX.txt"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --tag)     TAG="$2"; shift 2 ;;
     --prev)    PREV="$2"; shift 2 ;;
-    --file)    FILE="$2"; shift 2 ;;
     --dry-run) DRY_RUN=1; shift ;;
-    --no-llm)  NO_LLM=1; shift ;;
-    --no-pr)   NO_PR=1; shift ;;
     -h|--help) grep -E '^#( |$)' "$0" | sed 's/^#\( \|$\)//'; exit 0 ;;
     *) echo "unknown arg: $1" >&2; exit 2 ;;
   esac
@@ -64,7 +58,6 @@ done
 
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || { echo "not in a git repo" >&2; exit 2; }
 cd "$ROOT"
-FILE="${FILE:-CHANGES-NETFLIX.txt}"
 
 [[ -n "$TAG" ]] || { echo "no --tag given and \$ROCKET_TAG is unset" >&2; exit 2; }
 [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "tag '$TAG' is not vX.Y.Z; nothing to do" >&2; exit 0; }
@@ -116,7 +109,6 @@ RAW="$(git log --no-merges --pretty=format:'%s' "${PREV}..${END}" 2>/dev/null \
 # ----------------------------------------------------------------------------
 llm_polish() {
   local raw; raw="$(cat)"
-  if [[ -n "$NO_LLM" || -z "${GENAI_PROJECT_ID:-}" ]]; then printf '%s\n' "$raw"; return 0; fi
   if ! command -v metatron >/dev/null 2>&1; then
     echo "warn: metatron not found; using raw bullets" >&2; printf '%s\n' "$raw"; return 0
   fi
@@ -222,43 +214,42 @@ if [[ -n "$DRY_RUN" ]]; then
   exit 0
 fi
 
-# --- write in place, optionally without committing -------------------------
-if [[ -n "$NO_PR" ]]; then
-  tmp="$(mktemp)"
-  render "$FILE" > "$tmp" || { echo "render failed" >&2; rm -f "$tmp"; exit 3; }
-  cp "$tmp" "$FILE"; rm -f "$tmp"
-  echo "Updated $FILE with the ${VER} section (--no-pr: not committing)."
-  exit 0
-fi
-
-# --- CI path: branch from the release base, splice, commit, push, open PR --
+# --- CI path: splice the new section onto the release base branch and push it
+# there directly (no PR). Commits carry [skip ci] so the push can't trigger
+# another build. If the push races a concurrent update we re-base on the new tip
+# and retry, so a section can never be silently dropped. Never force-push a
+# shared branch.
 BASE="${CHANGELOG_PR_BASE:-cassandra-$(cut -d. -f1-2 <<<"$VER")}"
-BR="chore/changelog-${VER}"
-
-git fetch --quiet origin "$BASE" 2>/dev/null || echo "warn: could not fetch origin/$BASE" >&2
-git checkout -B "$BR" "origin/$BASE" 2>/dev/null || git checkout -B "$BR" "$BASE" \
-  || { echo "could not check out base branch $BASE" >&2; exit 3; }
-
-# Re-check idempotency against the base branch's copy of the file.
-if grep -qE "^${VER_RE} \(" "$FILE"; then
-  echo "${VER} already present on $BASE; nothing to do"; exit 0
-fi
-
-tmp="$(mktemp)"
-render "$FILE" > "$tmp" || { echo "render failed" >&2; rm -f "$tmp"; exit 3; }
-cp "$tmp" "$FILE"; rm -f "$tmp"
+ATTEMPTS="${CHANGELOG_PUSH_ATTEMPTS:-3}"
 
 git config user.email "${GIT_AUTHOR_EMAIL:-jenkins@netflix.com}"
 git config user.name  "${GIT_AUTHOR_NAME:-Rocket CI}"
-git add "$FILE"
-git commit -m "Netflix Changelog ${VER} [skip ci]"
-git push -f origin "$BR"
 
-if command -v gh >/dev/null 2>&1; then
-  gh pr create --base "$BASE" --head "$BR" \
-    --title "Netflix Changelog ${VER}" \
-    --body "Auto-generated from \`${PREV}..${TAG}\`. Review/adjust bullet wording and grouping before merging." \
-    || echo "warn: gh pr create failed; branch ${BR} is pushed - open the PR manually" >&2
-else
-  echo "gh not found; branch ${BR} is pushed - open a PR manually." >&2
-fi
+for ((attempt = 1; attempt <= ATTEMPTS; attempt++)); do
+  # Start each attempt from the current tip of the base branch.
+  git fetch --quiet origin "$BASE" 2>/dev/null || echo "warn: could not fetch origin/$BASE" >&2
+  git checkout -B "$BASE" "origin/$BASE" 2>/dev/null || git checkout -B "$BASE" "$BASE" \
+    || { echo "could not check out base branch $BASE" >&2; exit 3; }
+
+  # Idempotent: if the section already landed (earlier attempt, prior run, or a
+  # concurrent build), there is nothing to do.
+  if grep -qE "^${VER_RE} \(" "$FILE"; then
+    echo "${VER} already present on $BASE; nothing to do"; exit 0
+  fi
+
+  tmp="$(mktemp)"
+  render "$FILE" > "$tmp" || { echo "render failed" >&2; rm -f "$tmp"; exit 3; }
+  cp "$tmp" "$FILE"; rm -f "$tmp"
+
+  git add "$FILE"
+  git commit -m "Netflix Changelog ${VER} [skip ci]" || { echo "nothing to commit for ${VER}" >&2; exit 0; }
+
+  if git push origin "HEAD:${BASE}" 2>&1; then
+    echo "Pushed ${VER} changelog section to ${BASE}."
+    exit 0
+  fi
+  echo "warn: push to ${BASE} rejected (attempt ${attempt}/${ATTEMPTS}); re-basing on the new tip and retrying" >&2
+done
+
+echo "could not push the ${VER} changelog section to ${BASE} after ${ATTEMPTS} attempts" >&2
+exit 3
