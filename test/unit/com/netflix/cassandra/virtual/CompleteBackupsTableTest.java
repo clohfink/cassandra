@@ -52,11 +52,13 @@ public class CompleteBackupsTableTest extends CQLTester
 {
     private static final String KS_NAME = NetflixViewsKeyspace.NAME;
     private static final ObjectMapper mapper = new ObjectMapper();
+    private static final long ts1 = 1700000000000L;
+    private static final long ts2 = 1700001000000L;
+    private static final long ts3 = 1700002000000L;
 
     @Rule
     public TemporaryFolder tempFolder = new TemporaryFolder();
 
-    private AwsAsyncS3FakeBackup fakeS3;
     private String fakeS3Root;
     private BackupContext backupContext;
 
@@ -73,7 +75,7 @@ public class CompleteBackupsTableTest extends CQLTester
         fakeS3Root = tempFolder.newFolder("fake-s3").getAbsolutePath();
 
         backupContext = new BackupContext("test", "us-east-1", "test_app", "-123456789");
-        fakeS3 = new AwsAsyncS3FakeBackup(Region.US_EAST_1);
+        AwsAsyncS3FakeBackup fakeS3 = new AwsAsyncS3FakeBackup(Region.US_EAST_1);
         fakeS3.setFakeS3RootDir(fakeS3Root);
 
         // Register both backups (per-node) and complete_backups (distributed aggregator)
@@ -136,10 +138,6 @@ public class CompleteBackupsTableTest extends CQLTester
     @Test
     public void testMultipleTimestamps() throws Throwable
     {
-        long ts1 = 1700000000000L;
-        long ts2 = 1700001000000L;
-        long ts3 = 1700002000000L;
-
         writeManifest(ts1, "test_ks", "test_table", 1000000L, true);
         writeManifest(ts2, "test_ks", "test_table", 2000000L, false);
         writeManifest(ts3, "test_ks", "test_table", 3000000L, true);
@@ -169,6 +167,94 @@ public class CompleteBackupsTableTest extends CQLTester
             count++;
         }
         assertEquals("Should return three rows", 3, count);
+    }
+
+    @Test
+    public void testDefaultOrdering() throws Throwable
+    {
+        writeManifestsOutOfOrder();
+        String query = "SELECT timestamp FROM " + KS_NAME + ".complete_backups " +
+                       "WHERE keyspace_name = 'test_ks' AND table_name = 'test_table'";
+        ResultSet ascResult = executeNet(query);
+        assertEquals(ImmutableList.of(ts1, ts2, ts3), toTimestamps(ascResult));
+    }
+
+    @Test
+    public void testAscOrdering() throws Throwable
+    {
+        writeManifestsOutOfOrder();
+        String query = "SELECT timestamp FROM " + KS_NAME + ".complete_backups " +
+                       "WHERE keyspace_name = 'test_ks' AND table_name = 'test_table' ORDER BY timestamp ASC";
+        ResultSet ascResult = executeNet(query);
+        assertEquals(ImmutableList.of(ts1, ts2, ts3), toTimestamps(ascResult));
+    }
+
+    @Test
+    public void testDescOrdering() throws Throwable
+    {
+        writeManifestsOutOfOrder();
+        String query = "SELECT timestamp FROM " + KS_NAME + ".complete_backups " +
+                       "WHERE keyspace_name = 'test_ks' AND table_name = 'test_table' ORDER BY timestamp DESC";
+        ResultSet descResult = executeNet(query);
+        assertEquals(ImmutableList.of(ts3, ts2, ts1), toTimestamps(descResult));
+    }
+
+    @Test
+    public void testClusteringSliceLowerBound() throws Throwable
+    {
+        writeManifestsOutOfOrder();
+        String query = "SELECT timestamp FROM " + KS_NAME + ".complete_backups " +
+                       "WHERE keyspace_name = 'test_ks' AND table_name = 'test_table' AND timestamp >= " + ts2;
+        ResultSet result = executeNet(query);
+        assertEquals(ImmutableList.of(ts2, ts3), toTimestamps(result));
+    }
+
+    @Test
+    public void testClusteringSliceLowerBoundDesc() throws Throwable
+    {
+        writeManifestsOutOfOrder();
+        String query = "SELECT timestamp FROM " + KS_NAME + ".complete_backups " +
+                       "WHERE keyspace_name = 'test_ks' AND table_name = 'test_table' AND timestamp >= " + ts2 +
+                       " ORDER BY timestamp DESC";
+        ResultSet result = executeNet(query);
+        assertEquals(ImmutableList.of(ts3, ts2), toTimestamps(result));
+    }
+
+    @Test
+    public void testClusteringSliceExclusiveRange() throws Throwable
+    {
+        writeManifestsOutOfOrder();
+        String query = "SELECT timestamp FROM " + KS_NAME + ".complete_backups " +
+                       "WHERE keyspace_name = 'test_ks' AND table_name = 'test_table' " +
+                       "AND timestamp > " + ts1 + " AND timestamp < " + ts3;
+        ResultSet result = executeNet(query);
+        assertEquals(ImmutableList.of(ts2), toTimestamps(result));
+    }
+
+    @Test
+    public void testWhereUploadedTrue() throws Throwable
+    {
+        writeManifest(ts1, "test_ks", "test_table", 1000000L, true);
+        writeManifest(ts2, "test_ks", "test_table", 2000000L, false);
+        writeManifest(ts3, "test_ks", "test_table", 3000000L, true);
+
+        String query = "SELECT timestamp FROM " + KS_NAME + ".complete_backups " +
+                       "WHERE keyspace_name = 'test_ks' AND table_name = 'test_table' AND uploaded = true ALLOW FILTERING";
+        ResultSet result = executeNet(query);
+        assertEquals(ImmutableList.of(ts1, ts3), toTimestamps(result));
+    }
+
+    @Test
+    public void testWhereUploadedFalse() throws Throwable
+    {
+        writeManifest(ts1, "test_ks", "test_table", 1000000L, true);
+        writeManifest(ts2, "test_ks", "test_table", 2000000L, false);
+        writeManifest(ts3, "test_ks", "test_table", 3000000L, true);
+
+        String query = "SELECT timestamp FROM " + KS_NAME + ".complete_backups " +
+                       "WHERE keyspace_name = 'test_ks' AND table_name = 'test_table' AND uploaded = false ALLOW FILTERING";
+        ResultSet result = executeNet(query);
+        assertEquals(ImmutableList.of(ts2), toTimestamps(result));
     }
 
     @Test
@@ -215,7 +301,7 @@ public class CompleteBackupsTableTest extends CQLTester
                                long fileSize, boolean uploaded) throws IOException
     {
         String bucket = backupContext.bucket();
-        String metaPath = backupContext.metafilePrefix() + timestamp + "/" + keyspace + "/" + tableName + "/manifest.json";
+        String metaPath = backupContext.metafilePrefix() + timestamp + '/' + keyspace + '/' + tableName + "/manifest.json";
 
         BackupManifest manifest = BackupManifest.builder()
             .info(BackupManifest.Info.builder()
@@ -239,8 +325,23 @@ public class CompleteBackupsTableTest extends CQLTester
                 .build())
             .build();
 
-        File file = new File(fakeS3Root, bucket + "/" + metaPath);
+        File file = new File(fakeS3Root, bucket + '/' + metaPath);
         file.getParentFile().mkdirs();
         mapper.writeValue(file, manifest);
+    }
+
+    private void writeManifestsOutOfOrder() throws IOException
+    {
+        writeManifest(ts2, "test_ks","test_table",2000000L,true);
+        writeManifest(ts1, "test_ks","test_table",1000000L,true);
+        writeManifest(ts3, "test_ks","test_table",3000000L,true);
+    }
+
+    private static ImmutableList<Long> toTimestamps(ResultSet result)
+    {
+        ImmutableList.Builder<Long> builder = ImmutableList.builder();
+        for (Row row : result)
+            builder.add(row.getLong("timestamp"));
+        return builder.build();
     }
 }

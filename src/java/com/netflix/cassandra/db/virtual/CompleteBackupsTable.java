@@ -37,6 +37,7 @@ import org.apache.cassandra.db.Keyspace;
 import org.apache.cassandra.db.ReadResponse;
 import org.apache.cassandra.db.SinglePartitionReadCommand;
 import org.apache.cassandra.db.Slices;
+import org.apache.cassandra.db.filter.ClusteringIndexFilter;
 import org.apache.cassandra.db.filter.ClusteringIndexSliceFilter;
 import org.apache.cassandra.db.filter.ColumnFilter;
 import org.apache.cassandra.db.marshal.BooleanType;
@@ -131,6 +132,19 @@ public class CompleteBackupsTable extends ScopedTable
     @Override
     public UnfilteredRowIterator select(DecoratedKey partitionKey, String keyspace, String table)
     {
+        return selectInternal(partitionKey, keyspace, table, null, null);
+    }
+
+    @Override
+    protected UnfilteredRowIterator select(DecoratedKey partitionKey, String keyspace, String table,
+                                           ClusteringIndexFilter clusteringFilter, ColumnFilter columnFilter)
+    {
+        return selectInternal(partitionKey, keyspace, table, clusteringFilter, columnFilter);
+    }
+
+    private UnfilteredRowIterator selectInternal(DecoratedKey partitionKey, String keyspace, String table,
+                                                 ClusteringIndexFilter clusteringFilter, ColumnFilter columnFilter)
+    {
         SimpleDataSet result = new SimpleDataSet(metadata);
 
         // Look up the backups table metadata
@@ -138,7 +152,7 @@ public class CompleteBackupsTable extends ScopedTable
         if (backupsMetadata == null)
         {
             logger.warn("Could not find backups table metadata");
-            return BackupUtils.toRowIterator(metadata, result, partitionKey, null, null);
+            return BackupUtils.toRowIterator(metadata, result, partitionKey, clusteringFilter, columnFilter);
         }
 
         // Compute expected token count from the keyspace replication topology
@@ -214,7 +228,7 @@ public class CompleteBackupsTable extends ScopedTable
                   .column(MISSING_UPLOADS, agg.missingUploads);
         }
 
-        return BackupUtils.toRowIterator(metadata, result, partitionKey, null, null);
+        return BackupUtils.toRowIterator(metadata, result, partitionKey, clusteringFilter, columnFilter);
     }
 
     private TableMetadata getBackupsTableMetadata()
