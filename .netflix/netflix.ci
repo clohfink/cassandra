@@ -84,13 +84,6 @@ echo "No test failures or errors found."
 echo "Slowest Tests:"
 fgrep "Time elapsed" $log_dir/* | sort -nk15 | tail -n 10
 
-# Finalize the Netflix changelog on a version-tag build. Non-fatal: a changelog
-# failure must never fail a release. ROCKET_TAG is set only on tag builds; match
-# vX.Y.Z directly (these tags are FINAL, not the UNKNOWN type gated on below).
-if [[ -n "${ROCKET_TAG:-}" && "$ROCKET_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-    ./.netflix/update-changelog.sh --tag "$ROCKET_TAG" || echo "changelog update failed (non-fatal)"
-fi
-
 # UNKNOWN because we want to subversion behind C* version number (Eg. 3.0.25.1)
 if [[ "$ROCKET_TAG_TYPE" = "UNKNOWN" ]]; then  # Publish on version tag only
     cd pylib && ./build_and_publish.sh
