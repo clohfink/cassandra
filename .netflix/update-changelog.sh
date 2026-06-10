@@ -30,6 +30,8 @@
 #                       Supported Models list before relying on it).
 #   GENAI_URL           Gateway chat-completions URL (default: prod us-east-1 VIP).
 #   GENAI_METATRON_APP  Metatron app for `metatron curl -a` (default: copilotdppython).
+#   GENAI_METATRON_FLAGS  Extra `metatron curl` flags (default: -provideE2eToken, so a CI
+#                       build identity is propagated/authorized; set empty to disable).
 #   CHANGELOG_PR_BASE   Release branch the changelog is committed/pushed to (default: cassandra-<major.minor>).
 #   CHANGELOG_PUSH_ATTEMPTS  Retries if the push races a concurrent base update (default: 3).
 #   GIT_AUTHOR_NAME / GIT_AUTHOR_EMAIL  Commit identity (defaults: Rocket CI / jenkins@netflix.com).
@@ -145,13 +147,21 @@ open(sys.argv[2], "w").write(json.dumps(body))
 PY
 
   # metatron curl performs the Metatron mTLS handshake plain curl can't.
-  if ! metatron curl -a "$app" -X POST "$url" \
+  # -provideE2eToken propagates the build identity so the gateway's Gandalf
+  # policy (NCP-copilot-prod-${GENAI_PROJECT_ID}) authorizes the call from a CI
+  # agent. Override GENAI_METATRON_FLAGS (set empty to drop it).
+  local mflags errf
+  mflags="${GENAI_METATRON_FLAGS--provideE2eToken}"
+  errf="$(mktemp)"
+  if ! metatron curl -a "$app" $mflags -X POST "$url" \
         -H "x-netflix-copilot-project-id: ${GENAI_PROJECT_ID}" \
         -H 'content-type: application/json' \
-        --data-binary "@${reqf}" > "$respf" 2>/dev/null; then
-    echo "warn: Model Gateway call failed; using raw bullets" >&2
-    rm -f "$rawf" "$reqf" "$respf"; printf '%s\n' "$raw"; return 0
+        --data-binary "@${reqf}" > "$respf" 2>"$errf"; then
+    echo "warn: Model Gateway call failed; using raw bullets. Gateway/metatron said:" >&2
+    { head -c 800 "$errf"; head -c 800 "$respf"; } 2>/dev/null | sed 's/^/  /' >&2; echo >&2
+    rm -f "$rawf" "$reqf" "$respf" "$errf"; printf '%s\n' "$raw"; return 0
   fi
+  rm -f "$errf"
 
   out="$(python3 - "$respf" <<'PY'
 import json, sys
