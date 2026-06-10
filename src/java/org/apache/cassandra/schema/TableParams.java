@@ -20,10 +20,13 @@ package org.apache.cassandra.schema;
 import java.nio.ByteBuffer;
 import java.util.Map;
 import java.util.Map.Entry;
+import java.util.TreeMap;
 
 import com.google.common.base.MoreObjects;
 import com.google.common.base.Objects;
 import com.google.common.collect.ImmutableMap;
+
+import com.netflix.cassandra.schema.NetflixTableOptions;
 
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.cql3.Attributes;
@@ -331,10 +334,23 @@ public final class TableParams
                    .newLine();
         }
 
-        builder.append("AND extensions = ").append(extensions.entrySet()
-                                                             .stream()
-                                                             .collect(toMap(Entry::getKey,
-                                                                            e -> "0x" + ByteBufferUtil.bytesToHex(e.getValue()))),
+        // Netflix custom table options are physically stored as extensions but surfaced as
+        // first-class CQL options. Split them out so the opaque/binary extensions are rendered as a
+        // blob map (as usual) while the Netflix options are rendered at the end of the WITH clause.
+        Map<String, ByteBuffer> binaryExtensions = new TreeMap<>();
+        Map<String, ByteBuffer> netflixOptions = new TreeMap<>();
+        for (Entry<String, ByteBuffer> extension : extensions.entrySet())
+        {
+            if (NetflixTableOptions.isNetflixOption(extension.getKey()))
+                netflixOptions.put(extension.getKey(), extension.getValue());
+            else
+                binaryExtensions.put(extension.getKey(), extension.getValue());
+        }
+
+        builder.append("AND extensions = ").append(binaryExtensions.entrySet()
+                                                                   .stream()
+                                                                   .collect(toMap(Entry::getKey,
+                                                                                  e -> "0x" + ByteBufferUtil.bytesToHex(e.getValue()))),
                                                    false)
                .newLine()
                .append("AND gc_grace_seconds = ").append(gcGraceSeconds)
@@ -354,6 +370,16 @@ public final class TableParams
         {
             builder.newLine()
                 .append("AND auto_repair = ").append(autoRepair.asMap());
+        }
+
+        for (Entry<String, ByteBuffer> option : netflixOptions.entrySet())
+        {
+            String value = NetflixTableOptions.decode(option.getValue());
+            builder.newLine().append("AND ").append(option.getKey()).append(" = ");
+            if (NetflixTableOptions.fromName(option.getKey()).quoted())
+                builder.appendWithSingleQuotes(value);
+            else
+                builder.append(value);
         }
     }
 
@@ -487,6 +513,11 @@ public final class TableParams
         {
             extensions = ImmutableMap.copyOf(val);
             return this;
+        }
+
+        public Map<String, ByteBuffer> getExtensions()
+        {
+            return extensions;
         }
 
         public Builder automatedRepair(AutoRepairParams val)

@@ -17,12 +17,15 @@
  */
 package org.apache.cassandra.cql3.statements.schema;
 
+import java.nio.ByteBuffer;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
 
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Sets;
 
+import com.netflix.cassandra.schema.NetflixTableOptions;
 import org.apache.cassandra.cql3.statements.PropertyDefinitions;
 import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.exceptions.SyntaxException;
@@ -51,6 +54,8 @@ public final class TableAttributes extends PropertyDefinitions
         for (Option option : Option.values())
             validBuilder.add(option.toString());
         validBuilder.add(ID);
+        for (NetflixTableOptions.Option option : NetflixTableOptions.Option.values())
+            validBuilder.add(option.optionName());
         validKeywords = validBuilder.build();
         obsoleteKeywords = ImmutableSet.of("dclocal_read_repair_chance", "read_repair_chance", "automated_repair_full", "automated_repair_incremental");
     }
@@ -159,7 +164,50 @@ public final class TableAttributes extends PropertyDefinitions
         if (hasOption(Option.AUTO_REPAIR))
             builder.automatedRepair(AutoRepairParams.fromMap(getMap(Option.AUTO_REPAIR)));
 
+        applyNetflixOptions(builder);
+
         return builder.build();
+    }
+
+    /**
+     * Collects any recognized Netflix custom options (see {@link NetflixTableOptions.Option}),
+     * validates their values, and merges them into the {@code extensions} map where they are stored
+     * physically. Existing extensions already present on the builder (e.g. when altering a table)
+     * are preserved, with options being added or overwritten by key.
+     *
+     * <p>An empty-string value (e.g. {@code ALTER TABLE ... WITH netflix_tier = ''}) is the sentinel
+     * for "unset": the option is removed from the {@code extensions} map rather than set. Unsetting an
+     * option that is not present (including on {@code CREATE}) is a no-op.
+     *
+     * <p>Only options recognized by {@link NetflixTableOptions.Option} are handled here; an unknown
+     * {@value NetflixTableOptions#PREFIX} name never reaches this method because the coordinator has
+     * already rejected it during {@link #validate()} (it is absent from {@link #validKeywords}).
+     */
+    private void applyNetflixOptions(TableParams.Builder builder)
+    {
+        Map<String, ByteBuffer> merged = null;
+        for (String name : properties.keySet())
+        {
+            NetflixTableOptions.Option option = NetflixTableOptions.fromName(name);
+            if (option == null)
+                continue;
+
+            // Lazily copy the existing extensions only once we know there is a Netflix option to apply.
+            if (merged == null)
+                merged = new HashMap<>(builder.getExtensions());
+
+            // getSimple throws if the value is a map rather than a simple scalar value.
+            String value = getSimple(name);
+
+            // An empty string is the "unset" sentinel: remove the option rather than setting it.
+            if (value != null && value.isEmpty())
+                merged.remove(name);
+            else
+                merged.put(name, NetflixTableOptions.encode(option.canonicalize(value)));
+        }
+
+        if (merged != null)
+            builder.extensions(merged);
     }
 
     private Double getDeprecatedCrcCheckChance(Map<String, String> compressionOpts)

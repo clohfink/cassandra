@@ -118,7 +118,7 @@ public class ThreadLocalReadAheadBufferTest implements WithQuickTheories
         int blockSize = new DataStorageSpec.IntKibibytesBound("256KiB").toBytes();
         return arbitrary().pick(files)
                          .flatMap((file) ->
-                                  lists().of(longs().between(fileSize(file) - blockSize, fileSize(file)).zip(integers().between(1, 100), Pair::create))
+                                  lists().of(longs().between(Math.max(0, fileSize(file) - blockSize), fileSize(file)).zip(integers().between(1, 100), Pair::create))
                                          .ofSizeBetween(5, 10)
                                          .map(positionsAndLengths -> new InputData(file, positionsAndLengths)));
 
