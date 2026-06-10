@@ -10,6 +10,13 @@ DO NOT MANUALLY UPDATE - This file is automatically updated
 
 <!-- CI inserts new release sections directly below this line -->
 
+4.1.145 (2026-06-10)
+  * Auto changelog (#510)
+  * Ensure CompleteBackupsTable respects ORDER BY directives. (#509)
+  * Add delete on fail and atomic writes to len file (#507)
+  * Upgrade from Nebula 9.x to 10.x (#500)
+  * Place backup manifests alongside data directory, /mnt/data/cassandra/backup_manifests (#494)
+
 4.1.144 (2026-05-17)
   * Add and fix per-read histogram metric mappings (ObjectStore ChunksPerRead, PrefetchesPerRead, CacheHitsPerRead, BytesPerRead) in spectator.conf, including max-statistic correction (#496)
   * Write TOC.txt on zero-copy streaming completion so on-disk SSTable layout matches flush/compaction output and snapshots hardlink it correctly (#499)
