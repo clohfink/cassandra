@@ -6,9 +6,9 @@ Upstream Apache Cassandra changes are tracked separately in CHANGES.txt.
 Entries are grouped under the internal release tag in which they first shipped, newest first.
 PR references (#NNN) point to pull requests in git.netflix.net/cde/nfcassandra.
 
-unreleased
-  * Upgrade Gradle/Nebula build from 9.x to 10.x (#500)
-  * Place backup manifests alongside the data directory (backup_manifests/ as a sibling of data_file_directories[0], e.g. /mnt/data/cassandra/backup_manifests) instead of under the data directory (#494)
+DO NOT MANUALLY UPDATE - This file is automatically updated
+
+<!-- CI inserts new release sections directly below this line -->
 
 4.1.144 (2026-05-17)
   * Add and fix per-read histogram metric mappings (ObjectStore ChunksPerRead, PrefetchesPerRead, CacheHitsPerRead, BytesPerRead) in spectator.conf, including max-statistic correction (#496)
