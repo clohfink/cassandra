@@ -63,7 +63,7 @@ import static org.apache.cassandra.utils.Clock.Global.currentTimeMillis;
  * Holds state and handles the initialization of a BackupMemtable: downloading the manifest,
  * fetching SSTable components from S3, and building SSTableReaders.
  */
-class BackupMemtableContext implements Runnable
+public class BackupMemtableContext implements Runnable
 {
     private static final Logger logger = LoggerFactory.getLogger(BackupMemtableContext.class);
     private static final String TIMESTAMP_MARKER = ".timestamp";
@@ -77,6 +77,20 @@ class BackupMemtableContext implements Runnable
         Component.COMPRESSION_INFO
     };
 
+    /**
+     * Stages of {@link #initialize()}, exposed via {@link #getState()} for observability.
+     */
+    public enum InitState
+    {
+        PENDING,
+        DOWNLOADING_MANIFEST,
+        VALIDATING_CACHE,
+        DOWNLOADING_COMPONENTS,
+        BUILDING_READERS,
+        READY,
+        FAILED
+    }
+
     private final BackupMemtableParams params;
     private final TableMetadataRef metadataRef;
 
@@ -85,27 +99,56 @@ class BackupMemtableContext implements Runnable
     private final List<SSTableReader> sstables = new ArrayList<>();
     private SSTableIntervalTree intervalTree;
 
+    // Observability state populated by initialize()
+    private volatile InitState state = InitState.PENDING;
+    private volatile int expectedDescriptors = 0;
+    private volatile int pendingDownloads = 0;
+    private volatile long lastStateChangeMs = currentTimeMillis();
+    private volatile long lastAttemptStartedMs = 0;
+    private volatile long lastAttemptCompletedMs = 0;
+    private volatile int attemptCount = 0;
+    private volatile String lastError = null;
+
     BackupMemtableContext(BackupMemtableParams params, TableMetadataRef metadataRef)
     {
         this.params = params;
         this.metadataRef = metadataRef;
     }
 
+    private void setState(InitState newState)
+    {
+        this.state = newState;
+        this.lastStateChangeMs = currentTimeMillis();
+    }
+
     @Override
     public void run()
     {
         long startMs = currentTimeMillis();
+        lastAttemptStartedMs = startMs;
+        attemptCount++;
         try
         {
             initialize();
+            setState(InitState.READY);
+            lastError = null;
         }
         catch (ExecutionException | InterruptedException e)
         {
+            setState(InitState.FAILED);
+            lastError = e.getClass().getSimpleName() + ": " + e.getMessage();
             throw new RuntimeException(e);
+        }
+        catch (RuntimeException e)
+        {
+            setState(InitState.FAILED);
+            lastError = e.getClass().getSimpleName() + ": " + e.getMessage();
+            throw e;
         }
         finally
         {
-            BackupMetrics.backupMemtableInitTimeMs.update(currentTimeMillis() - startMs);
+            lastAttemptCompletedMs = currentTimeMillis();
+            BackupMetrics.backupMemtableInitTimeMs.update(lastAttemptCompletedMs - startMs);
         }
     }
 
@@ -119,12 +162,15 @@ class BackupMemtableContext implements Runnable
         descriptors.clear();
         sstables.clear();
         intervalTree = null;
+        expectedDescriptors = 0;
+        pendingDownloads = 0;
 
         // Prepare cache directory. If the timestamp changed (e.g. ALTER TABLE with new timestamp),
         // delete only the meta file and marker — NOT the component files, since the old memtable
         // may still be serving reads from its SSTableReaders in those files.
         // The new timestamp's manifest references different SSTables with different file names,
         // so new components are downloaded alongside the old ones without conflict.
+        setState(InitState.DOWNLOADING_MANIFEST);
         File cache = BackupDescriptor.prepareCacheDir(metadataRef);
         if (isCacheStale(cache))
         {
@@ -145,10 +191,18 @@ class BackupMemtableContext implements Runnable
         String tbl = params.getEffectiveTable(metadataRef);
         BackupManifest.Data manifest = params.findTableData(fullManifest, ks, tbl);
 
+        setState(InitState.VALIDATING_CACHE);
         List<BackupDescriptor> allDescriptors = collectDescriptors(manifest);
+        expectedDescriptors = allDescriptors.size();
         validateCachedComponents(allDescriptors);
+
+        setState(InitState.DOWNLOADING_COMPONENTS);
         List<AsyncPromise<?>> downloads = downloadRequiredComponents(allDescriptors);
+        pendingDownloads = downloads.size();
         waitForDownloads(downloads);
+        pendingDownloads = 0;
+
+        setState(InitState.BUILDING_READERS);
         filterValidDescriptors(allDescriptors);
         intervalTree = SSTableIntervalTree.build(sstables);
 
@@ -156,19 +210,64 @@ class BackupMemtableContext implements Runnable
         writeTimestampMarker(cache);
     }
 
-    List<BackupDescriptor> getDescriptors()
+    public List<BackupDescriptor> getDescriptors()
     {
         return descriptors;
     }
 
-    List<SSTableReader> getSstables()
+    public List<SSTableReader> getSstables()
     {
         return sstables;
     }
 
-    SSTableIntervalTree getIntervalTree()
+    public SSTableIntervalTree getIntervalTree()
     {
         return intervalTree;
+    }
+
+    public InitState getState()
+    {
+        return state;
+    }
+
+    public int getExpectedDescriptors()
+    {
+        return expectedDescriptors;
+    }
+
+    public int getPendingDownloads()
+    {
+        return pendingDownloads;
+    }
+
+    public long getLastStateChangeMs()
+    {
+        return lastStateChangeMs;
+    }
+
+    public long getLastAttemptStartedMs()
+    {
+        return lastAttemptStartedMs;
+    }
+
+    public long getLastAttemptCompletedMs()
+    {
+        return lastAttemptCompletedMs;
+    }
+
+    public int getAttemptCount()
+    {
+        return attemptCount;
+    }
+
+    public String getLastError()
+    {
+        return lastError;
+    }
+
+    public BackupMemtableParams getParams()
+    {
+        return params;
     }
 
     /**

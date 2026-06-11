@@ -18,6 +18,8 @@
 
 package com.netflix.cassandra.metrics;
 
+import java.util.concurrent.atomic.AtomicInteger;
+
 import com.codahale.metrics.Gauge;
 import com.codahale.metrics.Histogram;
 import com.netflix.cassandra.backups.BackupChunkReader;
@@ -68,6 +70,14 @@ public class BackupMetrics
 
     public static final Histogram backupMemtableInitTimeMs = Metrics.histogram(
     DefaultNameFactory.createMetricName(TYPE_NAME, "BackupMemtableInitTimeMs", null), false
+    );
+
+    /** Number of BackupMemtable initializations currently in flight (manifest fetch + component downloads). */
+    public static final AtomicInteger backupMemtableInitsInProgressCount = new AtomicInteger(0);
+
+    public static final Gauge<Integer> backupMemtableInitsInProgress = Metrics.register(
+    DefaultNameFactory.createMetricName(TYPE_NAME, "BackupMemtableInitsInProgress", null),
+    backupMemtableInitsInProgressCount::get
     );
 
     public static final Histogram backupManifestBuildTimeMs = Metrics.histogram(

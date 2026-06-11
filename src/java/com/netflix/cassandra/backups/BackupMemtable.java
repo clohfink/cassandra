@@ -30,6 +30,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.netflix.cassandra.metrics.BackupMetrics;
 import org.apache.cassandra.concurrent.ScheduledExecutors;
 import org.apache.cassandra.concurrent.Stage;
 import org.apache.cassandra.config.DatabaseDescriptor;
@@ -101,6 +102,7 @@ public class BackupMemtable implements Memtable
     private Future<?> submitInitialization(long retryDelayMs)
     {
         AsyncPromise<Void> promise = new AsyncPromise<>();
+        BackupMetrics.backupMemtableInitsInProgressCount.incrementAndGet();
         Stage.NETFLIX.execute(() -> {
             try
             {
@@ -113,6 +115,10 @@ public class BackupMemtable implements Memtable
                             metadata().keyspace, metadata().name, t);
                 promise.setFailure(t);
                 scheduleRetry(retryDelayMs);
+            }
+            finally
+            {
+                BackupMetrics.backupMemtableInitsInProgressCount.decrementAndGet();
             }
         });
         return promise;
@@ -139,6 +145,14 @@ public class BackupMemtable implements Memtable
     public List<BackupDescriptor> getDescriptors()
     {
         return context.getDescriptors();
+    }
+
+    /**
+     * @return the initialization context, exposed for observability (virtual tables, JMX).
+     */
+    public BackupMemtableContext getContext()
+    {
+        return context;
     }
 
 

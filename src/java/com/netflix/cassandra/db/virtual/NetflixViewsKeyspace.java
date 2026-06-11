@@ -43,6 +43,7 @@ public final class NetflixViewsKeyspace extends VirtualKeyspace
                 .add(new CompleteBackupsTable(NAME))
                 .add(new LocalImport(NAME))
                 .add(new DataSampleTable(NAME))
+                .add(new BackupMemtableInitTable(NAME))
                 .build());
     }
 
