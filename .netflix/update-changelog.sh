@@ -146,7 +146,8 @@ body = {
 open(sys.argv[2], "w").write(json.dumps(body))
 PY
 
-  # metatron curl performs the Metatron mTLS handshake plain curl can't.
+  # metatron curl does the Metatron mTLS handshake plain curl can't. NB: it is a
+  # limited reimplementation - the body flag is `-d @file` (NOT curl's --data-binary).
   # -provideE2eToken propagates the build identity so the gateway's Gandalf
   # policy (NCP-copilot-prod-${GENAI_PROJECT_ID}) authorizes the call from a CI
   # agent. Override GENAI_METATRON_FLAGS (set empty to drop it).
@@ -156,7 +157,7 @@ PY
   if ! metatron curl -a "$app" $mflags -X POST "$url" \
         -H "x-netflix-copilot-project-id: ${GENAI_PROJECT_ID}" \
         -H 'content-type: application/json' \
-        --data-binary "@${reqf}" > "$respf" 2>"$errf"; then
+        -d "@${reqf}" > "$respf" 2>"$errf"; then
     echo "warn: Model Gateway call failed; using raw bullets. Gateway/metatron said:" >&2
     { head -c 800 "$errf"; head -c 800 "$respf"; } 2>/dev/null | sed 's/^/  /' >&2; echo >&2
     rm -f "$rawf" "$reqf" "$respf" "$errf"; printf '%s\n' "$raw"; return 0
