@@ -10,9 +10,20 @@ apply plugin: 'java'
 apply plugin: 'maven-publish'
 apply plugin: 'com.gradleup.shadow'
 
+buildscript {
+    repositories {
+        maven { url 'https://artifacts.netflix.net/maven2' }
+        gradlePluginPortal()
+    }
+    dependencies {
+        classpath 'com.google.cloud.tools:jib-gradle-plugin:3.4.4'
+    }
+}
+apply plugin: 'com.google.cloud.tools.jib'
+
 nebula {
-    moduleEmail = 'cde-team@netflix.com'
-    moduleOwner = 'cde-team@netflix.com'
+    moduleEmail = 'ods-team@netflix.com'
+    moduleOwner = 'ods-team@netflix.com'
 }
 
 compileJava.enabled = false
@@ -40,6 +51,7 @@ ext {
     //priam_extensions_version = "3.11.52"
     priam_extensions_version = "4.1.3"
     priam_extensions_jar = "priam-cass-extensions-${priam_extensions_version}.jar"
+    jibExtraDir = "${buildDir}/jib-extra"
 }
 
 dependencies {
@@ -99,8 +111,7 @@ ospackage {
         from configurations.runtimeClasspath.filter { it.name.startsWith('spectator-api') }
     }
 
-    // For external packages that depend on Cassandra to be installed
-    // but do not care which particular version
+    // For external packages that depend on Cassandra to be installed but do not care which particular version
     provides('cdecassandra')
 
     link("${project.ext.cass_home_dir}/agents/${priam_extensions_jar}",
@@ -122,6 +133,124 @@ java {
         //this selection controlls which JDK is installed on the machine toghether with cassandra package
         languageVersion = JavaLanguageVersion.of(21)
     }
+}
+
+// ---------------------------------------------------------------------------
+// Jib container image staging and configuration
+// ---------------------------------------------------------------------------
+
+// Netflix lib prefixes shared between ospackage and jib staging
+ext.nflxLibPrefixes = [
+    'AmazonCorrettoCryptoProvider', 'nfcassandra-authn-authz-lib',
+    'metatron-sign', 'bcprov-jdk15on', 'authorizable-context',
+    'gandalf-authz-client-shaded', 'nflx-e2etokens-common',
+    'nflx-e2etokens-validation', 'nflx-e2etokens-validation-spring',
+    'spectator-api'
+]
+
+task stageJibDistribution(type: Copy, dependsOn: customizeFiles) {
+    description 'Copy the assembled root/ distribution into the Jib extra-directory staging area'
+    from 'root'
+    into "${project.ext.jibExtraDir}"
+}
+
+task stageJibNetflixLibs(type: Copy, dependsOn: stageJibDistribution) {
+    description 'Copy Netflix dependency JARs into the staged lib directory'
+    into "${project.ext.jibExtraDir}${project.ext.cass_home_dir}/lib"
+    project.ext.nflxLibPrefixes.each { prefix ->
+        from configurations.runtimeClasspath.filter { it.name.startsWith(prefix) }
+    }
+}
+
+task stageJibPythonDeps(type: Exec, dependsOn: stageJibDistribution) {
+    description 'Install Python metatron library and dependencies into pylib for cqlsh'
+    def pylibDir = "${project.ext.jibExtraDir}${project.ext.cass_home_dir}/pylib"
+    commandLine 'python3', '-m', 'pip', 'install',
+        '--target', pylibDir,
+        '--index-url', 'https://pypi.netflix.net/simple',
+        'metatron'
+    doFirst {
+        file(pylibDir).mkdirs()
+    }
+}
+
+task stageJibPythonTransitiveDeps(type: Exec, dependsOn: stageJibPythonDeps) {
+    description 'Install transitive Python dependencies for metatron'
+    def pylibDir = "${project.ext.jibExtraDir}${project.ext.cass_home_dir}/pylib"
+    commandLine 'python3', '-m', 'pip', 'install',
+        '--target', pylibDir,
+        '--index-url', 'https://pypi.netflix.net/simple',
+        'pyOpenSSL', 'cryptography', 'pyasn1_modules'
+}
+
+task stageJibSymlinksAndDirs(dependsOn: [stageJibNetflixLibs, stageJibPythonTransitiveDeps]) {
+    description 'Create data mount-point directories and copy the docker entrypoint script'
+    doLast {
+        // Docker entrypoint script
+        copy {
+            from 'bin/docker-entrypoint.sh'
+            into project.ext.jibExtraDir
+        }
+    }
+}
+
+task stageJib {
+    description 'Umbrella task that ensures the full Jib staging area is ready'
+    dependsOn stageJibSymlinksAndDirs
+}
+
+jib {
+    from {
+        image = 'dockerregistry.test.netflix.net:7002/cde/dgw-base-java21-jib:latest'
+    }
+    to {
+        image = 'cde-nfcassandra'
+        tags = [project.version, 'latest']
+    }
+    container {
+        entrypoint = ['/docker-entrypoint.sh', project.ext.cass_home_dir + '/bin/cassandra', '-f', '-R']
+        ports = ['7101', '7103', '7104']
+        environment = [
+            'CASSANDRA_HOME': project.ext.cass_home_dir,
+            'CASSANDRA_LOG_DIR': '/mnt/data/cassandra/logs'
+        ]
+        user = 'root'
+    }
+    extraDirectories {
+        paths {
+            path {
+                setFrom(project.ext.jibExtraDir.toString())
+                into = '/'
+            }
+        }
+        permissions = [
+            '/docker-entrypoint.sh'                                    : '755',
+            (project.ext.cass_home_dir + '/bin/**')                    : '755',
+            (project.ext.cass_home_dir + '/tools/bin/**')              : '755'
+        ]
+    }
+    containerizingMode = 'packaged'
+}
+
+// Wire Jib tasks to depend on staging
+tasks.matching { it.name.startsWith('jib') && it.name != 'jibDockerBuild' && it.name != 'jibBuildTar' }.configureEach {
+    dependsOn stageJib
+}
+['jib', 'jibDockerBuild', 'jibBuildTar'].each { taskName ->
+    tasks.named(taskName).configure {
+        dependsOn stageJib
+    }
+}
+
+// Jib requires the project JAR to exist even though we only use extraDirectories.
+// Since compileJava is disabled, jar produces an empty JAR — which is fine.
+tasks.named('jar').configure {
+    dependsOn stageJib
+}
+
+// Build container image as part of the publish lifecycle
+tasks.named('publish').configure {
+    dependsOn jibDockerBuild
 }
 
 // Compute dtest JAR version. Used by both the shaded fat JAR and the bootstrap JAR.
@@ -339,5 +468,163 @@ afterEvaluate {
             (it.name.startsWith('publishJvmDtestIvy') || it.name.startsWith('publishJvmDtestBootstrapIvy')) &&
             it.name.contains('Repository')
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Local multi-node cluster:  ./gradlew cassRun
+//
+// Builds Cassandra + the container image (jibDockerBuild), renders per-node configs from
+// local/cass-template.yaml into local/<node>/{conf,data,commitlog,saved_caches}, generates
+// local/cluster-compose.yml, and starts a 3-node cluster. A bundled token-service container
+// hands each node its assigned (balanced Murmur3) token. Nodes mimic app cass_local in
+// region us-east-1 across racks 1a/1b/1c. See RUNNING_LOCALLY.md.
+// ---------------------------------------------------------------------------
+ext.localCluster = [
+    name       : 'nfcassandra-cluster',
+    subnet     : '172.20.0.0/16',
+    app        : 'cass_local',
+    env        : 'local',
+    region     : 'us-east-1',
+    tokenIp    : '172.20.0.10',
+    composeFile: "${rootDir}/local/cluster-compose.yml",
+    // Balanced single-token Murmur3 ring for 3 nodes; racks 1a/1b/1c in dc us-east-1.
+    nodes      : [
+        [name: 'node1', ip: '172.20.0.11', port: 7011, token: '-9223372036854775808', az: 'us-east-1a', rack: '1a'],
+        [name: 'node2', ip: '172.20.0.12', port: 7012, token: '-3074457345618258603', az: 'us-east-1b', rack: '1b'],
+        [name: 'node3', ip: '172.20.0.13', port: 7013, token: '3074457345618258602',  az: 'us-east-1c', rack: '1c'],
+    ],
+]
+
+tasks.register('cassRenderConfigs') {
+    description 'Render per-node configs and the cluster compose file for ./gradlew cassRun'
+    group 'local cluster'
+    doLast {
+        def c = project.ext.localCluster
+        def localDir = file("${rootDir}/local")
+        def template = file("${localDir}/cass-template.yaml").text
+
+        c.nodes.each { n ->
+            def home = "${localDir}/${n.name}"
+            ['data', 'commitlog', 'saved_caches', 'conf'].each { d -> mkdir("${home}/${d}") }
+            file("${home}/conf/cassandra.yaml").text = template.replace('@NODE_LISTEN_ADDRESS@', n.ip)
+            file("${home}/conf/cassandra-rackdc.properties").text = "dc=${c.region}\nrack=${n.rack}\n"
+        }
+
+        // Token-service container entrypoint: one --node per member (each gets its own port).
+        def tokenArgs = ['"java"', '"/work/LocalTokenServer.java"',
+                         '"--app"', "\"${c.app}\"", '"--env"', "\"${c.env}\"", '"--region"', "\"${c.region}\""]
+        c.nodes.each { n ->
+            tokenArgs << '"--node"'
+            tokenArgs << "\"id=${n.name},port=${n.port},ip=${n.ip},token=${n.token},az=${n.az}\""
+        }
+
+        def sb = new StringBuilder()
+        sb << "# GENERATED by ./gradlew cassRenderConfigs — do not edit. Edit local/cass-template.yaml\n"
+        sb << "# or the localCluster spec in build.gradle, then re-run ./gradlew cassRun.\n"
+        sb << "name: ${c.name}\n\nservices:\n"
+
+        // Token + swappie service (its own container, separate from the cass nodes).
+        sb << "  tokenserver:\n"
+        sb << "    image: eclipse-temurin:21-jdk\n"
+        sb << "    container_name: nfcass-tokenserver\n"
+        sb << "    working_dir: /work\n"
+        sb << "    volumes:\n      - ./LocalTokenServer.java:/work/LocalTokenServer.java:ro\n"
+        sb << "    entrypoint: [${tokenArgs.join(', ')}]\n"
+        sb << "    networks:\n      cass:\n        ipv4_address: ${c.tokenIp}\n"
+        sb << "    ports:\n"
+        c.nodes.each { n -> sb << "      - \"${n.port}:${n.port}\"\n" }
+
+        // Cassandra nodes. node1 comes up first; node2/node3 wait for it (clean ring formation).
+        c.nodes.eachWithIndex { n, idx ->
+            int nativeHostPort = 7104 + idx   // host -> container 7104 (cqlsh)
+            int jmxPort = 7501 + idx          // host == container (1:1) so JMX RMI traverses NAT
+            sb << "  ${n.name}:\n"
+            sb << "    image: cde-nfcassandra:latest\n"
+            sb << "    platform: linux/amd64\n"
+            sb << "    container_name: nfcass-${n.name}\n"
+            sb << "    depends_on:\n      tokenserver:\n        condition: service_started\n"
+            if (idx > 0)
+                sb << "      ${c.nodes[0].name}:\n        condition: service_healthy\n"
+            sb << "    environment:\n"
+            sb << "      CASSANDRA_LOCAL_MODE: \"true\"\n"
+            sb << "      NETFLIX_ENVIRONMENT: ${c.env}\n"
+            sb << "      NETFLIX_REGION: ${c.region}\n"
+            sb << "      NETFLIX_APP: ${c.app}\n"
+            sb << "      NETFLIX_INSTANCE_ID: ${n.name}\n"
+            sb << "      NETFLIX_RUNUSER: root\n"
+            sb << "      NETFLIX_COMMONGROUP: root\n"
+            sb << "      CASSANDRA_TOKEN_SERVICE_URL: http://tokenserver:${n.port}\n"
+            sb << "      CASSANDRA_SWAPPIE_URL: http://tokenserver:${n.port}\n"
+            sb << "      MAX_HEAP_SIZE: 1G\n"
+            sb << "      HEAP_NEWSIZE: 200M\n"
+            sb << "      JMX_PORT: \"${jmxPort}\"\n"
+            sb << "    networks:\n      cass:\n        ipv4_address: ${n.ip}\n"
+            sb << "    ports:\n"
+            sb << "      - \"${nativeHostPort}:7104\"\n"
+            sb << "      - \"${jmxPort}:${jmxPort}\"\n"
+            sb << "    volumes:\n"
+            sb << "      - ./${n.name}/conf:/var/lib/nflx-configs/out/cassandra:ro\n"
+            sb << "      - ./${n.name}/data:/mnt/data/cassandra/data\n"
+            sb << "      - ./${n.name}/commitlog:/mnt/data/cassandra/commitlog\n"
+            sb << "      - ./${n.name}/saved_caches:/mnt/data/cassandra/saved_caches\n"
+            sb << "    healthcheck:\n"
+            sb << "      test: [\"CMD-SHELL\", \"bash -c 'echo > /dev/tcp/127.0.0.1/7104' || exit 1\"]\n"
+            sb << "      interval: 10s\n      timeout: 5s\n      start_period: 90s\n      retries: 30\n"
+        }
+        sb << "\nnetworks:\n  cass:\n    driver: bridge\n    ipam:\n      config:\n        - subnet: ${c.subnet}\n"
+
+        file(c.composeFile).text = sb.toString()
+        println "Rendered ${c.nodes.size()} node config(s) and ${c.composeFile}"
+    }
+}
+
+tasks.register('cassRun', Exec) {
+    description 'Build Cassandra + container image and start the local 3-node cluster'
+    group 'local cluster'
+    dependsOn 'jibDockerBuild', 'cassRenderConfigs'
+    workingDir "${rootDir}/local"
+    // down-then-up for a clean start: replacing a depended-on container in place can race
+    // ("No such container" while node2/node3 wait on node1). Bind-mounted data survives `down`.
+    commandLine 'sh', '-c',
+        'docker compose -f cluster-compose.yml down --remove-orphans 2>/dev/null; ' +
+        'docker compose -f cluster-compose.yml up -d'
+    doLast {
+        def c = project.ext.localCluster
+        println ''
+        println 'Local cluster starting (linux/amd64 under emulation on Apple Silicon — give it a few minutes).'
+        println 'Each node publishes native transport (cqlsh) and JMX (nodetool) on localhost:'
+        c.nodes.eachWithIndex { n, idx ->
+            println "  ${n.name} (${n.rack}):  cqlsh 127.0.0.1 ${7104 + idx}    nodetool -p ${7501 + idx}"
+        }
+        println '  e.g.  ./bin/nodetool -h 127.0.0.1 -p 7501 status'
+        println '        ./bin/cqlsh 127.0.0.1 7104'
+        println '  logs: docker compose -f local/cluster-compose.yml logs -f'
+        println '  stop: ./gradlew cassStop      (wipe data: ./gradlew cassClean)'
+    }
+}
+
+tasks.register('cassStop', Exec) {
+    description 'Stop the local cluster (keeps per-node data on disk)'
+    group 'local cluster'
+    workingDir "${rootDir}/local"
+    commandLine 'docker', 'compose', '-f', 'cluster-compose.yml', 'down'
+    ignoreExitValue true
+}
+
+tasks.register('cassClean') {
+    description 'Stop the local cluster and delete per-node data/commitlog/saved_caches'
+    group 'local cluster'
+    dependsOn 'cassStop'
+    doLast {
+        // Cassandra runs as root in-container, so data files are root-owned on the host;
+        // remove them from a throwaway container (reuses the already-built image).
+        exec {
+            commandLine 'docker', 'run', '--rm', '--entrypoint', 'sh',
+                        '-v', "${rootDir}/local:/local", 'cde-nfcassandra:latest',
+                        '-c', 'rm -rf /local/node*/data/* /local/node*/commitlog/* /local/node*/saved_caches/* 2>/dev/null; true'
+            ignoreExitValue true
+        }
+        println 'Wiped per-node data/commitlog/saved_caches.'
     }
 }

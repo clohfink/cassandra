@@ -465,7 +465,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
     public static final boolean useStrictConsistency = Boolean.parseBoolean(System.getProperty("cassandra.consistent.rangemovement", "true"));
     private static final boolean allowSimultaneousMoves = Boolean.parseBoolean(System.getProperty("cassandra.consistent.simultaneousmoves.allow","false"));
     private static final boolean joinRing = Boolean.parseBoolean(System.getProperty("cassandra.join_ring", "true"));
-    private boolean replacing;
+    private volatile boolean replacing;
 
     private final StreamStateStore streamStateStore = new StreamStateStore();
 
@@ -1132,7 +1132,10 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
             }
             else
             {
-                checkForEndpointCollision(localHostId, SystemKeyspace.loadHostIds().keySet());
+                if (DatabaseDescriptor.getAutoReplace())
+                    logger.info("auto_replace: skipping endpoint collision check");
+                else
+                    checkForEndpointCollision(localHostId, SystemKeyspace.loadHostIds().keySet());
                 if (SystemKeyspace.bootstrapComplete())
                 {
                     Preconditions.checkState(!Config.isClientMode());
@@ -2108,13 +2111,24 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
         {
             if (tokenMetadata.isMember(FBUtilities.getBroadcastAddressAndPort()))
             {
-                String s = "This node is already a member of the token ring; bootstrap aborted. (If replacing a dead node, remove the old one from the ring first.)";
-                throw new UnsupportedOperationException(s);
+                if (!DatabaseDescriptor.getAutoReplace())
+                {
+                    String s = "This node is already a member of the token ring; bootstrap aborted. (If replacing a dead node, remove the old one from the ring first.)";
+                    throw new UnsupportedOperationException(s);
+                }
+                logger.info("auto_replace: this node is already a member of the token ring, will attempt replacement");
             }
             setMode(Mode.JOINING, "getting bootstrap token", true);
             bootstrapTokens = BootStrapper.getBootstrapTokens(tokenMetadata, FBUtilities.getBroadcastAddressAndPort(), schemaTimeoutMillis, ringTimeoutMillis);
+
+            // auto_replace may have detected token conflicts and set the replace address
+            if (DatabaseDescriptor.getAutoReplace() && DatabaseDescriptor.getReplaceAddress() != null)
+            {
+                logger.info("auto_replace: switching to replacement mode for {}", DatabaseDescriptor.getReplaceAddress());
+                replacing = true;
+            }
         }
-        else
+        if (replacing)
         {
             if (!isReplacingSameAddress())
             {

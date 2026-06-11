@@ -30,6 +30,7 @@ import javax.net.ssl.HttpsURLConnection;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.net.HttpURLConnection;
 import java.net.URL;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -42,6 +43,18 @@ import com.google.common.annotations.VisibleForTesting;
 
 public class TokenService
 {
+    public static class ServiceResponse
+    {
+        public final int statusCode;
+        public final String body;
+
+        public ServiceResponse(int statusCode, String body)
+        {
+            this.statusCode = statusCode;
+            this.body = body;
+        }
+    }
+
     private static final Logger logger = LoggerFactory.getLogger(TokenService.class);
     private static final List<String> DEFAULT_REGIONS = Arrays.asList("us-east-1", "us-east-2", "us-west-2", "eu-west-1");
     private static final String REGION_PROPERTY = System.getProperty("netflix.tokenservice.regions");
@@ -84,12 +97,14 @@ public class TokenService
 
     /**
      * Fetches the response from a URL, trying the local region first and falling back to other regions.
+     * On connection errors, falls back to the next region. On any HTTP response (including non-200),
+     * returns immediately so callers can inspect the status code.
      *
      * @param endpoint the endpoint to use, e.g., "/v1/cluster/prod/app".
-     * @return JSON response as a String.
-     * @throws IOException if all attempts to fetch the data fail.
+     * @return a ServiceResponse containing the HTTP status code and response body.
+     * @throws IOException if all attempts to connect fail.
      */
-    public String fetchDataFromService(String endpoint) throws IOException
+    public ServiceResponse fetchDataFromService(String endpoint) throws IOException
     {
         List<String> regionsToTry = new ArrayList<>();
         regionsToTry.add(region); // Always try the local region first
@@ -117,20 +132,44 @@ public class TokenService
         throw new IOException("Error retrieving data from all available regions");
     }
 
+    /**
+     * Fetches the current instance from the token service at /v1/token/current.
+     *
+     * @return the current NetflixInstance, or null if the service returns 404 (no token assigned).
+     * @throws IOException if the service is unreachable or returns an unexpected error.
+     */
+    @Nullable
+    public NetflixInstance getCurrentInstance() throws IOException
+    {
+        ServiceResponse response = fetchDataFromService("/v1/token/current");
+
+        if (response.statusCode == 404)
+        {
+            logger.info("No current token assignment found (404)");
+            return null;
+        }
+
+        if (response.statusCode != 200)
+            throw new IOException("Failed to get current token: HTTP " + response.statusCode + " - " + response.body);
+
+        return new ObjectMapper().readValue(response.body, NetflixInstance.class);
+    }
+
     public List<NetflixInstance> getInstances() throws IOException
     {
-        List<NetflixInstance> instances = new ArrayList<>();
-        // Fetch the JSON response from the service
-        String response = fetchDataFromService("/v1/cluster/" + env + '/' + app);
+        ServiceResponse response = fetchDataFromService("/v1/cluster/" + env + '/' + app);
 
+        if (response.statusCode != 200)
+            throw new IOException("Failed to get instances: HTTP " + response.statusCode + " - " + response.body);
+
+        List<NetflixInstance> instances = new ArrayList<>();
         ObjectMapper mapper = new ObjectMapper();
-        JsonNode root = mapper.readTree(response);
+        JsonNode root = mapper.readTree(response.body);
 
         if (root.isArray())
         {
             for (JsonNode node : root)
             {
-                // Convert each JSON node into a NetflixInstance object
                 NetflixInstance instance = mapper.treeToValue(node, NetflixInstance.class);
                 instances.add(instance);
             }
@@ -139,13 +178,21 @@ public class TokenService
     }
 
     @VisibleForTesting
-    public HttpsURLConnection getConnection(String urlStr) throws IOException
+    public HttpURLConnection getConnection(String urlStr) throws IOException
     {
         URL url = new URL(urlStr);
         logger.info("Connecting to service at URL: {}", urlStr);
-        HttpsURLConnection conn = (HttpsURLConnection) url.openConnection();
-        conn.setSSLSocketFactory(MetatronSslContext.forClient(TOKEN_SERVICE_APP_NAME).getSocketFactory());
-        conn.setHostnameVerifier((hostname, session) -> true);
+        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+        // Managed (DGW) endpoints are https and authenticate with a Metatron client cert.
+        // A local token server (see RUNNING_LOCALLY.md) is plain http and needs no SSL
+        // setup, so only configure Metatron mTLS when we actually have an https connection.
+        // This keeps production behavior unchanged while allowing a local http token server.
+        if (conn instanceof HttpsURLConnection)
+        {
+            HttpsURLConnection httpsConn = (HttpsURLConnection) conn;
+            httpsConn.setSSLSocketFactory(MetatronSslContext.forClient(TOKEN_SERVICE_APP_NAME).getSocketFactory());
+            httpsConn.setHostnameVerifier((hostname, session) -> true);
+        }
         conn.setRequestMethod("GET");
         conn.setConnectTimeout((int) TimeUnit.SECONDS.toMillis(TIMEOUT_SECONDS));
         conn.setReadTimeout((int) TimeUnit.SECONDS.toMillis(TIMEOUT_SECONDS));
@@ -156,52 +203,38 @@ public class TokenService
      * Fetches the response from the given URL.
      *
      * @param urlStr the URL to connect to.
-     * @return the response from the service as a String.
-     * @throws Exception if there is an error fetching the response.
+     * @return a ServiceResponse containing the HTTP status code and response body.
+     * @throws Exception if there is a connection error.
      */
-    private String fetchServiceResponse(String urlStr) throws Exception
+    private ServiceResponse fetchServiceResponse(String urlStr) throws Exception
     {
-        HttpsURLConnection conn = getConnection(urlStr);
-
-        // Check the response code to ensure the request was successful
+        HttpURLConnection conn = getConnection(urlStr);
         int responseCode = conn.getResponseCode();
 
-        if (responseCode != 200)
+        StringBuilder body = new StringBuilder();
+        if (responseCode >= 200 && responseCode < 300)
         {
-            String responseMessage = conn.getResponseMessage();
-            String errorBody = "";
-
-            // Try to read error response body
+            try (BufferedReader in = new BufferedReader(new InputStreamReader(conn.getInputStream())))
+            {
+                String line;
+                while ((line = in.readLine()) != null)
+                    body.append(line);
+            }
+        }
+        else
+        {
             try (BufferedReader errorReader = new BufferedReader(new InputStreamReader(conn.getErrorStream())))
             {
                 String line;
-                StringBuilder errorResponse = new StringBuilder();
                 while ((line = errorReader.readLine()) != null)
-                {
-                    errorResponse.append(line);
-                }
-                errorBody = errorResponse.toString();
+                    body.append(line);
             }
             catch (Exception e)
             {
                 // Error stream might be null or unreadable
             }
-
-            logger.error("Failed to get data from service: HTTP {} - {} - {}",
-                         responseCode, responseMessage, errorBody);
-            throw new RuntimeException("Failed to get data from service: HTTP " +
-                                     responseCode + " - " + responseMessage +
-                                     (errorBody.isEmpty() ? "" : " - " + errorBody));
         }
-        // Read the response from the service
-        BufferedReader in = new BufferedReader(new InputStreamReader(conn.getInputStream()));
-        String inputLine;
-        StringBuilder response = new StringBuilder();
 
-        while ((inputLine = in.readLine()) != null)
-            response.append(inputLine);
-        in.close();
-
-        return response.toString();
+        return new ServiceResponse(responseCode, body.toString());
     }
 }

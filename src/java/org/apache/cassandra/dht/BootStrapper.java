@@ -24,6 +24,7 @@ import org.apache.cassandra.utils.concurrent.Future;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import org.apache.cassandra.config.Config;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.schema.Schema;
 import org.apache.cassandra.db.Keyspace;
@@ -192,12 +193,32 @@ public class BootStrapper extends ProgressEventNotifierSupport
     {
         logger.info("tokens manually specified as {}",  initialTokens);
         List<Token> tokens = new ArrayList<>(initialTokens.size());
+        InetAddressAndPort conflictingEndpoint = null;
         for (String tokenString : initialTokens)
         {
             Token token = metadata.partitioner.getTokenFactory().fromString(tokenString);
-            if (metadata.getEndpoint(token) != null)
-                throw new ConfigurationException("Bootstrapping to existing token " + tokenString + " is not allowed (decommission/removenode the old node first).");
+            InetAddressAndPort existing = metadata.getEndpoint(token);
+            if (existing != null)
+            {
+                if (DatabaseDescriptor.getAutoReplace())
+                {
+                    if (conflictingEndpoint != null && !conflictingEndpoint.equals(existing))
+                        throw new ConfigurationException("auto_replace: initial tokens are owned by multiple endpoints ("
+                                                         + conflictingEndpoint + " and " + existing + "), cannot auto replace.");
+                    conflictingEndpoint = existing;
+                    logger.info("auto_replace: token {} is owned by {}, will replace", tokenString, existing);
+                }
+                else
+                {
+                    throw new ConfigurationException("Bootstrapping to existing token " + tokenString + " is not allowed (decommission/removenode the old node first).");
+                }
+            }
             tokens.add(token);
+        }
+        if (conflictingEndpoint != null)
+        {
+            logger.info("auto_replace: setting replace address to {}", conflictingEndpoint);
+            System.setProperty(Config.PROPERTY_PREFIX + "replace_address_first_boot", conflictingEndpoint.getHostAddressAndPort());
         }
         return tokens;
     }

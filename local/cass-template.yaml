@@ -1,0 +1,101 @@
+# ---------------------------------------------------------------------------
+# LOCAL multi-node Cassandra config TEMPLATE — see RUNNING_LOCALLY.md
+#
+# `./gradlew cassRun` renders this once per node into local/<node>/conf/cassandra.yaml,
+# substituting @NODE_LISTEN_ADDRESS@ with that node's static IP. It is mounted into the
+# container at the DGW-injected config path so the entrypoint's normal merge picks it up.
+#
+# Per-node rack/DC come from local/<node>/conf/cassandra-rackdc.properties (also generated)
+# via GossipingPropertyFileSnitch; per-node token + seeds come from the local token service.
+# Keep non-local settings in sync with nflx-packaging/etc/cassandra/cassandra.yaml.
+# ---------------------------------------------------------------------------
+cluster_name: LocalCassandra
+initial_token: null
+hinted_handoff_enabled: true
+max_hint_window_in_ms: 86400000
+hinted_handoff_throttle_in_kb: 1024
+auto_repair: false
+batchlog_replay_throttle_in_kb: 1024
+max_hints_delivery_threads: 2
+authenticator: org.apache.cassandra.auth.AllowAllAuthenticator
+authorizer: org.apache.cassandra.auth.AllowAllAuthorizer
+permissions_validity_in_ms: 2000
+partitioner: org.apache.cassandra.dht.Murmur3Partitioner
+data_file_directories:
+- /mnt/data/cassandra/data
+commitlog_directory: /mnt/data/cassandra/commitlog
+# Pin hints under the data mount. cassandra.in.sh sets -Dcassandra.storagedir=$CASSANDRA_HOME/data,
+# so without this hints_directory defaults to /apps/nfcassandra_server/data/hints (outside the mount).
+hints_directory: /mnt/data/cassandra/hints
+disk_failure_policy: stop
+commit_failure_policy: stop
+key_cache_save_period: 14400
+row_cache_size_in_mb: 0
+row_cache_save_period: 0
+saved_caches_directory: /mnt/data/cassandra/saved_caches
+commitlog_sync: periodic
+commitlog_sync_period_in_ms: 10000
+commitlog_segment_size_in_mb: 32
+# Seeds come from the local token server's /v1/cluster/{env}/{app} (one per AZ).
+seed_provider:
+- class_name: com.netflix.cassandra.TokenServiceSeedProvider
+  parameters:
+  - seeds: 127.0.0.1
+concurrent_reads: 32
+concurrent_writes: 64
+trickle_fsync: false
+trickle_fsync_interval_in_kb: 10240
+storage_port: 7101
+ssl_storage_port: 7103
+# Per-node address — rendered by cassRun from the node's static IP.
+listen_address: @NODE_LISTEN_ADDRESS@
+broadcast_address: @NODE_LISTEN_ADDRESS@
+start_native_transport: true
+native_transport_port: 7104
+rpc_address: 0.0.0.0
+broadcast_rpc_address: @NODE_LISTEN_ADDRESS@
+rpc_keepalive: true
+incremental_backups: false
+snapshot_before_compaction: false
+auto_snapshot: false
+column_index_size_in_kb: 64
+compaction_throughput_mb_per_sec: 128
+read_request_timeout_in_ms: 10000
+range_request_timeout_in_ms: 10000
+write_request_timeout_in_ms: 10000
+truncate_request_timeout_in_ms: 60000
+request_timeout_in_ms: 10000
+cross_node_timeout: false
+# GossipingPropertyFileSnitch reads dc/rack from cassandra-rackdc.properties (rendered per node),
+# giving real racks (1a/1b/1c) in dc us-east-1 without the EC2 metadata endpoint.
+endpoint_snitch: org.apache.cassandra.locator.GossipingPropertyFileSnitch
+dynamic_snitch_update_interval_in_ms: 100
+dynamic_snitch_reset_interval_in_ms: 600000
+dynamic_snitch_badness_threshold: 0.1
+# No TLS locally. This fork defaults optional=true and use_metatron_ssl=true, which would force a
+# Metatron SSL context build at startup (fatal off-cloud); these make the policy UNENCRYPTED.
+server_encryption_options:
+  internode_encryption: none
+  optional: false
+  use_metatron_ssl: false
+client_encryption_options:
+  enabled: false
+  optional: false
+  use_metatron_ssl: false
+internode_compression: all
+inter_dc_tcp_nodelay: true
+stream_throughput_outbound_megabits_per_sec: 400
+dynamic_snitch: true
+concurrent_compactors: 2
+num_tokens: 1
+# Fresh cluster with pre-assigned, non-overlapping tokens: nodes claim their tokens and form the
+# ring via the seed list without streaming. cassRun staggers startup (node1 first) for clean join.
+auto_bootstrap: false
+cas_contention_timeout_in_ms: 1000
+file_cache_size_in_mb: 512
+batch_size_fail_threshold: 8192KiB
+# 3 nodes across 3 racks — RF 3 is natural. Lower the guardrail so RF 1/2 test keyspaces are allowed.
+default_keyspace_rf: 3
+block_for_peers_timeout_in_secs: 10
+minimum_replication_factor_fail_threshold: 1
+repair_session_max_tree_depth: 16

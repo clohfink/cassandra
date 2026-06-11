@@ -94,6 +94,8 @@ import org.apache.cassandra.service.CacheService.CacheType;
 import org.apache.cassandra.service.paxos.Paxos;
 import org.apache.cassandra.utils.FBUtilities;
 import com.netflix.cassandra.BandwidthProvider;
+import com.netflix.cassandra.NetflixInstance;
+import com.netflix.cassandra.TokenService;
 
 import static org.apache.cassandra.config.CassandraRelevantProperties.OS_ARCH;
 import static org.apache.cassandra.config.CassandraRelevantProperties.SUN_ARCH_DATA_MODEL;
@@ -1797,9 +1799,67 @@ public class DatabaseDescriptor
         conf.batch_size_fail_threshold = new DataStorageSpec.IntKibibytesBound(threshold);
     }
 
+    // In managed (DGW) deployments tokens are assigned exclusively by the token service. A node that
+    // cannot obtain its assigned token must fail fast rather than self-assign random tokens, which would
+    // place it on the wrong ranges and corrupt the ring. Defaults off so stock/OSS behavior is unchanged.
+    // The system property takes precedence; the environment variable is the fallback set by the container
+    // entrypoint (see bin/docker-entrypoint.sh).
+    public static final String REQUIRE_ASSIGNED_TOKEN_PROPERTY = Config.PROPERTY_PREFIX + "require_assigned_token";
+    private static final String REQUIRE_ASSIGNED_TOKEN_ENV = "CASSANDRA_REQUIRE_ASSIGNED_TOKEN";
+
+    /**
+     * Whether this node must use a token assigned by the Netflix token service (managed/DGW mode).
+     * When true, an explicitly configured {@code initial_token} is rejected and a failure to obtain a
+     * token from the service is fatal, instead of silently falling back to random token selection.
+     */
+    public static boolean requiresAssignedToken()
+    {
+        String prop = System.getProperty(REQUIRE_ASSIGNED_TOKEN_PROPERTY);
+        if (prop != null)
+            return Boolean.parseBoolean(prop);
+        return "true".equalsIgnoreCase(System.getenv(REQUIRE_ASSIGNED_TOKEN_ENV));
+    }
+
     public static Collection<String> getInitialTokens()
     {
-        return tokensFromString(System.getProperty(Config.PROPERTY_PREFIX + "initial_token", conf.initial_token));
+        boolean requireAssignedToken = requiresAssignedToken();
+
+        // 1 & 2. Explicitly configured tokens — system property takes priority over the config file.
+        String sysProp = System.getProperty(Config.PROPERTY_PREFIX + "initial_token");
+        String explicitToken = sysProp != null ? sysProp : conf.initial_token;
+        if (StringUtils.isNotBlank(explicitToken))
+        {
+            // In managed mode the token service is the sole authority. A hand-set initial_token would
+            // silently win over it (via the precedence above) and place the node on the wrong tokens,
+            // so reject it rather than let it take effect.
+            if (requireAssignedToken)
+                throw new ConfigurationException("initial_token must not be set when " + REQUIRE_ASSIGNED_TOKEN_PROPERTY
+                                                 + " is enabled; tokens are assigned by the token service");
+            return tokensFromString(explicitToken);
+        }
+
+        // 3. Fall back to the token service.
+        TokenService tokenService = new TokenService();
+        try
+        {
+            NetflixInstance instance = tokenService.getCurrentInstance();
+            if (instance != null && StringUtils.isNotBlank(instance.getToken()))
+                return tokensFromString(instance.getToken());
+            if (instance != null)
+                logger.warn("Token service returned an instance with no token assigned");
+        }
+        catch (Exception e)
+        {
+            logger.warn("Failed to fetch token from token service", e);
+        }
+
+        // No token could be resolved. In managed mode this is fatal — random tokens would corrupt the
+        // ring — so throw and let the entrypoint retry. Otherwise fall back to stock behavior (random or
+        // allocation-algorithm tokens chosen during bootstrap).
+        if (requireAssignedToken)
+            throw new RuntimeException("Failed to obtain an assigned token from the token service");
+
+        return tokensFromString(null);
     }
 
     public static String getAllocateTokensForKeyspace()
@@ -3493,6 +3553,11 @@ public class DatabaseDescriptor
     public static boolean isAutoBootstrap()
     {
         return Boolean.parseBoolean(System.getProperty(Config.PROPERTY_PREFIX + "auto_bootstrap", Boolean.toString(conf.auto_bootstrap)));
+    }
+
+    public static boolean getAutoReplace()
+    {
+        return Boolean.parseBoolean(System.getProperty(Config.PROPERTY_PREFIX + "auto_replace", Boolean.toString(conf.auto_replace)));
     }
 
     public static void setHintedHandoffEnabled(boolean hintedHandoffEnabled)

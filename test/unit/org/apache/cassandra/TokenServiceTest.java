@@ -33,10 +33,10 @@ import com.netflix.cassandra.TokenService;
 import static org.antlr.tool.ErrorManager.assertTrue;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.fail;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doReturn;
-import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.when;
@@ -94,28 +94,30 @@ public class TokenServiceTest
         mockConnectionWithResponse(expectedResponse, 200);
 
         // Call fetchDataFromService and assert the result
-        String response = tokenService.fetchDataFromService("/v1/cluster/test-env/test-app");
-        assertEquals(expectedResponse, response);
+        TokenService.ServiceResponse response = tokenService.fetchDataFromService("/v1/cluster/test-env/test-app");
+        assertEquals(200, response.statusCode);
+        assertEquals(expectedResponse, response.body);
     }
 
     @Test(expected = IOException.class)
     public void testFetchServiceResponseTimeout() throws Exception
     {
         // Simulate timeout exception
-        doThrow(new IOException("Connection timed out")).when(mockConnection).connect();
+        when(mockConnection.getResponseCode()).thenThrow(new IOException("Connection timed out"));
 
         // Attempt to fetch data should result in a timeout exception
         tokenService.fetchDataFromService("/v1/cluster/test-env/test-app");
     }
 
-    @Test(expected = IOException.class)
+    @Test
     public void testFetchServiceResponseFailure() throws Exception
     {
         // Prepare a non-200 response code to simulate a failure
         mockConnectionWithResponse("", 500);
 
-        // Fetch should fail due to 500 error
-        tokenService.fetchDataFromService("/v1/cluster/test-env/test-app");
+        // fetchDataFromService returns the response; callers decide how to handle non-200
+        TokenService.ServiceResponse response = tokenService.fetchDataFromService("/v1/cluster/test-env/test-app");
+        assertEquals(500, response.statusCode);
     }
 
     @Test
@@ -150,8 +152,9 @@ public class TokenServiceTest
         doReturn(firstRegionConnection).doReturn(secondRegionConnection).when(tokenServiceSpy).getConnection(anyString());
 
         // Call fetchDataFromService and assert the result
-        String response = tokenServiceSpy.fetchDataFromService("/v1/cluster/test-env/test-app");
-        assertEquals(expectedResponse, response);
+        TokenService.ServiceResponse response = tokenServiceSpy.fetchDataFromService("/v1/cluster/test-env/test-app");
+        assertEquals(200, response.statusCode);
+        assertEquals(expectedResponse, response.body);
     }
 
     @Test
@@ -266,5 +269,64 @@ public class TokenServiceTest
 
         // Call the getInstances method, expecting it to throw an IOException due to invalid JSON
         tokenService.getInstances();
+    }
+
+    @Test
+    public void testGetCurrentInstanceSuccess() throws Exception
+    {
+        String jsonResponse = "{\"updateTime\": 1728398107613, \"createdTime\": 1728397893251, \"app\": \"test-app\", " +
+                              "\"instanceId\": \"i-123456789\", \"availabilityZone\": \"us-east-1a\", \"token\": \"-7173733804634027806\", " +
+                              "\"region\": \"us-east-1\", \"id\": -1670265060, \"hostIP\": \"100.107.12.161\", \"hostName\": \"ip-100-107-12-161.ec2.internal\"}";
+        mockConnectionWithResponse(jsonResponse, 200);
+
+        NetflixInstance instance = tokenService.getCurrentInstance();
+
+        assertNotNull(instance);
+        assertEquals("test-app", instance.getApp());
+        assertEquals("i-123456789", instance.getInstanceId());
+        assertEquals("us-east-1a", instance.getAvailabilityZone());
+        assertEquals("-7173733804634027806", instance.getToken());
+        assertEquals("100.107.12.161", instance.getHostIP());
+    }
+
+    @Test
+    public void testGetCurrentInstanceReturnsNullOn404() throws Exception
+    {
+        // 404 means no token currently assigned — getCurrentInstance must return null,
+        // not throw, so callers can distinguish "no assignment" from "service error".
+        mockConnectionWithResponse("", 404);
+
+        NetflixInstance instance = tokenService.getCurrentInstance();
+
+        assertNull(instance);
+    }
+
+    @Test
+    public void testGetCurrentInstanceThrowsOnNon2xx() throws Exception
+    {
+        // Any non-200, non-404 response (e.g. 500) must surface as an IOException
+        // so DatabaseDescriptor.getInitialTokens() fails fast rather than silently
+        // bootstrapping with no token.
+        mockConnectionWithResponse("", 500);
+
+        try
+        {
+            tokenService.getCurrentInstance();
+            fail("Expected IOException for non-2xx status code");
+        }
+        catch (IOException e)
+        {
+            assertTrue(e.getMessage().contains("HTTP 500"), "unexpected exception " + e.getMessage());
+        }
+    }
+
+    @Test(expected = IOException.class)
+    public void testGetCurrentInstanceInvalidJSON() throws Exception
+    {
+        // 200 with an unparseable body must throw (Jackson's JsonProcessingException
+        // extends IOException) so bootstrap doesn't proceed with a half-parsed instance.
+        mockConnectionWithResponse("INVALID_JSON", 200);
+
+        tokenService.getCurrentInstance();
     }
 }

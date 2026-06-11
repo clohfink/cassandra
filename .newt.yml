@@ -1,0 +1,10 @@
+app-type: java-project
+config:
+  overwrite:
+    - team-email
+custom-info-responses:
+  DynamicAppModuleDockerImage: true
+github-owner: ods
+name: nfcassandra
+org: ods
+team-email: ods-team@netflix.com

@@ -87,7 +87,6 @@ public class TokenServiceSeedProvider implements SeedProvider
             // Fetch all instances from the token service
             List<NetflixInstance> instances = tokenService.getInstances();
 
-            // Use the abstracted filterSeeds method
             return filterSeeds(instances, this.tokenService.instanceId, DatabaseDescriptor.isAutoBootstrap());
         }
         catch (Exception exception)
