@@ -29,6 +29,7 @@ debian/cassandra/
 debian/cassandra-tools/
 debian/files
 .m2
+.claude
 
 # gitignore doesn't help with modified files - you may wish to:
 #   git update-index --assume-unchanged test/data/serialization/2.0/db.RowMutation.bin

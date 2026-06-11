@@ -78,6 +78,7 @@ import com.google.common.util.concurrent.*;
 import com.netflix.cassandra.backups.BackupManifestBuilder;
 import com.netflix.cassandra.db.virtual.ClusterPartitionCount;
 import com.netflix.cassandra.db.virtual.NetflixViewsKeyspace;
+import com.netflix.cassandra.metrics.JvmCrashMetrics;
 import com.netflix.cassandra.metrics.ResourcesMetrics;
 import org.apache.cassandra.auth.AuthenticatedUser;
 import org.apache.cassandra.auth.IAuthenticator;
@@ -271,6 +272,8 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
         ResourcesMetrics.schedulingDelay.getValue();
         ResourcesMetrics.runningTime.getValue();
         ResourcesMetrics.psiGauge.getValue();
+        JvmCrashMetrics.hsErrLogCount.getValue();
+        JvmCrashMetrics.hsErrLogBytes.getValue();
     }
     public static final int INDEFINITE = -1;
     public static final int RING_DELAY_MILLIS = getRingDelay(); // delay after which we assume ring has stablized
