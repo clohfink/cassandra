@@ -79,6 +79,10 @@ public class AuditLoggerTest extends CQLTester
     public void afterTestMethod()
     {
         disableAuditLogOptions();
+        // tests that enable the FullQueryLogger (e.g. testConflictingPathsFQLFirst) can leave it registered
+        // as a QueryEvents listener when the test exits via an expected exception; stop it here so the leak
+        // does not corrupt listener-count assertions in subsequent tests.
+        StorageService.instance.stopFullQueryLogger();
     }
 
     /**
