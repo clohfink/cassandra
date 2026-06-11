@@ -987,7 +987,7 @@ incremental_backups: false
 # Requires the NETFLIX_ENVIRONMENT, NETFLIX_REGION, and NETFLIX_APP
 # environment variables to be set; otherwise the manifest is skipped
 # at snapshot time.
-backup_manifest_enabled: false
+netflix_backup_manifest_enabled: false
 
 # Whether or not to take a snapshot before each compaction.  Be
 # careful using this option, since Cassandra won't clean up the
