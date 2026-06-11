@@ -101,8 +101,13 @@ DATE="$(git log -1 --format=%cs "$END" 2>/dev/null)"
 echo "Generating changelog for ${VER}: range ${PREV}..${END} (date ${DATE})" >&2
 
 # RAW bullets: PR-referenced commit subjects in range, newest-first, as changelog bullets.
+# Drop this script's own changelog-section commits ("Netflix Changelog X.Y.Z [skip ci]",
+# committed below; and the trailing "(#NNN)" form they pick up when squash-merged via PR)
+# so a release never lists the previous release's changelog commit as one of its changes.
 RAW="$(git log --no-merges --pretty=format:'%s' "${PREV}..${END}" 2>/dev/null \
-        | grep -E '\(#[0-9]+\)' | sed 's/^/  * /')"
+        | grep -E '\(#[0-9]+\)' \
+        | grep -vE '^Netflix Changelog [0-9.]+ \[skip ci\]' \
+        | sed 's/^/  * /')"
 [[ -n "$RAW" ]] || RAW="  * (no PR-referenced changes since ${PREV})"
 
 # ----------------------------------------------------------------------------
