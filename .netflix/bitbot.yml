@@ -4,6 +4,8 @@ builds:
       comment-pr: false
       channel-resolver-spel: "#root.authorSlackId"
 pr-open:
+  pr-risk-assessment:
+    enabled: true
   code-quality:
     enabled: true
   generate-pr-description:
