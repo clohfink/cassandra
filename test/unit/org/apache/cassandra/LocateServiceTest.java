@@ -131,6 +131,91 @@ public class LocateServiceTest
         assertNull("Should return null for a bad eddaUri format", service.getId(endpoint));
     }
 
+    /**
+     * Regression test for the production bug where {@code nt ring --ids} reported wrong
+     * instance ids cluster-wide. The locate service returns both an ENI entry and an
+     * instance entry for the same IP; the ENI entry comes first and has an {@code eddaUri}
+     * ending in {@code /networkInterfaces/eni-...}. The previous {@code .*(i-...)$} regex
+     * captured the trailing {@code i-...} from inside the {@code eni-...} id and returned
+     * that as if it were an instance id. The fix must instead return the real instance id.
+     */
+    @Test
+    public void testGetIdPicksInstanceWhenEniEntryComesFirst() throws Exception
+    {
+        String json = "[" +
+                      "  {\"id\":\"eni-0a92f0c8811ce0ec7\",\"attrs\":{" +
+                      "      \"type\":\"eni\"," +
+                      "      \"attachment.instanceId\":\"i-0247a5dbd43691118\"," +
+                      "      \"eddaUri\":\"http://edda/api/v2/aws/networkInterfaces/eni-0a92f0c8811ce0ec7\"" +
+                      "  }}," +
+                      "  {\"id\":\"i-0247a5dbd43691118\",\"attrs\":{" +
+                      "      \"type\":\"instance\"," +
+                      "      \"eddaUri\":\"http://edda/api/v2/view/instances/i-0247a5dbd43691118\"" +
+                      "  }}" +
+                      "]";
+        mockResponse(json);
+
+        InetAddressAndPort endpoint = InetAddressAndPort.getByName("100.91.176.97");
+        assertEquals("i-0247a5dbd43691118", service.getId(endpoint));
+    }
+
+    /**
+     * Even when the ENI entry does not expose {@code attachment.instanceId}, the strict
+     * {@link com.netflix.cassandra.LocateService#ID_PATTERN} must not match the trailing
+     * {@code i-...} of an {@code eni-...} id, and we must fall through to the instance entry's
+     * {@code eddaUri}.
+     */
+    @Test
+    public void testGetIdFallsThroughEniEddaUri() throws Exception
+    {
+        String json = "[" +
+                      "  {\"attrs\":{" +
+                      "      \"eddaUri\":\"http://edda/api/v2/aws/networkInterfaces/eni-0a92f0c8811ce0ec7\"" +
+                      "  }}," +
+                      "  {\"attrs\":{" +
+                      "      \"eddaUri\":\"http://edda/api/v2/view/instances/i-0247a5dbd43691118\"" +
+                      "  }}" +
+                      "]";
+        mockResponse(json);
+
+        InetAddressAndPort endpoint = InetAddressAndPort.getByName("100.91.176.97");
+        assertEquals("i-0247a5dbd43691118", service.getId(endpoint));
+    }
+
+    /**
+     * If locate returns only an ENI entry and we have no authoritative
+     * {@code attachment.instanceId}, the strict regex must reject the {@code eni-...}
+     * uri rather than incorrectly extracting an "instance id" from inside it.
+     */
+    @Test
+    public void testGetIdReturnsNullForEniOnlyResponseWithoutAttachment() throws Exception
+    {
+        mockResponse("[{\"attrs\":{\"eddaUri\":\"http://edda/api/v2/aws/networkInterfaces/eni-0a92f0c8811ce0ec7\"}}]");
+
+        InetAddressAndPort endpoint = InetAddressAndPort.getByName("100.91.176.97");
+        assertNull("Must not extract an instance id from an eni-... eddaUri",
+                   service.getId(endpoint));
+    }
+
+    /**
+     * When the ENI entry exposes {@code attachment.instanceId} we should use it directly
+     * and never need to inspect the {@code eddaUri} of any entry.
+     */
+    @Test
+    public void testGetIdPrefersAttachmentInstanceId() throws Exception
+    {
+        String json = "[" +
+                      "  {\"attrs\":{" +
+                      "      \"attachment.instanceId\":\"i-aaaaaaaaaaaaaaaaa\"," +
+                      "      \"eddaUri\":\"http://edda/api/v2/view/instances/i-bbbbbbbbbbbbbbbbb\"" +
+                      "  }}" +
+                      "]";
+        mockResponse(json);
+
+        InetAddressAndPort endpoint = InetAddressAndPort.getByName("100.91.176.97");
+        assertEquals("i-aaaaaaaaaaaaaaaaa", service.getId(endpoint));
+    }
+
     @Test
     public void testGetIdWithLongDelay() throws Exception
     {
