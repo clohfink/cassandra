@@ -162,25 +162,31 @@ task stageJibNetflixLibs(type: Copy, dependsOn: stageJibDistribution) {
     }
 }
 
+// Run pip inside a Python 3.10 linux/amd64 container so wheel resolution matches the base image
+// exactly. The base image (Ubuntu 22.04 / Python 3.10) has no pip, and running pip on the build
+// host picks wheels for the host's Python + arch — which on a Mac, or on a Python 3.11+ CI agent,
+// produces a pylib that fails to import in the container (e.g. cryptography>=43 ships cp39-abi3
+// wheels referencing PyType_GetName, a Python 3.11 symbol — "undefined symbol: PyType_GetName"
+// at cqlsh startup). cryptography<43 keeps cp37-abi3 wheels compatible with Python 3.10; bump
+// both the pin and the python:3.10-slim image when the base image moves to 3.11+.
 task stageJibPythonDeps(type: Exec, dependsOn: stageJibDistribution) {
-    description 'Install Python metatron library and dependencies into pylib for cqlsh'
+    description 'Install metatron + transitive Python deps into pylib for cqlsh (in a Python 3.10 linux/amd64 container)'
     def pylibDir = "${project.ext.jibExtraDir}${project.ext.cass_home_dir}/pylib"
-    commandLine 'python3', '-m', 'pip', 'install',
-        '--target', pylibDir,
-        '--index-url', 'https://pypi.netflix.net/simple',
-        'metatron'
     doFirst {
         file(pylibDir).mkdirs()
     }
+    commandLine 'docker', 'run', '--rm',
+        '--platform', 'linux/amd64',
+        '-v', "${pylibDir}:/out",
+        'python:3.10-slim',
+        'sh', '-c',
+        'pip install --target /out --index-url https://pypi.netflix.net/simple ' +
+            'metatron pyOpenSSL "cryptography<43" pyasn1_modules'
 }
 
-task stageJibPythonTransitiveDeps(type: Exec, dependsOn: stageJibPythonDeps) {
-    description 'Install transitive Python dependencies for metatron'
-    def pylibDir = "${project.ext.jibExtraDir}${project.ext.cass_home_dir}/pylib"
-    commandLine 'python3', '-m', 'pip', 'install',
-        '--target', pylibDir,
-        '--index-url', 'https://pypi.netflix.net/simple',
-        'pyOpenSSL', 'cryptography', 'pyasn1_modules'
+// Keep the old task name as a no-op alias so any external wiring still resolves.
+task stageJibPythonTransitiveDeps(dependsOn: stageJibPythonDeps) {
+    description 'Deprecated — kept as alias of stageJibPythonDeps'
 }
 
 task stageJibSymlinksAndDirs(dependsOn: [stageJibNetflixLibs, stageJibPythonTransitiveDeps]) {
