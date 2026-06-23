@@ -17,6 +17,10 @@
  */
 package com.netflix.cassandra.schema;
 
+import java.nio.ByteBuffer;
+import java.util.HashMap;
+import java.util.Map;
+
 import org.junit.Test;
 
 import com.netflix.cassandra.schema.NetflixTableOptions.Option;
@@ -48,12 +52,14 @@ public class NetflixTableOptionsValidationTest
     {
         assertSame(Option.IMMUTABLE, NetflixTableOptions.fromName("netflix_immutable"));
         assertSame(Option.TIER, NetflixTableOptions.fromName("netflix_tier"));
+        assertSame(Option.RELAXED_TRUNCATE, NetflixTableOptions.fromName("netflix_relaxed_truncate"));
 
         assertNull(NetflixTableOptions.fromName("netflix_does_not_exist"));
         assertNull(NetflixTableOptions.fromName("comment"));
         assertNull(NetflixTableOptions.fromName(null));
 
         assertTrue(NetflixTableOptions.isNetflixOption("netflix_tier"));
+        assertTrue(NetflixTableOptions.isNetflixOption("netflix_relaxed_truncate"));
         assertFalse(NetflixTableOptions.isNetflixOption("netflix_made_up"));
         assertFalse(NetflixTableOptions.isNetflixOption("gc_grace_seconds"));
         assertFalse(NetflixTableOptions.isNetflixOption(null));
@@ -91,6 +97,36 @@ public class NetflixTableOptionsValidationTest
         assertThrows("must be an integer between 0 and 4", () -> Option.TIER.canonicalize("-1"));
         // Not an integer.
         assertThrows("Invalid integer value", () -> Option.TIER.canonicalize("gold"));
+    }
+
+    @Test
+    public void testRelaxedTruncateCanonicalization()
+    {
+        // Accepted boolean spellings normalize to canonical 'true'/'false'.
+        for (String t : new String[]{ "true", "yes", "1", "TRUE", "Yes" })
+            assertEquals("true", Option.RELAXED_TRUNCATE.canonicalize(t));
+        for (String f : new String[]{ "false", "no", "0", "FALSE", "No" })
+            assertEquals("false", Option.RELAXED_TRUNCATE.canonicalize(f));
+
+        assertFalse(Option.RELAXED_TRUNCATE.quoted());
+        assertThrows("Invalid boolean value", () -> Option.RELAXED_TRUNCATE.canonicalize("maybe"));
+    }
+
+    @Test
+    public void testIsRelaxedTruncateHelper()
+    {
+        Map<String, ByteBuffer> extensions = new HashMap<>();
+
+        // Absent option means strict (false).
+        assertFalse(NetflixTableOptions.isRelaxedTruncate(extensions));
+        assertNull(NetflixTableOptions.get(extensions, Option.RELAXED_TRUNCATE));
+
+        extensions.put("netflix_relaxed_truncate", NetflixTableOptions.encode("true"));
+        assertTrue(NetflixTableOptions.isRelaxedTruncate(extensions));
+        assertEquals("true", NetflixTableOptions.get(extensions, Option.RELAXED_TRUNCATE));
+
+        extensions.put("netflix_relaxed_truncate", NetflixTableOptions.encode("false"));
+        assertFalse(NetflixTableOptions.isRelaxedTruncate(extensions));
     }
 
     @Test

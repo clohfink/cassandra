@@ -6017,6 +6017,27 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
         }
     }
 
+    /**
+     * Netflix emergency operation. See {@link StorageServiceMBean#truncateRelaxed(String, String)}
+     * for full semantics and operator caveats. Always takes the relaxed code path regardless of
+     * the per-table netflix_relaxed_truncate option.
+     */
+    public void truncateRelaxed(String keyspace, String table) throws TimeoutException, IOException
+    {
+        verifyKeyspaceIsValid(keyspace);
+        logger.warn("Operator-initiated emergency relaxed TRUNCATE of {}.{} via JMX (bypassing " +
+                    "the per-table netflix_relaxed_truncate option)",
+                    keyspace, table);
+        try
+        {
+            StorageProxy.truncateBlockingRelaxed(keyspace, table);
+        }
+        catch (UnavailableException e)
+        {
+            throw new IOException(e.getMessage());
+        }
+    }
+
     public Map<InetAddress, Float> getOwnership()
     {
         List<Token> sortedTokens = tokenMetadata.sortedTokens();

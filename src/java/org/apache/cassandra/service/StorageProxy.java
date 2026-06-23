@@ -46,6 +46,7 @@ import com.google.common.collect.Iterables;
 import com.google.common.util.concurrent.Uninterruptibles;
 
 import com.netflix.cassandra.backups.InvalidS3Exception;
+import com.netflix.cassandra.schema.NetflixTableOptions;
 import org.apache.cassandra.service.paxos.Ballot;
 import org.apache.cassandra.service.paxos.Commit;
 import org.apache.cassandra.service.paxos.ContentionStrategy;
@@ -97,6 +98,7 @@ import org.apache.cassandra.exceptions.ReadTimeoutException;
 import org.apache.cassandra.exceptions.RequestFailureException;
 import org.apache.cassandra.exceptions.RequestFailureReason;
 import org.apache.cassandra.exceptions.RequestTimeoutException;
+import org.apache.cassandra.exceptions.TruncateException;
 import org.apache.cassandra.exceptions.UnavailableException;
 import org.apache.cassandra.exceptions.WriteFailureException;
 import org.apache.cassandra.exceptions.WriteTimeoutException;
@@ -2496,6 +2498,19 @@ public class StorageProxy implements StorageProxyMBean
     public static void truncateBlocking(String keyspace, String cfname) throws UnavailableException, TimeoutException
     {
         logger.debug("Starting a blocking truncate operation on keyspace {}, CF {}", keyspace, cfname);
+
+        if (isRelaxedTruncateFor(keyspace, cfname))
+            truncateBlockingRelaxed(keyspace, cfname);
+        else
+            truncateBlockingStrict(keyspace, cfname);
+    }
+
+    /**
+     * Strict (upstream) TRUNCATE: requires every ring member to be UP. Throws
+     * {@link UnavailableException} if any token owner is unreachable.
+     */
+    private static void truncateBlockingStrict(String keyspace, String cfname) throws UnavailableException, TimeoutException
+    {
         if (isAnyStorageHostDown())
         {
             logger.info("Cannot perform truncate, some hosts are down");
@@ -2507,14 +2522,76 @@ public class StorageProxy implements StorageProxyMBean
         }
 
         Set<InetAddressAndPort> allEndpoints = StorageService.instance.getLiveRingMembers(true);
+        sendAndBlock(allEndpoints, allEndpoints.size(), keyspace, cfname);
+    }
 
-        int blockFor = allEndpoints.size();
+    /**
+     * Relaxed TRUNCATE: best-effort against the full token-owner set. Performs the truncate on
+     * every replica that acks; any replica that doesn't ack (failed, unresponsive, or
+     * gossip-unreachable) is surfaced via {@link RelaxedTruncateResponseHandler#missingResponses()}
+     * and the caller is expected to retry the TRUNCATE until it completes cleanly.
+     *
+     * Public so that {@link StorageService#truncateRelaxed(String, String)} can invoke this path
+     * as an operator escape-hatch (JMX) without requiring the per-table netflix_relaxed_truncate option.
+     */
+    public static void truncateBlockingRelaxed(String keyspace, String cfname) throws UnavailableException, TimeoutException
+    {
+        Set<InetAddressAndPort> targets = StorageService.instance.getTokenMetadata().getAllEndpoints();
+        Set<InetAddressAndPort> live = StorageService.instance.getLiveRingMembers(true);
+
+        // Sanity floor: refuse to truncate with zero live members.
+        if (live.isEmpty())
+            throw UnavailableException.create(ConsistencyLevel.ANY, 1, 0);
+
+        RelaxedTruncateResponseHandler responseHandler = new RelaxedTruncateResponseHandler(targets);
+        Tracing.trace("Enqueuing relaxed truncate messages to live hosts {} (full target set {})", live, targets);
+        Message<TruncateRequest> message = Message.out(TRUNCATE_REQ, new TruncateRequest(keyspace, cfname));
+        for (InetAddressAndPort endpoint : live)
+            MessagingService.instance().sendWithCallback(message, endpoint, responseHandler);
+
+        try
+        {
+            responseHandler.get();
+        }
+        catch (TimeoutException e)
+        {
+            Tracing.trace("Timed out");
+            throw e;
+        }
+
+        Set<InetAddressAndPort> missing = responseHandler.missingResponses();
+        if (!missing.isEmpty())
+        {
+            logger.warn("Relaxed TRUNCATE of {}.{} did not complete on all replicas; missing acks from {}. " +
+                        "The TRUNCATE has been performed on the replicas that did ack; retry the TRUNCATE " +
+                        "until it completes cleanly.",
+                        keyspace, cfname, missing);
+            throw new TruncateException("Relaxed TRUNCATE of " + keyspace + '.' + cfname +
+                                        " is incomplete; missing acks from " + missing +
+                                        ". Retry the TRUNCATE.");
+        }
+    }
+
+    /**
+     * Returns true iff TRUNCATE on the given table should take the relaxed path, i.e. the table
+     * opts in via the {@code netflix_relaxed_truncate} table option. Defensive against missing
+     * schema (treat as strict).
+     */
+    private static boolean isRelaxedTruncateFor(String keyspace, String cfname)
+    {
+        TableMetadata tm = Schema.instance.getTableMetadata(keyspace, cfname);
+        return tm != null && NetflixTableOptions.isRelaxedTruncate(tm.params.extensions);
+    }
+
+    private static void sendAndBlock(Set<InetAddressAndPort> endpoints, int blockFor, String keyspace, String cfname)
+    throws TimeoutException
+    {
         final TruncateResponseHandler responseHandler = new TruncateResponseHandler(blockFor);
 
         // Send out the truncate calls and track the responses with the callbacks.
-        Tracing.trace("Enqueuing truncate messages to hosts {}", allEndpoints);
+        Tracing.trace("Enqueuing truncate messages to hosts {}", endpoints);
         Message<TruncateRequest> message = Message.out(TRUNCATE_REQ, new TruncateRequest(keyspace, cfname));
-        for (InetAddressAndPort endpoint : allEndpoints)
+        for (InetAddressAndPort endpoint : endpoints)
             MessagingService.instance().sendWithCallback(message, endpoint, responseHandler);
 
         // Wait for all

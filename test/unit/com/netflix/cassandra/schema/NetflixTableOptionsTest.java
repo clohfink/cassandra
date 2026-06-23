@@ -73,6 +73,26 @@ public class NetflixTableOptionsTest extends CQLTester
     }
 
     @Test
+    public void testRelaxedTruncateStoredAndRendered()
+    {
+        createTable("CREATE TABLE %s (k int PRIMARY KEY, v int) WITH netflix_relaxed_truncate = true");
+
+        TableMetadata metadata = currentTableMetadata();
+        // Stored in extensions and exposed via the typed helper the TRUNCATE path reads.
+        assertEquals(ByteBufferUtil.bytes("true"), metadata.params.extensions.get("netflix_relaxed_truncate"));
+        assertTrue(NetflixTableOptions.isRelaxedTruncate(metadata.params.extensions));
+
+        // Rendered as a bare boolean first-class option by DESCRIBE.
+        assertTrue(metadata.toCqlString(false, false).contains("AND netflix_relaxed_truncate = true"));
+
+        // A table that doesn't opt in renders no relaxed-truncate option and is strict.
+        String other = createTable("CREATE TABLE %s (k int PRIMARY KEY, v int)");
+        TableMetadata otherMeta = Schema.instance.getTableMetadata(KEYSPACE, other);
+        assertFalse(NetflixTableOptions.isRelaxedTruncate(otherMeta.params.extensions));
+        assertFalse(otherMeta.toCqlString(false, false).contains("netflix_relaxed_truncate"));
+    }
+
+    @Test
     public void testAlterAddsAndUpdatesNetflixOptionsPreservingOthers()
     {
         createTable("CREATE TABLE %s (k int PRIMARY KEY, v int) WITH netflix_tier = 1");
@@ -224,6 +244,14 @@ public class NetflixTableOptionsTest extends CQLTester
     {
         assertRejected("CREATE TABLE " + KEYSPACE + ".netflix_bad_immutable (k int PRIMARY KEY, v int) " +
                        "WITH netflix_immutable = 'maybe'",
+                       "invalid boolean value");
+    }
+
+    @Test
+    public void testNonBooleanRelaxedTruncateIsRejected()
+    {
+        assertRejected("CREATE TABLE " + KEYSPACE + ".netflix_bad_relaxed (k int PRIMARY KEY, v int) " +
+                       "WITH netflix_relaxed_truncate = 'maybe'",
                        "invalid boolean value");
     }
 

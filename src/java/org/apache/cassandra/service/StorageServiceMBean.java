@@ -523,6 +523,34 @@ public interface StorageServiceMBean extends NotificationEmitter
     public void truncate(String keyspace, String table)throws TimeoutException, IOException;
 
     /**
+     * <b>Netflix emergency operation — use with care.</b> Performs a "relaxed" TRUNCATE on
+     * the given table, bypassing the per-table {@code netflix_relaxed_truncate} table option.
+     * Intended for incident response on tables that did not opt in to relaxed truncates ahead of time
+     * — for example, reclaiming disk on the live replicas while a node is down and the
+     * cluster is at imminent risk of running out of space.
+     *
+     * <p>Semantics match the normal relaxed path: the truncate is performed on every replica
+     * that acks; any replica that didn't ack (down, unresponsive, or failure) is named in
+     * the {@link org.apache.cassandra.exceptions.TruncateException} thrown back to the
+     * caller, and a coordinator-side WARN is logged. The operator is expected to re-issue
+     * this call until it returns cleanly.
+     *
+     * <p><b>Side effects to be aware of before invoking:</b>
+     * <ul>
+     *   <li>Replicas that did not ack still hold the pre-truncate data and will serve it on
+     *       reads until the next successful (relaxed) TRUNCATE reaches them.</li>
+     *   <li>Any rows written between this call and the eventual successful retry are also
+     *       removed; there is no point-in-time replay.</li>
+     *   <li>This operation does not change the table's schema. Subsequent TRUNCATEs (e.g.
+     *       from clients via CQL) follow the table's normal gates.</li>
+     * </ul>
+     *
+     * @param keyspace The keyspace to truncate from.
+     * @param table The table to truncate data from.
+     */
+    public void truncateRelaxed(String keyspace, String table) throws TimeoutException, IOException;
+
+    /**
      * given a list of tokens (representing the nodes in the cluster), returns
      *   a mapping from {@code "token -> %age of cluster owned by that token"}
      */

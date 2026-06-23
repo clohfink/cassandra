@@ -19,6 +19,7 @@ package com.netflix.cassandra.schema;
 
 import java.nio.ByteBuffer;
 import java.nio.charset.CharacterCodingException;
+import java.util.Map;
 
 import com.google.common.collect.ImmutableMap;
 
@@ -97,6 +98,29 @@ public final class NetflixTableOptions
                     throw new SyntaxException(format("Invalid value %s for table option '%s'; must be an integer between %d and %d",
                                                      value, optionName(), MIN_TIER, MAX_TIER));
                 return Integer.toString(tier);
+            }
+
+            @Override
+            public boolean quoted()
+            {
+                return false;
+            }
+        },
+
+        /**
+         * When {@code true}, {@code TRUNCATE} on this table takes the Netflix "relaxed" path: it
+         * succeeds against the live ring members even when some nodes are down, instead of requiring
+         * every replica to be up. Boolean valued; defaults to off (absent).
+         *
+         * <p>Unlike {@link #IMMUTABLE} and {@link #TIER}, this option is enforced &mdash; it is read
+         * at TRUNCATE time by {@link org.apache.cassandra.service.StorageProxy}.
+         */
+        RELAXED_TRUNCATE("relaxed_truncate")
+        {
+            @Override
+            public String canonicalize(String value)
+            {
+                return Boolean.toString(PropertyDefinitions.parseBoolean(optionName(), value));
             }
 
             @Override
@@ -195,5 +219,25 @@ public final class NetflixTableOptions
         {
             throw new RuntimeException("Invalid (non UTF-8) value stored for Netflix table option", e);
         }
+    }
+
+    /**
+     * Returns the canonical stored value of {@code option} for a table whose
+     * {@link org.apache.cassandra.schema.TableParams#extensions} are {@code extensions}, or
+     * {@code null} if the option is not set on the table.
+     */
+    public static String get(Map<String, ByteBuffer> extensions, Option option)
+    {
+        ByteBuffer value = extensions.get(option.optionName());
+        return value == null ? null : decode(value);
+    }
+
+    /**
+     * Whether the table opts into relaxed TRUNCATE via {@code netflix_relaxed_truncate = true}.
+     * Absent (or any value other than {@code true}) means the strict, all-nodes-up path is used.
+     */
+    public static boolean isRelaxedTruncate(Map<String, ByteBuffer> extensions)
+    {
+        return Boolean.parseBoolean(get(extensions, Option.RELAXED_TRUNCATE));
     }
 }
