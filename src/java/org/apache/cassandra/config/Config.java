@@ -106,7 +106,7 @@ public class Config
 
     public volatile int import_concurrency = 4;
     public volatile int import_max_disk_percentage = 75;
-    public volatile DataRateSpec.LongBytesPerSecondBound import_disk_throughput = new DataRateSpec.LongBytesPerSecondBound("300MiB/s");
+    public volatile DataRateSpec.LongBytesPerSecondBound import_disk_throughput = new DataRateSpec.LongBytesPerSecondBound("64MiB/s");
 
     /** The configuration of timestamp bounds */
     public volatile DurationSpec.LongMicrosecondsBound maximum_timestamp_warn_threshold = null;

@@ -3,13 +3,63 @@
 This runbook provides operational guidance for Netflix's Remote SSTable Import system, including common failure scenarios, troubleshooting procedures, and performance tuning.
 
 ## Table of Contents
-1. [Common Failure Scenarios](#common-failure-scenarios)
-2. [Monitoring and Alerting](#monitoring-and-alerting)
-3. [Performance Tuning](#performance-tuning)
-4. [Capacity Planning](#capacity-planning)
-5. [Troubleshooting Guide](#troubleshooting-guide)
-6. [JMX Operations](#jmx-operations)
-7. [Emergency Procedures](#emergency-procedures)
+1. [Nodetool `remoteimport` Command](#nodetool-remoteimport-command)
+2. [Common Failure Scenarios](#common-failure-scenarios)
+3. [Monitoring and Alerting](#monitoring-and-alerting)
+4. [Performance Tuning](#performance-tuning)
+5. [Capacity Planning](#capacity-planning)
+6. [Troubleshooting Guide](#troubleshooting-guide)
+7. [JMX Operations](#jmx-operations)
+8. [Emergency Procedures](#emergency-procedures)
+
+---
+
+## Nodetool `remoteimport` Command
+
+The `nodetool remoteimport` command is the primary operator entry point. It
+talks to the local `ImportJobManager` MBean over JMX and exposes every
+hot-tunable property plus live job state.
+
+```bash
+# List active import jobs on this node
+nodetool remoteimport status
+
+# Detailed status for one job (same map exposed via netflix_views.local_import)
+nodetool remoteimport status <jobId>
+
+# Dump every hot-tunable config value
+nodetool remoteimport getconfig
+
+# Tune any single hot property at runtime — names match `getconfig` output
+nodetool remoteimport setconfig import_concurrency 8
+nodetool remoteimport setconfig import_http_retry_max_attempts 5
+nodetool remoteimport setconfig import_disk_throughput_bytes_per_sec 209715200  # 200 MiB/s
+
+# Cancel a single in-flight job
+nodetool remoteimport cancel <jobId>
+
+# Reap orphaned in-memory jobs and orphaned `imports/<jobId>/` dirs
+nodetool remoteimport cleanup
+```
+
+Valid keys for `setconfig` (these are the same names returned by `getconfig`):
+
+| Key | Type | Notes |
+|-----|------|-------|
+| `import_concurrency` | int | Resizes the unzip thread pool as a side effect |
+| `import_max_disk_percentage` | int (0-100) | Disk-usage ceiling for staging |
+| `import_disk_throughput_bytes_per_sec` | double | Disk write rate limit |
+| `import_http_retry_max_attempts` | int | |
+| `import_http_retry_initial_delay_ms` | int | |
+| `import_http_retry_backoff_multiplier` | double | |
+| `import_http_retry_max_delay_ms` | int | |
+| `import_http_retry_jitter_percentage` | int (0-100) | |
+| `import_cleanup_initial_delay_seconds` | int | Reschedules the cleanup task |
+| `import_cleanup_period_seconds` | int | Reschedules the cleanup task |
+| `import_cleanup_min_age_seconds` | int | |
+
+Run on every node you want to tune — `setconfig` updates state on the local
+node only, just like the cassandra.yaml values it shadows.
 
 ---
 
@@ -36,20 +86,22 @@ WHERE keyspace_name = 'netflix_views' AND table_name = 'local_import';
 -- 2. Identify stuck/failed nodes
 -- Look for nodes with ERROR status or different states
 
--- 3. Check error messages via JMX or logs on stuck nodes
--- See "JMX Operations" section below
+-- 3. Check per-job state on a stuck node:
+--    `nodetool remoteimport status` to list jobs on that node
+--    `nodetool remoteimport status <jobId>` for the full status map
+--    Logs: grep "ImportJob" /var/log/cassandra/system.log
 
--- 4. If recoverable, reset the job
+-- 4. If recoverable, reset the job (resets failed nodes to VALIDATING)
 UPDATE system_distributed.remote_import
-SET status = 'VALIDATING'
-WHERE id = <UUID>;
+SET state = 'staging'
+WHERE id = <UUID> AND target_keyspace = '<ks>' AND target_table = '<tbl>';
 
 -- 5. If not recoverable, cancel the import
 DELETE FROM system_distributed.remote_import WHERE id = <UUID>;
 ```
 
 **Prevention:**
-- Increase STAGED timeout: `import_staged_timeout_ms` (default: 3600000 = 1 hour)
+- Per-step timeouts are defined in code via `ImportStep.timeoutMillis()`; default is `ImportJob.DEFAULT_TIMEOUT_MS` (1 hour)
 - Ensure all nodes can reach HTTP source
 - Monitor network connectivity between nodes
 
@@ -74,23 +126,29 @@ DELETE FROM system_distributed.remote_import WHERE id = <UUID>;
 curl -I "http://source-url/sstable.zip"
 
 # 2. Check HTTP retry configuration
-# Via JMX: ImportJobManagerMBean attributes
-# - import_http_max_retries (default: 5)
-# - import_http_retry_delay_ms (default: 1000)
+nodetool remoteimport getconfig | grep import_http_retry
+# Defaults:
+#   import_http_retry_max_attempts        3
+#   import_http_retry_initial_delay_ms    1000
+#   import_http_retry_backoff_multiplier  2.0
+#   import_http_retry_max_delay_ms        30000
+#   import_http_retry_jitter_percentage   10
 
 # 3. Generate new signed URL if expired (for S3)
 # Update the sources in remote_import table with new URL
 
-# 4. Restart import with reset
+# 4. Restart import with reset (resets failed nodes to VALIDATING)
 UPDATE system_distributed.remote_import
-SET status = 'VALIDATING'
-WHERE id = <UUID>;
+SET state = 'staging'
+WHERE id = <UUID> AND target_keyspace = '<ks>' AND target_table = '<tbl>';
 ```
 
 **Prevention:**
 - Generate S3 signed URLs with sufficient expiry time (recommend 24+ hours)
 - Configure appropriate retry settings for your network environment
-- Set `import_http_connect_timeout_ms` and `import_http_read_timeout_ms` appropriately
+- Tune at runtime with `nodetool remoteimport setconfig` — e.g.
+  `setconfig import_http_retry_max_attempts 5`,
+  `setconfig import_http_retry_max_delay_ms 60000`
 
 ---
 
@@ -117,21 +175,23 @@ df -h /path/to/cassandra/data
 du -sh /var/lib/cassandra/data/*/*/imports/
 
 # 3. Clean up orphaned staging directories
-# Via JMX: ImportJobManagerMBean.cleanupOrphanedDirectories()
+nodetool remoteimport cleanup
+# (runs both orphaned-job cleanup and orphaned-directory cleanup)
 # Or manually: find /var/lib/cassandra/data/*/*/imports/ -type d -mtime +1 -exec rm -rf {} \;
 
-# 4. Adjust disk usage threshold if needed
-# import_max_disk_percentage (default: 80)
+# 4. Adjust disk usage threshold if needed (default 75)
+nodetool remoteimport setconfig import_max_disk_percentage 70
 # Lower value = more conservative, higher value = more aggressive
 
-# 5. Cancel or reduce concurrent imports
-# Check: ImportJobManagerMBean.getActiveJobCount()
+# 5. Reduce concurrent imports or check what's running
+nodetool remoteimport status
+nodetool remoteimport setconfig import_concurrency 2
 ```
 
 **Prevention:**
 - Monitor disk usage on Cassandra data drives
 - Set appropriate `import_max_disk_percentage` (recommend 70-80%)
-- Schedule periodic cleanup: automatic cleanup runs every hour
+- Schedule periodic cleanup: automatic cleanup runs on the `import_cleanup_period` interval (default 1h)
 - Note: Staging space comes from table data directories, not a separate staging area
 
 ---
@@ -152,23 +212,20 @@ du -sh /var/lib/cassandra/data/*/*/imports/
 **Recovery Procedure:**
 ```bash
 # 1. Check which step timed out from error message
-# Different steps have different timeouts
+# Each step defines its own timeout via ImportStep.timeoutMillis()
 
-# 2. Adjust timeout values via configuration
-# - import_download_timeout_ms (default: 3600000 = 1 hour)
-# - import_staged_timeout_ms (default: 3600000 = 1 hour)
-# - import_default_timeout_ms (default: 3600000 = 1 hour)
+# 2. Adjust per-step timeouts in code (no yaml knob today)
+#    Default is ImportJob.DEFAULT_TIMEOUT_MS (1 hour); override
+#    timeoutMillis() on the specific step that is timing out.
 
-# 3. Restart import after increasing timeout
-# Edit cassandra.yaml and restart node, or
-# Use JMX to update if supported
+# 3. Restart import after the code change ships and node restarts.
 
 # 4. Consider splitting large imports into smaller chunks
 ```
 
 **Prevention:**
-- Set timeouts based on expected import size and network speed
-- For large imports (>10GB), increase download timeout to 2-4 hours
+- Set per-step timeouts based on expected import size and network speed
+- For large imports (>10GB), raise the download/unzip step timeouts to 2-4 hours
 - Monitor import duration metrics to establish baselines
 
 ---
@@ -266,36 +323,40 @@ import_concurrency: 4
 # Impact: Higher = faster imports but more CPU/memory usage
 
 # Rate Limiting
-import_disk_mbps: 100
-# Disk write rate limit in MB/s
+import_disk_throughput: 64MiB/s
+# Disk write rate limit (DataRateSpec — accepts e.g. 50MiB/s, 100MiB/s, 1GiB/s)
 # Recommendations:
-#   - SSD: 100-200 MB/s
-#   - Cloud (EBS): 50-100 MB/s
+#   - SSD: 100MiB/s - 200MiB/s
+#   - Cloud (EBS): 50MiB/s - 100MiB/s
 # Impact: Prevents import from saturating disk I/O
 
 # Disk Space Management
-import_max_disk_percentage: 80
+import_max_disk_percentage: 75
 # Maximum disk usage percentage before rejecting imports
 # Recommendations:
 #   - Production: 70-80%
 #   - Development: 85-90%
 # Impact: Lower = more safety margin, higher = more utilization
 
-# Timeouts
-import_download_timeout_ms: 3600000  # 1 hour
-import_staged_timeout_ms: 3600000     # 1 hour
-import_default_timeout_ms: 3600000    # 1 hour
-# Adjust based on:
-#   - Typical SSTable size
-#   - Network bandwidth
-#   - Cluster size (STAGED timeout)
-
-# HTTP Settings
-import_http_max_retries: 5
-import_http_retry_delay_ms: 1000
-import_http_connect_timeout_ms: 10000
-import_http_read_timeout_ms: 30000
+# HTTP Retry Settings
+import_http_retry_max_attempts: 3
+import_http_retry_initial_delay: 1000ms
+import_http_retry_backoff_multiplier: 2.0
+import_http_retry_max_delay: 30000ms
+import_http_retry_jitter_percentage: 10
 # Adjust for network reliability
+
+# Cleanup Task Settings
+import_cleanup_initial_delay: 1h
+import_cleanup_period: 1h
+import_cleanup_min_age: 1d
+import_cleanup_max_retries: 3
+import_cleanup_retry_initial_delay: 300s
+# Controls how often orphaned jobs/directories are reaped
+
+# Timeouts
+# Per-step timeouts are defined in code (ImportStep.timeoutMillis()).
+# Default is ImportJob.DEFAULT_TIMEOUT_MS (1 hour). No yaml knob today.
 ```
 
 ### Performance Guidelines
@@ -303,22 +364,19 @@ import_http_read_timeout_ms: 30000
 **For Small Imports (< 1 GB):**
 ```yaml
 import_concurrency: 2
-import_disk_mbps: 50
-import_download_timeout_ms: 600000  # 10 minutes
+import_disk_throughput: 50MiB/s
 ```
 
 **For Medium Imports (1-10 GB):**
 ```yaml
 import_concurrency: 4
-import_disk_mbps: 100
-import_download_timeout_ms: 3600000  # 1 hour
+import_disk_throughput: 100MiB/s
 ```
 
 **For Large Imports (> 10 GB):**
 ```yaml
 import_concurrency: 8
-import_disk_mbps: 200
-import_download_timeout_ms: 7200000  # 2 hours
+import_disk_throughput: 200MiB/s
 ```
 
 ---
@@ -399,17 +457,21 @@ SELECT * FROM system_schema.keyspaces WHERE keyspace_name = '<target_keyspace>';
 
 **Investigate:**
 ```bash
-# Check active jobs
-# Via JMX: ImportJobManagerMBean.getActiveJobCount()
+# List active jobs and their current step/progress
+nodetool remoteimport status
 
-# Check download rate
-# Monitor metrics: ImportJob.BytesDownloaded
+# Drill into a single job
+nodetool remoteimport status <jobId>
+
+# Check download rate metric
+# Monitor: ImportJob.BytesDownloaded
 
 # Check disk I/O
 iostat -x 5
 
-# Check if rate limiting is too aggressive
-# Review import_disk_mbps setting
+# Check current rate limit and raise if needed (bytes/sec)
+nodetool remoteimport getconfig | grep import_disk_throughput
+nodetool remoteimport setconfig import_disk_throughput_bytes_per_sec 209715200
 ```
 
 ### Cannot Cancel Import
@@ -420,60 +482,76 @@ iostat -x 5
 
 **Solution:**
 ```bash
-# 1. Force cancel via JMX
-# ImportJobManagerMBean.cancelJob(importId)
+# 1. Cancel the in-memory job directly
+nodetool remoteimport cancel <jobId>
 
-# 2. If still running, restart Cassandra node
+# 2. Or, if the row was already deleted from system_distributed.remote_import
+#    but the local job is still tracked, reap orphans:
+nodetool remoteimport cleanup
+
+# 3. If still running, restart Cassandra node
 nodetool drain
 # restart cassandra service
 
-# 3. Clean up staging directory manually
-rm -rf /path/to/staging/<import-id>*
+# 4. Clean up staging directory manually (in table data dirs)
+find /var/lib/cassandra/data/*/*/imports/<import-id>* -type d -exec rm -rf {} +
 ```
 
 ---
 
 ## JMX Operations
 
+Prefer `nodetool remoteimport` (see the [Nodetool `remoteimport` Command](#nodetool-remoteimport-command) section above). The raw MBean is documented here for the cases where you need to drive it programmatically or from another JMX client.
+
 ### ImportJobManagerMBean
 
 **MBean Name:** `com.netflix.cassandra.importing:type=ImportJobManager`
 
-**Useful Operations:**
+**State / cleanup:**
 
 ```java
-// Get active imports
 int getActiveJobCount()
-List<String> getActiveJobIds()
-
-// Cancel specific import
-void cancelJob(String importId)
-
-// Cleanup operations
-void cleanupOrphanedJobs()
-void cleanupOrphanedDirectories()
-
-// Get job details
-Map<String, String> getJobStatus(String importId)
-
-// Configuration (read-only)
-int getImportConcurrency()
-int getImportMaxDiskPercentage()
-String getImportStagingDirectory()
+Map<String, String> getActiveJobs()                  // jobId -> summary line
+Map<String, String> getJobStatus(String jobId)       // detailed status map
+boolean cancelJob(String jobId)                      // cancel one in-flight job
+void cleanupOrphanedJobs()                           // reaps both jobs and imports/ dirs
 ```
 
-**Example using nodetool:**
+**Hot-tunable configs (read + write):**
+
+```java
+Map<String, String> getConfiguration()
+void setConfiguration(String name, String value)
+
+// Equivalent typed getters/setters for individual properties:
+int    getImportConcurrency()                    / setImportConcurrency(int)
+int    getImportMaxDiskPercentage()              / setImportMaxDiskPercentage(int)
+double getImportDiskThroughputBytesPerSec()      / setImportDiskThroughputBytesPerSec(double)
+int    getImportHttpRetryMaxAttempts()           / setImportHttpRetryMaxAttempts(int)
+double getImportHttpRetryBackoffMultiplier()     / setImportHttpRetryBackoffMultiplier(double)
+int    getImportHttpRetryInitialDelayMs()        / setImportHttpRetryInitialDelayMs(int)
+int    getImportHttpRetryMaxDelayMs()            / setImportHttpRetryMaxDelayMs(int)
+int    getImportHttpRetryJitterPercentage()      / setImportHttpRetryJitterPercentage(int)
+int    getImportCleanupInitialDelaySeconds()     / setImportCleanupInitialDelaySeconds(int)
+int    getImportCleanupPeriodSeconds()           / setImportCleanupPeriodSeconds(int)
+int    getImportCleanupMinAgeSeconds()           / setImportCleanupMinAgeSeconds(int)
+```
+
+`setImportConcurrency` also resizes the unzip thread pool;
+`setImportCleanupInitialDelaySeconds` / `setImportCleanupPeriodSeconds` reschedule the cleanup task.
+
+**Raw `sjk` examples (only when nodetool isn't available):**
 ```bash
-# List active imports
-nodetool sjk mx -b com.netflix.cassandra.importing:type=ImportJobManager -f getActiveJobIds
+# Active jobs map (jobId -> summary)
+nodetool sjk mx -b com.netflix.cassandra.importing:type=ImportJobManager -f ActiveJobs
 
-# Cancel import
+# Cancel one job
 nodetool sjk mx -b com.netflix.cassandra.importing:type=ImportJobManager \
-  -op cancelJob -a <import-uuid>
+  -op cancelJob -a <jobId>
 
-# Cleanup orphaned directories
+# Bump HTTP retry attempts at runtime
 nodetool sjk mx -b com.netflix.cassandra.importing:type=ImportJobManager \
-  -op cleanupOrphanedDirectories
+  -op setImportHttpRetryMaxAttempts -a 5
 ```
 
 ---
@@ -487,16 +565,17 @@ nodetool sjk mx -b com.netflix.cassandra.importing:type=ImportJobManager \
 # Stop new imports from starting
 # Existing imports will complete or timeout
 
-# 2. Via JMX (if CQL unavailable)
-# Cancel each active import
-for import_id in $(get_active_imports); do
-  nodetool sjk mx -op cancelJob -a $import_id
+# 2. Cancel each in-flight job individually:
+for jobId in $(nodetool remoteimport status | awk 'NR>1 {print $1}'); do
+  nodetool remoteimport cancel "$jobId"
 done
 
-# 3. Last resort: Disable import manager
-# Edit cassandra.yaml, add:
-# import_enabled: false
-# Restart Cassandra
+# 3. If CQL is unavailable, DELETE the rows via the active coordinator and
+# then run the cleanup on each node:
+nodetool remoteimport cleanup
+
+# 4. Last resort: stop accepting new imports at runtime
+nodetool remoteimport setconfig import_concurrency 0
 ```
 
 ### Recover from Cluster-Wide Import Failure

@@ -19,6 +19,7 @@
 package com.netflix.cassandra.importing;
 
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -42,10 +43,13 @@ import org.apache.cassandra.schema.KeyspaceMetadata;
 import org.apache.cassandra.schema.Schema;
 import org.apache.cassandra.schema.TableMetadata;
 import org.apache.cassandra.utils.Clock;
+import org.apache.cassandra.utils.MBeanWrapper;
 
 public class ImportJobManager implements ImportJobManagerMBean
 {
     private static final Logger logger = LoggerFactory.getLogger(ImportJobManager.class);
+
+    public static final String MBEAN_NAME = "com.netflix.cassandra.importing:type=ImportJobManager";
 
     private static final ImportJobManager instance = new ImportJobManager();
 
@@ -54,6 +58,7 @@ public class ImportJobManager implements ImportJobManagerMBean
 
     private ImportJobManager()
     {
+        MBeanWrapper.instance.registerMBean(this, MBEAN_NAME, MBeanWrapper.OnException.LOG);
         // Schedule cleanup task using configured values
         scheduleCleanupTask();
     }
@@ -569,5 +574,113 @@ public class ImportJobManager implements ImportJobManagerMBean
     {
         DatabaseDescriptor.setImportCleanupMinAgeSeconds(seconds);
         logger.info("Updated import cleanup min age to {}s", seconds);
+    }
+
+    @Override
+    public Map<String, String> getActiveJobs()
+    {
+        Map<String, String> out = new LinkedHashMap<>();
+        for (Map.Entry<UUID, ImportJob> e : jobs.entrySet())
+        {
+            ImportJob job = e.getValue();
+            Map<String, String> s = job.getStatusMap();
+            String summary = String.format("%s.%s | %s | step=%s | progress=%s",
+                                           job.targetKeyspace,
+                                           job.targetTable,
+                                           job.status.get(),
+                                           s.getOrDefault("step", "?"),
+                                           s.getOrDefault("progress", "?"));
+            out.put(e.getKey().toString(), summary);
+        }
+        return out;
+    }
+
+    @Override
+    public Map<String, String> getJobStatus(String jobId)
+    {
+        ImportJob job = jobs.get(UUID.fromString(jobId));
+        if (job == null)
+            return new LinkedHashMap<>();
+        Map<String, String> s = new LinkedHashMap<>();
+        s.put("id", job.id.toString());
+        s.put("keyspace", job.targetKeyspace);
+        s.put("table", job.targetTable);
+        s.put("status", String.valueOf(job.status.get()));
+        s.putAll(job.getStatusMap());
+        return s;
+    }
+
+    @Override
+    public boolean cancelJob(String jobId)
+    {
+        ImportJob job = jobs.get(UUID.fromString(jobId));
+        if (job == null)
+            return false;
+        job.cancel("Cancelled via nodetool");
+        return true;
+    }
+
+    @Override
+    public Map<String, String> getConfiguration()
+    {
+        Map<String, String> c = new LinkedHashMap<>();
+        c.put("import_concurrency", String.valueOf(getImportConcurrency()));
+        c.put("import_max_disk_percentage", String.valueOf(getImportMaxDiskPercentage()));
+        c.put("import_disk_throughput_bytes_per_sec", String.valueOf(getImportDiskThroughputBytesPerSec()));
+        c.put("import_http_retry_max_attempts", String.valueOf(getImportHttpRetryMaxAttempts()));
+        c.put("import_http_retry_initial_delay_ms", String.valueOf(getImportHttpRetryInitialDelayMs()));
+        c.put("import_http_retry_backoff_multiplier", String.valueOf(getImportHttpRetryBackoffMultiplier()));
+        c.put("import_http_retry_max_delay_ms", String.valueOf(getImportHttpRetryMaxDelayMs()));
+        c.put("import_http_retry_jitter_percentage", String.valueOf(getImportHttpRetryJitterPercentage()));
+        c.put("import_cleanup_initial_delay_seconds", String.valueOf(getImportCleanupInitialDelaySeconds()));
+        c.put("import_cleanup_period_seconds", String.valueOf(getImportCleanupPeriodSeconds()));
+        c.put("import_cleanup_min_age_seconds", String.valueOf(getImportCleanupMinAgeSeconds()));
+        c.put("active_job_count", String.valueOf(getActiveJobCount()));
+        return c;
+    }
+
+    @Override
+    public void setConfiguration(String name, String value)
+    {
+        if (name == null || value == null)
+            throw new IllegalArgumentException("name and value must be non-null");
+        switch (name)
+        {
+            case "import_concurrency":
+                setImportConcurrency(Integer.parseInt(value));
+                return;
+            case "import_max_disk_percentage":
+                setImportMaxDiskPercentage(Integer.parseInt(value));
+                return;
+            case "import_disk_throughput_bytes_per_sec":
+                setImportDiskThroughputBytesPerSec(Double.parseDouble(value));
+                return;
+            case "import_http_retry_max_attempts":
+                setImportHttpRetryMaxAttempts(Integer.parseInt(value));
+                return;
+            case "import_http_retry_initial_delay_ms":
+                setImportHttpRetryInitialDelayMs(Integer.parseInt(value));
+                return;
+            case "import_http_retry_backoff_multiplier":
+                setImportHttpRetryBackoffMultiplier(Double.parseDouble(value));
+                return;
+            case "import_http_retry_max_delay_ms":
+                setImportHttpRetryMaxDelayMs(Integer.parseInt(value));
+                return;
+            case "import_http_retry_jitter_percentage":
+                setImportHttpRetryJitterPercentage(Integer.parseInt(value));
+                return;
+            case "import_cleanup_initial_delay_seconds":
+                setImportCleanupInitialDelaySeconds(Integer.parseInt(value));
+                return;
+            case "import_cleanup_period_seconds":
+                setImportCleanupPeriodSeconds(Integer.parseInt(value));
+                return;
+            case "import_cleanup_min_age_seconds":
+                setImportCleanupMinAgeSeconds(Integer.parseInt(value));
+                return;
+            default:
+                throw new IllegalArgumentException("Unknown import config key: " + name);
+        }
     }
 }

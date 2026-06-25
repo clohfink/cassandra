@@ -84,6 +84,8 @@ import org.apache.cassandra.metrics.ThreadPoolMetrics;
 import org.apache.cassandra.net.MessagingService;
 import org.apache.cassandra.net.MessagingServiceMBean;
 import org.apache.cassandra.service.ActiveRepairServiceMBean;
+import com.netflix.cassandra.importing.ImportJobManager;
+import com.netflix.cassandra.importing.ImportJobManagerMBean;
 import org.apache.cassandra.service.AutoRepairService;
 import org.apache.cassandra.service.AutoRepairServiceMBean;
 import org.apache.cassandra.service.MaintenanceCheckService;
@@ -152,6 +154,7 @@ public class NodeProbe implements AutoCloseable
     protected RolesCacheMBean rcProxy;
     protected AutoRepairServiceMBean autoRepairProxy;
     protected MaintenanceCheckServiceMBean mcProxy;
+    protected ImportJobManagerMBean importJobManagerProxy;
     protected Output output;
     private boolean failed;
 
@@ -280,6 +283,8 @@ public class NodeProbe implements AutoCloseable
             autoRepairProxy = JMX.newMBeanProxy(mbeanServerConn, name, AutoRepairServiceMBean.class);
             name = new ObjectName(MaintenanceCheckService.MBEAN_NAME);
             mcProxy = JMX.newMBeanProxy(mbeanServerConn, name, MaintenanceCheckServiceMBean.class);
+            name = new ObjectName(ImportJobManager.MBEAN_NAME);
+            importJobManagerProxy = JMX.newMBeanProxy(mbeanServerConn, name, ImportJobManagerMBean.class);
         }
         catch (MalformedObjectNameException e)
         {
@@ -2170,6 +2175,11 @@ public class NodeProbe implements AutoCloseable
     public ActiveRepairServiceMBean getRepairServiceProxy()
     {
         return arsProxy;
+    }
+
+    public ImportJobManagerMBean getImportJobManagerProxy()
+    {
+        return importJobManagerProxy;
     }
 
     public void reloadSslCerts() throws IOException

@@ -18,6 +18,8 @@
 
 package com.netflix.cassandra.importing;
 
+import java.util.Map;
+
 public interface ImportJobManagerMBean
 {
     /**
@@ -153,4 +155,53 @@ public interface ImportJobManagerMBean
      * @param seconds New minimum age in seconds
      */
     public void setImportCleanupMinAgeSeconds(int seconds);
+
+    /**
+     * Snapshot of all active import jobs on this node. The returned map is
+     * insertion-ordered by job id and contains one entry per job:
+     *
+     *   key   = {jobId}
+     *   value = "{keyspace}.{table} | {status} | step={step} | progress={pct}"
+     *
+     * Designed for human-friendly display from nodetool.
+     */
+    public Map<String, String> getActiveJobs();
+
+    /**
+     * Detailed status for a single active job (the same map exposed via the
+     * netflix_views.local_import virtual table). Returns an empty map if no
+     * job with the given id is tracked on this node.
+     *
+     * @param jobId UUID string of the import job
+     */
+    public Map<String, String> getJobStatus(String jobId);
+
+    /**
+     * Cancel a single in-flight import job. The job is moved to CANCELLED
+     * state, any in-flight downloads are interrupted, and the staging
+     * directory is cleaned up.
+     *
+     * @param jobId UUID string of the import job
+     * @return true if a job with that id was found and cancellation was
+     *         attempted; false if no such job exists on this node.
+     */
+    public boolean cancelJob(String jobId);
+
+    /**
+     * Returns the full set of hot-tunable import configuration values
+     * (insertion-ordered for human-friendly display).
+     */
+    public Map<String, String> getConfiguration();
+
+    /**
+     * Set a single hot-tunable configuration value by name. The accepted
+     * keys mirror those returned by {@link #getConfiguration()}.
+     *
+     * @param name  configuration key (e.g. "import_concurrency",
+     *              "import_http_retry_max_attempts")
+     * @param value string representation of the new value
+     * @throws IllegalArgumentException if the key is unknown or the value
+     *         cannot be parsed for that key
+     */
+    public void setConfiguration(String name, String value);
 }

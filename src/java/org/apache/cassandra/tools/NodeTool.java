@@ -283,6 +283,15 @@ public class NodeTool
                .withCommand(RepairAdmin.SummarizePendingCmd.class)
                .withCommand(RepairAdmin.SummarizeRepairedCmd.class);
 
+        builder.withGroup("remoteimport")
+               .withDescription("inspect and tune the remote SSTable import system")
+               .withDefaultCommand(RemoteImportAdmin.StatusCmd.class)
+               .withCommand(RemoteImportAdmin.StatusCmd.class)
+               .withCommand(RemoteImportAdmin.GetConfigCmd.class)
+               .withCommand(RemoteImportAdmin.SetConfigCmd.class)
+               .withCommand(RemoteImportAdmin.CancelCmd.class)
+               .withCommand(RemoteImportAdmin.CleanupCmd.class);
+
         Cli<NodeToolCmdRunnable> parser = builder.build();
 
         int status = 0;
