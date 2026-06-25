@@ -31,7 +31,7 @@ alias cl='cd /mnt/data/cassandra/logs'
 alias data='cd /mnt/data/cassandra/data'
 
 # --- Process control ---
-alias ccstart='rm /var/run/nflx-cmd/cass/disabled;echo > /var/run/nflx-cmd/cass/start'
+alias ccstart='rm -f /var/run/nflx-cmd/cass/disabled;echo > /var/run/nflx-cmd/cass/start'
 alias ccstop='touch /var/run/nflx-cmd/cass/disabled;echo > /var/run/nflx-cmd/cass/stop'
 alias ccstopf='touch /var/run/nflx-cmd/cass/disabled;kill -9 $(cat /run/cassandra/cassandra.pid)'
 
