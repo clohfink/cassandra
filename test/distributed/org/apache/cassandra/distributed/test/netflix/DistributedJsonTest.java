@@ -20,6 +20,9 @@ package org.apache.cassandra.distributed.test.netflix;
 
 import org.junit.Test;
 
+import java.util.ArrayList;
+import java.util.List;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -28,6 +31,9 @@ import org.apache.cassandra.distributed.Cluster;
 import org.apache.cassandra.distributed.api.Row;
 import org.apache.cassandra.distributed.api.SimpleQueryResult;
 import org.apache.cassandra.distributed.test.TestBaseImpl;
+
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotEquals;
 
 
 public class DistributedJsonTest extends TestBaseImpl
@@ -97,5 +103,43 @@ public class DistributedJsonTest extends TestBaseImpl
                 mapper.readTree(row.getString("value"));
             }
         }
+    }
+
+    @Test
+    public void testClusterViewPagingSliceDoesNotRepeatFirstPage() throws Throwable
+    {
+        try (Cluster cluster = init(Cluster.build(3).start()))
+        {
+            SimpleQueryResult firstPage = cluster.get(1).executeInternalWithResult("SELECT host FROM netflix_views.cluster_view WHERE " +
+                                                                                   "keyspace_name = 'system_views' AND table_name = 'system_properties' LIMIT 1");
+            List<String> hosts = collectHosts(firstPage);
+            assertEquals(1, hosts.size());
+
+            SimpleQueryResult nextPage = cluster.get(1).executeInternalWithResult("SELECT host FROM netflix_views.cluster_view WHERE " +
+                                                                                  "keyspace_name = 'system_views' AND table_name = 'system_properties' AND host > ? LIMIT 1", hosts.get(0));
+            List<String> nextHosts = collectHosts(nextPage);
+            assertEquals(1, nextHosts.size());
+            assertNotEquals(hosts.get(0), nextHosts.get(0));
+
+            SimpleQueryResult firstReversePage = cluster.get(1).executeInternalWithResult("SELECT host FROM netflix_views.cluster_view WHERE " +
+                                                                                          "keyspace_name = 'system_views' AND table_name = 'system_properties' ORDER BY host DESC LIMIT 1");
+            List<String> reverseHosts = collectHosts(firstReversePage);
+            assertEquals(1, reverseHosts.size());
+
+            SimpleQueryResult nextReversePage = cluster.get(1).executeInternalWithResult("SELECT host FROM netflix_views.cluster_view WHERE " +
+                                                                                         "keyspace_name = 'system_views' AND table_name = 'system_properties' AND host < ? ORDER BY host DESC LIMIT 1",
+                                                                                         reverseHosts.get(0));
+            List<String> nextReverseHosts = collectHosts(nextReversePage);
+            assertEquals(1, nextReverseHosts.size());
+            assertNotEquals(reverseHosts.get(0), nextReverseHosts.get(0));
+        }
+    }
+
+    private static List<String> collectHosts(SimpleQueryResult result)
+    {
+        List<String> hosts = new ArrayList<>();
+        while (result.hasNext())
+            hosts.add(result.next().getString("host"));
+        return hosts;
     }
 }
