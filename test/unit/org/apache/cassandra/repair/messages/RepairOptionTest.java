@@ -32,6 +32,7 @@ import org.apache.cassandra.dht.Murmur3Partitioner;
 import org.apache.cassandra.dht.Range;
 import org.apache.cassandra.dht.Token;
 import org.apache.cassandra.repair.RepairParallelism;
+import org.apache.cassandra.streaming.PreviewKind;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -160,6 +161,49 @@ public class RepairOptionTest
         options.put(RepairOption.FORCE_REPAIR_KEY, "false");
         option = RepairOption.parse(options, Murmur3Partitioner.instance);
         Assert.assertFalse(option.isForcedRepair());
+    }
+
+    @Test
+    public void testNoPurgeTombstonesOption()
+    {
+        RepairOption option;
+        Map<String, String> options = new HashMap<>();
+
+        // default value
+        option = RepairOption.parse(options, Murmur3Partitioner.instance);
+        assertFalse(option.noPurgeTombstones());
+
+        // explicit true
+        options.put(RepairOption.NO_PURGE_TOMBSTONES_KEY, "true");
+        option = RepairOption.parse(options, Murmur3Partitioner.instance);
+        assertTrue(option.noPurgeTombstones());
+
+        // explicit false
+        options.put(RepairOption.NO_PURGE_TOMBSTONES_KEY, "false");
+        option = RepairOption.parse(options, Murmur3Partitioner.instance);
+        assertFalse(option.noPurgeTombstones());
+    }
+
+    @Test
+    public void testNoPurgeTombstonesAsMapRoundTrip()
+    {
+        Map<String, String> options = new HashMap<>();
+        options.put(RepairOption.NO_PURGE_TOMBSTONES_KEY, "true");
+
+        // the option survives a parse -> asMap -> parse round trip (as it does when sent over JMX)
+        RepairOption parsed = RepairOption.parse(options, Murmur3Partitioner.instance);
+        assertTrue(parsed.asMap().containsKey(RepairOption.NO_PURGE_TOMBSTONES_KEY));
+        assertEquals("true", parsed.asMap().get(RepairOption.NO_PURGE_TOMBSTONES_KEY));
+        assertTrue(RepairOption.parse(parsed.asMap(), Murmur3Partitioner.instance).noPurgeTombstones());
+    }
+
+    @Test
+    public void testNoPurgeTombstonesRejectedForPreviewRepair()
+    {
+        Map<String, String> options = new HashMap<>();
+        options.put(RepairOption.PREVIEW, PreviewKind.ALL.toString());
+        options.put(RepairOption.NO_PURGE_TOMBSTONES_KEY, "true");
+        assertParseThrowsIllegalArgumentExceptionWithMessage(options, "noPurgeTombstones must be set to false for preview repairs");
     }
 
     private void assertParseThrowsIllegalArgumentExceptionWithMessage(Map<String, String> optionsToParse, String expectedErrorMessage)

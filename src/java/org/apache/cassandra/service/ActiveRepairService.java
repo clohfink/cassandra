@@ -179,6 +179,16 @@ public class ActiveRepairService implements IEndpointStateChangeSubscriber, IFai
     public static final TimeUUID NO_PENDING_REPAIR = null;
 
     /**
+     * Custom message-param name carrying the --no-purge-tombstones repair flag from the coordinator to
+     * participating replicas on the prepare message. A string-keyed custom param is used rather than a
+     * {@link org.apache.cassandra.net.MessageFlag} bit or a dedicated {@link org.apache.cassandra.net.ParamType}
+     * because this flag is Netflix-specific: a string key cannot collide with an upstream Apache Cassandra
+     * flag/param id when this fork is rebased, and older replicas silently ignore an unrecognised param
+     * (and purge as usual).
+     */
+    public static final String NETFLIX_REPAIR_NO_PURGE_TOMBSTONES = "NETFLIX_REPAIR_NO_PURGE_TOMBSTONES";
+
+    /**
      * A map of active coordinator session.
      */
     private final ConcurrentMap<TimeUUID, RepairSession> sessions = new ConcurrentHashMap<>();
@@ -639,7 +649,7 @@ public class ActiveRepairService implements IEndpointStateChangeSubscriber, IFai
             failRepair(parentRepairSession, "Rejecting incoming repair, pending compactions above threshold"); // failRepair throws exception
 
         long repairedAt = getRepairedAt(options, isForcedRepair);
-        registerParentRepairSession(parentRepairSession, coordinator, columnFamilyStores, options.getRanges(), options.isIncremental(), repairedAt, options.isGlobal(), options.getPreviewKind());
+        registerParentRepairSession(parentRepairSession, coordinator, columnFamilyStores, options.getRanges(), options.isIncremental(), repairedAt, options.isGlobal(), options.getPreviewKind(), options.noPurgeTombstones());
         final CountDownLatch prepareLatch = newCountDownLatch(endpoints.size());
         final AtomicBoolean status = new AtomicBoolean(true);
         final Set<String> failedNodes = synchronizedSet(new HashSet<String>());
@@ -680,6 +690,10 @@ public class ActiveRepairService implements IEndpointStateChangeSubscriber, IFai
             if (FailureDetector.instance.isAlive(neighbour))
             {
                 Message<RepairMessage> msg = out(PREPARE_MSG, message);
+                if (options.noPurgeTombstones())
+                    msg = Message.builder(msg)
+                                 .withCustomParam(NETFLIX_REPAIR_NO_PURGE_TOMBSTONES, new byte[0])
+                                 .build();
                 MessagingService.instance().sendWithCallback(msg, neighbour, callback);
             }
             else
@@ -770,7 +784,12 @@ public class ActiveRepairService implements IEndpointStateChangeSubscriber, IFai
         throw new RuntimeException(errorMsg);
     }
 
-    public synchronized void registerParentRepairSession(TimeUUID parentRepairSession, InetAddressAndPort coordinator, List<ColumnFamilyStore> columnFamilyStores, Collection<Range<Token>> ranges, boolean isIncremental, long repairedAt, boolean isGlobal, PreviewKind previewKind)
+    public void registerParentRepairSession(TimeUUID parentRepairSession, InetAddressAndPort coordinator, List<ColumnFamilyStore> columnFamilyStores, Collection<Range<Token>> ranges, boolean isIncremental, long repairedAt, boolean isGlobal, PreviewKind previewKind)
+    {
+        registerParentRepairSession(parentRepairSession, coordinator, columnFamilyStores, ranges, isIncremental, repairedAt, isGlobal, previewKind, false);
+    }
+
+    public synchronized void registerParentRepairSession(TimeUUID parentRepairSession, InetAddressAndPort coordinator, List<ColumnFamilyStore> columnFamilyStores, Collection<Range<Token>> ranges, boolean isIncremental, long repairedAt, boolean isGlobal, PreviewKind previewKind, boolean noPurgeTombstones)
     {
         assert isIncremental || repairedAt == ActiveRepairService.UNREPAIRED_SSTABLE;
         if (!registeredForEndpointChanges)
@@ -782,7 +801,7 @@ public class ActiveRepairService implements IEndpointStateChangeSubscriber, IFai
 
         if (!parentRepairSessions.containsKey(parentRepairSession))
         {
-            parentRepairSessions.put(parentRepairSession, new ParentRepairSession(coordinator, columnFamilyStores, ranges, isIncremental, repairedAt, isGlobal, previewKind));
+            parentRepairSessions.put(parentRepairSession, new ParentRepairSession(coordinator, columnFamilyStores, ranges, isIncremental, repairedAt, isGlobal, previewKind, noPurgeTombstones));
         }
     }
 
@@ -892,9 +911,10 @@ public class ActiveRepairService implements IEndpointStateChangeSubscriber, IFai
         public final long repairedAt;
         public final InetAddressAndPort coordinator;
         public final PreviewKind previewKind;
+        public final boolean noPurgeTombstones;
         public volatile boolean hasSnapshots = false;
 
-        public ParentRepairSession(InetAddressAndPort coordinator, List<ColumnFamilyStore> columnFamilyStores, Collection<Range<Token>> ranges, boolean isIncremental, long repairedAt, boolean isGlobal, PreviewKind previewKind)
+        public ParentRepairSession(InetAddressAndPort coordinator, List<ColumnFamilyStore> columnFamilyStores, Collection<Range<Token>> ranges, boolean isIncremental, long repairedAt, boolean isGlobal, PreviewKind previewKind, boolean noPurgeTombstones)
         {
             this.coordinator = coordinator;
             Set<Keyspace> keyspaces = new HashSet<>();
@@ -912,6 +932,7 @@ public class ActiveRepairService implements IEndpointStateChangeSubscriber, IFai
             this.isIncremental = isIncremental;
             this.isGlobal = isGlobal;
             this.previewKind = previewKind;
+            this.noPurgeTombstones = noPurgeTombstones;
         }
 
         public boolean isPreview()

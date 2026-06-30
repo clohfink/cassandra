@@ -408,7 +408,7 @@ public class AutoRepairUtils
         {
             return 0;
         }
-        return repairTime.one().getLong(COL_REPAIR_FINISH_TS);
+        return repairTime.one().getLong(COL_REPAIR_FINISH_TS, 0);
     }
 
     @VisibleForTesting

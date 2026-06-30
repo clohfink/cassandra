@@ -254,7 +254,7 @@ public abstract class AutoRepairState
         {
             RepairOption option = new RepairOption(RepairParallelism.PARALLEL, primaryRangeOnly, false, false,
                                                    AutoRepairService.instance.getAutoRepairConfig().getRepairThreads(repairType), ranges,
-                                                   !ranges.isEmpty(), false, false, PreviewKind.REPAIRED, DatabaseDescriptor.autoOptimisePreviewRepairStreams(), true, false, false);
+                                                   !ranges.isEmpty(), false, false, PreviewKind.REPAIRED, DatabaseDescriptor.autoOptimisePreviewRepairStreams(), true, false, false, false);
 
             option.getColumnFamilies().addAll(tables);
 
@@ -274,7 +274,7 @@ public abstract class AutoRepairState
         {
             RepairOption option = new RepairOption(RepairParallelism.PARALLEL, primaryRangeOnly, true, false,
                                                    AutoRepairService.instance.getAutoRepairConfig().getRepairThreads(repairType), ranges,
-                                                   !ranges.isEmpty(), false, false, PreviewKind.NONE, DatabaseDescriptor.autoOptimiseIncRepairStreams(), true, false, false);
+                                                   !ranges.isEmpty(), false, false, PreviewKind.NONE, DatabaseDescriptor.autoOptimiseIncRepairStreams(), true, false, false, false);
 
             option.getColumnFamilies().addAll(filterOutUnsafeTables(keyspace, tables));
 
@@ -319,7 +319,7 @@ public abstract class AutoRepairState
         {
             RepairOption option = new RepairOption(RepairParallelism.PARALLEL, primaryRangeOnly, false, false,
                                                    AutoRepairService.instance.getAutoRepairConfig().getRepairThreads(repairType), ranges,
-                                                   !ranges.isEmpty(), false, false, PreviewKind.NONE, DatabaseDescriptor.autoOptimiseFullRepairStreams(), true, false, false);
+                                                   !ranges.isEmpty(), false, false, PreviewKind.NONE, DatabaseDescriptor.autoOptimiseFullRepairStreams(), true, false, false, false);
 
             option.getColumnFamilies().addAll(tables);
 

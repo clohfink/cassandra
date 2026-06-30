@@ -34,6 +34,7 @@ import org.apache.cassandra.audit.AuditLogContext;
 import org.apache.cassandra.audit.AuditLogEntryType;
 import org.apache.cassandra.auth.Permission;
 import org.apache.cassandra.db.guardrails.Guardrails;
+import org.apache.cassandra.metrics.TableMetrics;
 import org.apache.cassandra.schema.ColumnMetadata;
 import org.apache.cassandra.schema.Schema;
 import org.apache.cassandra.schema.SchemaConstants;
@@ -258,6 +259,8 @@ public class SelectStatement implements CQLStatement.SingleKeyspaceCqlStatement
 
         cl.validateForRead();
         Guardrails.readConsistencyLevels.guard(EnumSet.of(cl), state.getClientState());
+
+        TableMetrics.markCqlRequest(table.id, cl, null);
 
         int nowInSec = options.getNowInSeconds(state);
         int userLimit = getLimit(options);

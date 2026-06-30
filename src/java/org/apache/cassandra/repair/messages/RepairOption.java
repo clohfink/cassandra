@@ -53,6 +53,7 @@ public class RepairOption
     public static final String IGNORE_UNREPLICATED_KS = "ignoreUnreplicatedKeyspaces";
     public static final String REPAIR_PAXOS_KEY = "repairPaxos";
     public static final String PAXOS_ONLY_KEY = "paxosOnly";
+    public static final String NO_PURGE_TOMBSTONES_KEY = "noPurgeTombstones";
 
     // we don't want to push nodes too much for repair
     public static final int MAX_JOB_THREADS = 4;
@@ -164,6 +165,12 @@ public class RepairOption
      *             ranges to the same host multiple times</td>
      *             <td>false</td>
      *         </tr>
+     *         <tr>
+     *             <td>noPurgeTombstones</td>
+     *             <td>"true" if validation should include all tombstones, ignoring gc_grace_seconds.
+     *             This allows repairing tombstones older than gc_grace_seconds that have diverged between replicas.</td>
+     *             <td>false</td>
+     *         </tr>
      *     </tbody>
      * </table>
      *
@@ -184,11 +191,15 @@ public class RepairOption
         boolean ignoreUnreplicatedKeyspaces = Boolean.parseBoolean(options.get(IGNORE_UNREPLICATED_KS));
         boolean repairPaxos = Boolean.parseBoolean(options.get(REPAIR_PAXOS_KEY));
         boolean paxosOnly = Boolean.parseBoolean(options.get(PAXOS_ONLY_KEY));
+        boolean noPurgeTombstones = Boolean.parseBoolean(options.get(NO_PURGE_TOMBSTONES_KEY));
 
         if (previewKind != PreviewKind.NONE)
         {
             Preconditions.checkArgument(!repairPaxos, "repairPaxos must be set to false for preview repairs");
             Preconditions.checkArgument(!paxosOnly, "paxosOnly must be set to false for preview repairs");
+            // Preview repair must reflect what a real repair would find. --no-purge-tombstones changes how the
+            // merkle trees are built, so it would surface divergences a standard (purging) repair never detects.
+            Preconditions.checkArgument(!noPurgeTombstones, "noPurgeTombstones must be set to false for preview repairs");
         }
 
         int jobThreads = 1;
@@ -206,7 +217,7 @@ public class RepairOption
 
         boolean asymmetricSyncing = Boolean.parseBoolean(options.get(OPTIMISE_STREAMS_KEY));
 
-        RepairOption option = new RepairOption(parallelism, primaryRange, incremental, trace, jobThreads, ranges, !ranges.isEmpty(), pullRepair, force, previewKind, asymmetricSyncing, ignoreUnreplicatedKeyspaces, repairPaxos, paxosOnly);
+        RepairOption option = new RepairOption(parallelism, primaryRange, incremental, trace, jobThreads, ranges, !ranges.isEmpty(), pullRepair, force, previewKind, asymmetricSyncing, ignoreUnreplicatedKeyspaces, repairPaxos, paxosOnly, noPurgeTombstones);
 
         // data centers
         String dataCentersStr = options.get(DATACENTERS_KEY);
@@ -288,13 +299,14 @@ public class RepairOption
     private final boolean ignoreUnreplicatedKeyspaces;
     private final boolean repairPaxos;
     private final boolean paxosOnly;
+    private final boolean noPurgeTombstones;
 
     private final Collection<String> columnFamilies = new HashSet<>();
     private final Collection<String> dataCenters = new HashSet<>();
     private final Collection<String> hosts = new HashSet<>();
     private final Collection<Range<Token>> ranges = new HashSet<>();
 
-    public RepairOption(RepairParallelism parallelism, boolean primaryRange, boolean incremental, boolean trace, int jobThreads, Collection<Range<Token>> ranges, boolean isSubrangeRepair, boolean pullRepair, boolean forceRepair, PreviewKind previewKind, boolean optimiseStreams, boolean ignoreUnreplicatedKeyspaces, boolean repairPaxos, boolean paxosOnly)
+    public RepairOption(RepairParallelism parallelism, boolean primaryRange, boolean incremental, boolean trace, int jobThreads, Collection<Range<Token>> ranges, boolean isSubrangeRepair, boolean pullRepair, boolean forceRepair, PreviewKind previewKind, boolean optimiseStreams, boolean ignoreUnreplicatedKeyspaces, boolean repairPaxos, boolean paxosOnly, boolean noPurgeTombstones)
     {
 
         this.parallelism = parallelism;
@@ -311,6 +323,7 @@ public class RepairOption
         this.ignoreUnreplicatedKeyspaces = ignoreUnreplicatedKeyspaces;
         this.repairPaxos = repairPaxos;
         this.paxosOnly = paxosOnly;
+        this.noPurgeTombstones = noPurgeTombstones;
     }
 
     public RepairParallelism getParallelism()
@@ -428,6 +441,11 @@ public class RepairOption
         return paxosOnly;
     }
 
+    public boolean noPurgeTombstones()
+    {
+        return noPurgeTombstones;
+    }
+
     @Override
     public String toString()
     {
@@ -447,6 +465,7 @@ public class RepairOption
                ", ignore unreplicated keyspaces: "+ ignoreUnreplicatedKeyspaces +
                ", repairPaxos: " + repairPaxos +
                ", paxosOnly: " + paxosOnly +
+               ", noPurgeTombstones: " + noPurgeTombstones +
                ')';
     }
 
@@ -469,6 +488,7 @@ public class RepairOption
         options.put(OPTIMISE_STREAMS_KEY, Boolean.toString(optimiseStreams));
         options.put(REPAIR_PAXOS_KEY, Boolean.toString(repairPaxos));
         options.put(PAXOS_ONLY_KEY, Boolean.toString(paxosOnly));
+        options.put(NO_PURGE_TOMBSTONES_KEY, Boolean.toString(noPurgeTombstones));
         return options;
     }
 }

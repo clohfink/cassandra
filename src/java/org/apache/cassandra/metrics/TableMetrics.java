@@ -26,6 +26,7 @@ import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReferenceArray;
 import java.util.function.Predicate;
 
 import com.google.common.collect.Iterables;
@@ -39,6 +40,7 @@ import org.apache.commons.lang3.ArrayUtils;
 
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.db.ColumnFamilyStore;
+import org.apache.cassandra.db.ConsistencyLevel;
 import org.apache.cassandra.db.Keyspace;
 import org.apache.cassandra.db.memtable.Memtable;
 import org.apache.cassandra.db.lifecycle.SSTableSet;
@@ -51,6 +53,8 @@ import org.apache.cassandra.metrics.Sampler.SamplerType;
 import org.apache.cassandra.repair.autorepair.AutoRepairConfig;
 import org.apache.cassandra.schema.Schema;
 import org.apache.cassandra.schema.SchemaConstants;
+import org.apache.cassandra.schema.TableId;
+import org.apache.cassandra.schema.TableMetadata;
 import org.apache.cassandra.utils.EstimatedHistogram;
 import org.apache.cassandra.utils.FBUtilities;
 import org.apache.cassandra.utils.Pair;
@@ -234,6 +238,22 @@ public class TableMetrics
 
     private final MetricNameFactory factory;
     private final MetricNameFactory aliasFactory;
+
+    private final String keyspaceName;
+    private final String tableName;
+    /** Serial consistency sentinel for requests that do not use Paxos (non-LWT writes and reads). */
+    private static final String NO_SERIAL_CONSISTENCY = "NONE";
+    private static final ConsistencyLevel[] CONSISTENCY_LEVELS = ConsistencyLevel.values();
+    /** Column index in {@link #requestCounters} for requests with no serial consistency (non-LWT). */
+    private static final int NO_SERIAL_CONSISTENCY_INDEX = CONSISTENCY_LEVELS.length;
+    /**
+     * Per-(commit CL, serial CL) coordinator request counts, indexed by consistency-level ordinal so the hot
+     * path does no string building: index = commitCL.ordinal() * (CONSISTENCY_LEVELS.length + 1) + serialIndex,
+     * where serialIndex is the serial CL ordinal or {@link #NO_SERIAL_CONSISTENCY_INDEX} for non-LWT requests.
+     * Counters are created lazily on first use of each combination so only combinations actually seen cost a metric.
+     */
+    private final AtomicReferenceArray<Counter> requestCounters =
+        new AtomicReferenceArray<>(CONSISTENCY_LEVELS.length * (CONSISTENCY_LEVELS.length + 1));
 
     public final Counter speculativeRetries;
     public final Counter speculativeFailedRetries;
@@ -457,6 +477,9 @@ public class TableMetrics
     {
         factory = new TableMetricNameFactory(cfs, "Table");
         aliasFactory = new TableMetricNameFactory(cfs, "ColumnFamily");
+
+        keyspaceName = cfs.keyspace.getName();
+        tableName = cfs.name;
 
         if (memtableMetrics != null)
         {
@@ -1106,6 +1129,81 @@ public class TableMetrics
         {
             entry.release();
         }
+        // Clear each slot before removing its counter from the registry so a (very unlikely) concurrent
+        // markRequest on a dropping table cannot leave a counter registered after release() returns.
+        for (int index = 0; index < requestCounters.length(); index++)
+        {
+            Counter counter = requestCounters.getAndSet(index, null);
+            if (counter == null)
+                continue;
+            int commitOrdinal = index / (CONSISTENCY_LEVELS.length + 1);
+            int serialIndex = index % (CONSISTENCY_LEVELS.length + 1);
+            String serial = serialIndex == NO_SERIAL_CONSISTENCY_INDEX ? NO_SERIAL_CONSISTENCY : CONSISTENCY_LEVELS[serialIndex].name();
+            Metrics.remove(requestCounterName(CONSISTENCY_LEVELS[commitOrdinal].name(), serial));
+        }
+    }
+
+    /**
+     * Records a single coordinator CQL request against the given table at the given commit and serial
+     * consistency levels. Pass a null serial consistency for non-LWT requests (it is recorded as
+     * {@value #NO_SERIAL_CONSISTENCY}). No-op for virtual tables (whose keyspace cannot be opened) and
+     * for tables without a live {@link ColumnFamilyStore} (e.g. already dropped).
+     */
+    public static void markCqlRequest(TableId tableId, ConsistencyLevel consistencyLevel, ConsistencyLevel serialConsistencyLevel)
+    {
+        TableMetadata metadata = Schema.instance.getTableMetadata(tableId);
+        if (metadata == null || metadata.isVirtual())
+        {
+            return;
+        }
+        ColumnFamilyStore cfs = ColumnFamilyStore.getIfExists(tableId);
+        if (cfs != null)
+        {
+            cfs.metric.markRequest(consistencyLevel, serialConsistencyLevel);
+        }
+    }
+
+    /**
+     * Increments this table's request counter for the given (commit, serial) consistency combination,
+     * registering the counter lazily the first time the combination is seen so that only combinations
+     * actually used cost a metric.
+     */
+    public void markRequest(ConsistencyLevel consistencyLevel, ConsistencyLevel serialConsistencyLevel)
+    {
+        int serialIndex = serialConsistencyLevel == null ? NO_SERIAL_CONSISTENCY_INDEX : serialConsistencyLevel.ordinal();
+        int index = consistencyLevel.ordinal() * (CONSISTENCY_LEVELS.length + 1) + serialIndex;
+        Counter counter = requestCounters.get(index);
+        if (counter == null)
+            counter = registerRequestCounter(index, consistencyLevel, serialConsistencyLevel);
+        counter.inc();
+    }
+
+    private synchronized Counter registerRequestCounter(int index, ConsistencyLevel consistencyLevel, ConsistencyLevel serialConsistencyLevel)
+    {
+        Counter counter = requestCounters.get(index);
+        if (counter == null)
+        {
+            String serial = serialConsistencyLevel == null ? NO_SERIAL_CONSISTENCY : serialConsistencyLevel.name();
+            counter = Metrics.counter(requestCounterName(consistencyLevel.name(), serial));
+            requestCounters.set(index, counter);
+        }
+        return counter;
+    }
+
+    private CassandraMetricsRegistry.MetricName requestCounterName(String consistencyLevel, String serialConsistencyLevel)
+    {
+        String groupName = TableMetrics.class.getPackage().getName();
+        StringBuilder mbeanName = new StringBuilder();
+        mbeanName.append(groupName).append(':');
+        mbeanName.append("type=Table");
+        mbeanName.append(",keyspace=").append(keyspaceName);
+        mbeanName.append(",scope=").append(tableName);
+        mbeanName.append(",consistencyLevel=").append(consistencyLevel);
+        mbeanName.append(",serialConsistencyLevel=").append(serialConsistencyLevel);
+        mbeanName.append(",name=Requests");
+        return new CassandraMetricsRegistry.MetricName(groupName, "Table", "Requests",
+                                                       keyspaceName + '.' + tableName + '.' + consistencyLevel + '.' + serialConsistencyLevel,
+                                                       mbeanName.toString());
     }
 
     /**

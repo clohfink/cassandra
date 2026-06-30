@@ -66,33 +66,42 @@ public class CassandraValidationIterator extends ValidationPartitionIterator
     private static final Logger logger = LoggerFactory.getLogger(CassandraValidationIterator.class);
 
     /*
-     * Controller for validation compaction that always purges.
+     * Controller for validation compaction that purges by default.
      * Note that we should not call cfs.getOverlappingSSTables on the provided
      * sstables because those sstables are not guaranteed to be active sstables
      * (since we can run repair on a snapshot).
      */
     private static class ValidationCompactionController extends CompactionController
     {
-        public ValidationCompactionController(ColumnFamilyStore cfs, int gcBefore)
+        private final boolean purgeTombstones;
+
+        public ValidationCompactionController(ColumnFamilyStore cfs, int gcBefore, boolean purgeTombstones)
         {
             super(cfs, gcBefore);
+            this.purgeTombstones = purgeTombstones;
         }
 
         @Override
         public LongPredicate getPurgeEvaluator(DecoratedKey key)
         {
             /*
-             * The main reason we always purge is that including gcable tombstone would mean that the
-             * repair digest will depends on the scheduling of compaction on the different nodes. This
-             * is still not perfect because gcbefore is currently dependend on the current time at which
+             * The main reason we purge by default is that including gcable tombstones would mean that the
+             * repair digest will depend on the scheduling of compaction on the different nodes. This
+             * is still not perfect because gcbefore is currently dependent on the current time at which
              * the validation compaction start, which while not too bad for normal repair is broken for
              * repair on snapshots. A better solution would be to agree on a gcbefore that all node would
              * use, and we'll do that with CASSANDRA-4932.
              * Note validation compaction includes all sstables, so we don't have the problem of purging
              * a tombstone that could shadow a column in another sstable, but this is doubly not a concern
              * since validation compaction is read-only.
+             *
+             * When the repair is run with --no-purge-tombstones, we never purge so that all tombstones
+             * (including those older than gc_grace_seconds) are hashed into the merkle tree. This lets
+             * repair reconcile expired tombstones that have diverged between replicas. The digest is then
+             * deterministic only because every participating replica is told to skip purging via the same
+             * flag carried on the prepare message.
              */
-            return time -> true;
+            return time -> purgeTombstones;
         }
     }
 
@@ -216,7 +225,10 @@ public class CassandraValidationIterator extends ValidationPartitionIterator
                     cfs.keyspace.getName(),
                     cfs.getTableName());
 
-        controller = new ValidationCompactionController(cfs, getDefaultGcBefore(cfs, nowInSec));
+        if (prs.noPurgeTombstones)
+            logger.info("{}, parentSessionId={}: Validation will include all tombstones (--no-purge-tombstones), ignoring gc_grace_seconds for {}.{}",
+                        prs.previewKind.logPrefix(sessionID), parentId, cfs.keyspace.getName(), cfs.getTableName());
+        controller = new ValidationCompactionController(cfs, getDefaultGcBefore(cfs, nowInSec), !prs.noPurgeTombstones);
         scanners = cfs.getCompactionStrategyManager().getScanners(sstables, ranges);
         ci = new ValidationCompactionIterator(scanners.scanners, controller, nowInSec, CompactionManager.instance.active, topPartitionCollector);
 

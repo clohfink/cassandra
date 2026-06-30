@@ -867,7 +867,7 @@ public class AutoRepairParameterizedTest extends CQLTester
     {
         RepairOption options = new RepairOption(RepairParallelism.PARALLEL, true, repairType == AutoRepairConfig.RepairType.INCREMENTAL, false,
                                                 AutoRepairService.instance.getAutoRepairConfig().getRepairThreads(repairType), Collections.emptySet(),
-                                                false, false, false, PreviewKind.NONE, false, true, false, false);
+                                                false, false, false, PreviewKind.NONE, false, true, false, false, false);
         AutoRepairState repairState = AutoRepair.instance.repairStates.get(repairType);
         AutoRepairState spyState = spy(repairState);
         AtomicReference<AutoRepair.RepairProgressListener> failingListener = new AtomicReference<>();

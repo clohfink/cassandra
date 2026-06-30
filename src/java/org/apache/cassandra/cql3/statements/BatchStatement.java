@@ -32,6 +32,7 @@ import org.slf4j.helpers.MessageFormatter;
 import org.apache.cassandra.audit.AuditLogContext;
 import org.apache.cassandra.audit.AuditLogEntryType;
 import org.apache.cassandra.db.guardrails.Guardrails;
+import org.apache.cassandra.metrics.TableMetrics;
 import org.apache.cassandra.schema.TableId;
 import org.apache.cassandra.schema.TableMetadata;
 import org.apache.cassandra.schema.ColumnMetadata;
@@ -414,6 +415,10 @@ public class BatchStatement implements CQLStatement
         ClientState clientState = queryState.getClientState();
         Guardrails.writeConsistencyLevels.guard(EnumSet.of(options.getConsistency(), options.getSerialConsistency()),
                                                 clientState);
+
+        ConsistencyLevel serialConsistencyLevel = hasConditions ? options.getSerialConsistency() : null;
+        for (TableId tableId : updatedColumns.keySet())
+            TableMetrics.markCqlRequest(tableId, options.getConsistency(), serialConsistencyLevel);
 
         for (int i = 0; i < statements.size(); i++ )
             statements.get(i).validateDiskUsage(options.forStatement(i), clientState);

@@ -32,6 +32,7 @@ import org.apache.cassandra.db.marshal.ValueAccessor;
 import org.apache.cassandra.dht.Token;
 import org.apache.cassandra.locator.Replica;
 import org.apache.cassandra.locator.ReplicaLayout;
+import org.apache.cassandra.metrics.TableMetrics;
 import org.apache.cassandra.schema.ColumnMetadata;
 import org.apache.cassandra.schema.Schema;
 import org.apache.cassandra.schema.TableMetadata;
@@ -496,6 +497,9 @@ public abstract class ModificationStatement implements CQLStatement.SingleKeyspa
 
         Guardrails.writeConsistencyLevels.guard(EnumSet.of(options.getConsistency(), options.getSerialConsistency()),
                                                 queryState.getClientState());
+
+        TableMetrics.markCqlRequest(metadata().id, options.getConsistency(),
+                                    hasConditions() ? options.getSerialConsistency() : null);
 
         return hasConditions()
              ? executeWithCondition(queryState, options, requestTime)

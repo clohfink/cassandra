@@ -19,6 +19,7 @@ package org.apache.cassandra.repair;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -124,6 +125,9 @@ public class RepairMessageVerbHandler implements IVerbHandler<RepairMessage>
                         }
                         columnFamilyStores.add(columnFamilyStore);
                     }
+                    Map<String, byte[]> customParams = message.header.customParams();
+                    boolean noPurgeTombstones = customParams != null
+                                                && customParams.containsKey(ActiveRepairService.NETFLIX_REPAIR_NO_PURGE_TOMBSTONES);
                     ActiveRepairService.instance.registerParentRepairSession(prepareMessage.parentRepairSession,
                                                                              message.from(),
                                                                              columnFamilyStores,
@@ -131,7 +135,8 @@ public class RepairMessageVerbHandler implements IVerbHandler<RepairMessage>
                                                                              prepareMessage.isIncremental,
                                                                              prepareMessage.repairedAt,
                                                                              prepareMessage.isGlobal,
-                                                                             prepareMessage.previewKind);
+                                                                             prepareMessage.previewKind,
+                                                                             noPurgeTombstones);
                     MessagingService.instance().send(message.emptyResponse(), message.from());
                 }
                     break;

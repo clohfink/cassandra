@@ -106,6 +106,9 @@ public class Repair extends NodeToolCmd
     @Option(title = "ignore_unreplicated_keyspaces", name = {"-iuk","--ignore-unreplicated-keyspaces"}, description = "Use --ignore-unreplicated-keyspaces to ignore keyspaces which are not replicated, otherwise the repair will fail")
     private boolean ignoreUnreplicatedKeyspaces = false;
 
+    @Option(title = "no_purge_tombstones", name = {"-npt", "--no-purge-tombstones"}, description = "Use --no-purge-tombstones to include all tombstones in validation, ignoring gc_grace_seconds. This allows repairing tombstones that are older than gc_grace_seconds and have diverged between replicas.")
+    private boolean noPurgeTombstones = false;
+
     private PreviewKind getPreviewKind()
     {
         if (validate)
@@ -160,6 +163,7 @@ public class Repair extends NodeToolCmd
             options.put(RepairOption.IGNORE_UNREPLICATED_KS, Boolean.toString(ignoreUnreplicatedKeyspaces));
             options.put(RepairOption.REPAIR_PAXOS_KEY, Boolean.toString(!skipPaxos && getPreviewKind() == PreviewKind.NONE));
             options.put(RepairOption.PAXOS_ONLY_KEY, Boolean.toString(paxosOnly && getPreviewKind() == PreviewKind.NONE));
+            options.put(RepairOption.NO_PURGE_TOMBSTONES_KEY, Boolean.toString(noPurgeTombstones));
 
             if (!startToken.isEmpty() || !endToken.isEmpty())
             {
