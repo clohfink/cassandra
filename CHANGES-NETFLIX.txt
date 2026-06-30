@@ -10,6 +10,16 @@ DO NOT MANUALLY UPDATE - This file is automatically updated
 
 <!-- CI inserts new release sections directly below this line -->
 
+4.1.147 (2026-06-30)
+  * inc-21616: repair improvements (metrics, autorepair fixes, --no-purge-tombstones) (#520)
+  * Fix netflix_views.cluster_view paging bug (#519)
+  * Add nodetool endpoint for remote import management (#518)
+  * Support CQL "relaxed" TRUNCATE with nodes down (#501)
+  * Fix wrong instance ids reported by nodetool ring --ids (#517)
+  * Add Atlas gauge for hs_err_pid*.log files (#503)
+  * Add visibility to backup memtable init (#508)
+  * Containerize Cassandra (#436)
+
 4.1.146 (2026-06-10)
   * Netflix table options (#502)
   * Add per-table never_purge_tombstones compaction option (#512)
