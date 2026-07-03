@@ -80,6 +80,11 @@ hinted_handoff_dynamic_throttle_enabled: true
 # near the current cap (see hinted_handoff_throttle_adjustment_interval_in_sec).
 hinted_handoff_throttle_backlog_threshold: 10
 
+# Floor for the dynamic hints throttle rate. Prevents the decrease branch from decaying the rate limiter
+# below this value when the base throttle is disabled (0) or unusually small.
+# Min unit: KiB
+hinted_handoff_min_throttle: 1024KiB
+
 # Number of threads with which to deliver hints;
 # Consider increasing this number when you have multi-dc deployments, since
 # cross-dc handoff tends to be slower

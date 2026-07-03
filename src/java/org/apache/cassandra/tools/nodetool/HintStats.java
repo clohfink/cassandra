@@ -34,10 +34,12 @@ public class HintStats extends NodeTool.NodeToolCmd
         double currentThrottle = probe.getCurrentHintsThrottleInKiB();
         int baseThrottle = probe.getHintedHandoffThrottleInKB();
         int maxThrottle = probe.getHintedHandoffMaxThrottleInKB();
+        int minThrottle = probe.getHintedHandoffMinThrottleInKB();
 
         probe.output().out.println("Hints Throttle Status:");
         probe.output().out.println("  Current Throttle: " + String.format("%.2f KB/s", currentThrottle));
         probe.output().out.println("  Base Throttle: " + baseThrottle + " KB/s");
+        probe.output().out.println("  Min Throttle: " + minThrottle + " KB/s");
         probe.output().out.println("  Max Throttle: " + maxThrottle + " KB/s");
         probe.output().out.println();
 

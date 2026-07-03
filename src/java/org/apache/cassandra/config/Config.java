@@ -509,6 +509,12 @@ public class Config
     public DataStorageSpec.IntKibibytesBound hinted_handoff_max_throttle = new DataStorageSpec.IntKibibytesBound("0KiB");
 
     /**
+     * Minimum throttle rate for dynamic hints throttling. Prevents the decrease branch from decaying the
+     * rate limiter below this floor when the base throttle is disabled (0) or unusually small.
+     */
+    public DataStorageSpec.IntKibibytesBound hinted_handoff_min_throttle = new DataStorageSpec.IntKibibytesBound("1024KiB");
+
+    /**
      * Total queued hint files (sum of per-destination dispatch deque sizes) above which dynamic throttle may
      * increase toward hinted_handoff_max_throttle when measured throughput is high vs the current limit.
      */

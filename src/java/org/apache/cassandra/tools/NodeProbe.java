@@ -1278,6 +1278,16 @@ public class NodeProbe implements AutoCloseable
         return ssProxy.getHintedHandoffMaxThrottleInKB();
     }
 
+    public int getHintedHandoffMinThrottleInKB()
+    {
+        return ssProxy.getHintedHandoffMinThrottleInKB();
+    }
+
+    public void setHintedHandoffMinThrottleInKB(int throttleInKB)
+    {
+        ssProxy.setHintedHandoffMinThrottleInKB(throttleInKB);
+    }
+
     public void refreshSizeEstimates()
     {
         try

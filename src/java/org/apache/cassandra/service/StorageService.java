@@ -6745,6 +6745,17 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
         return DatabaseDescriptor.getHintedHandoffMaxThrottleInKiB();
     }
 
+    public int getHintedHandoffMinThrottleInKB()
+    {
+        return DatabaseDescriptor.getHintedHandoffMinThrottleInKiB();
+    }
+
+    public void setHintedHandoffMinThrottleInKB(int throttleInKB)
+    {
+        DatabaseDescriptor.setHintedHandoffMinThrottleInKiB(throttleInKB);
+        logger.info("updated hinted_handoff_min_throttle to {} KiB", throttleInKB);
+    }
+
     public boolean getHintedHandoffDynamicThrottleEnabled()
     {
         return DatabaseDescriptor.getHintedHandoffDynamicThrottleEnabled();

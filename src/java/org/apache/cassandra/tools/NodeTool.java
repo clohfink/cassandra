@@ -215,6 +215,7 @@ public class NodeTool
                 SetConcurrentCompactors.class,
                 SetConcurrentViewBuilders.class,
                 SetDefaultKeyspaceRF.class,
+                SetHintedHandoffMinThrottleInKB.class,
                 SetHintedHandoffThrottleInKB.class,
                 SetInterDCStreamThroughput.class,
                 SetLoggingLevel.class,

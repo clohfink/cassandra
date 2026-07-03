@@ -928,6 +928,12 @@ public interface StorageServiceMBean extends NotificationEmitter
     /** Gets the hinted handoff max throttle in KiB per second (for dynamic throttling). */
     public int getHintedHandoffMaxThrottleInKB();
 
+    /** Gets the hinted handoff min throttle in KiB per second (floor for dynamic throttling). */
+    public int getHintedHandoffMinThrottleInKB();
+
+    /** Sets the hinted handoff min throttle in KiB per second (floor for dynamic throttling). */
+    public void setHintedHandoffMinThrottleInKB(int throttleInKB);
+
     /** Gets whether dynamic hints throttling is enabled. */
     public boolean getHintedHandoffDynamicThrottleEnabled();
 

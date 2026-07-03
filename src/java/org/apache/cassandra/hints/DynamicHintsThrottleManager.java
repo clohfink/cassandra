@@ -87,6 +87,7 @@ final class DynamicHintsThrottleManager
         int backlogThreshold = DatabaseDescriptor.getHintedHandoffThrottleBacklogThreshold();
         int maxThrottleKiB = DatabaseDescriptor.getHintedHandoffMaxThrottleInKiB();
         int baseThrottleKiB = DatabaseDescriptor.getHintedHandoffThrottleInKiB();
+        int minThrottleKiB = DatabaseDescriptor.getHintedHandoffMinThrottleInKiB();
 
         long backlogCount = catalog.stores()
                                    .mapToInt(HintsStore::getDispatchQueueSize)
@@ -109,6 +110,8 @@ final class DynamicHintsThrottleManager
 
         double baseRateBytesPerSec = baseThrottleKiB * 1024.0;
         double maxRateBytesPerSec = (maxThrottleKiB == 0) ? Double.MAX_VALUE : maxThrottleKiB * 1024.0;
+        double minRateBytesPerSec = minThrottleKiB * 1024.0;
+        double decreaseFloorBytesPerSec = Math.max(baseRateBytesPerSec, minRateBytesPerSec);
 
         double newRate = currentRateBytesPerSec;
 
@@ -130,11 +133,11 @@ final class DynamicHintsThrottleManager
         }
         else
         {
-            if (currentRateBytesPerSec > baseRateBytesPerSec)
+            if (currentRateBytesPerSec > decreaseFloorBytesPerSec)
             {
-                newRate = Math.max(currentRateBytesPerSec * DECREASE_FACTOR, baseRateBytesPerSec);
-                logger.info("Decreasing hints throttle from {} to {} bytes/sec (backlog: {} is below threshold: {})",
-                           currentRateBytesPerSec, newRate, backlogCount, backlogThreshold);
+                newRate = Math.max(currentRateBytesPerSec * DECREASE_FACTOR, decreaseFloorBytesPerSec);
+                logger.info("Decreasing hints throttle from {} to {} bytes/sec (backlog: {} is below threshold: {}, floor: {} bytes/sec)",
+                           currentRateBytesPerSec, newRate, backlogCount, backlogThreshold, decreaseFloorBytesPerSec);
             }
         }
 

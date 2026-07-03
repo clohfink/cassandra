@@ -3720,6 +3720,17 @@ public class DatabaseDescriptor
         HintsService.instance.updateConfiguration();
     }
 
+    public static int getHintedHandoffMinThrottleInKiB()
+    {
+        return conf.hinted_handoff_min_throttle.toKibibytes();
+    }
+
+    public static void setHintedHandoffMinThrottleInKiB(int throttleInKiB)
+    {
+        conf.hinted_handoff_min_throttle = new DataStorageSpec.IntKibibytesBound(throttleInKiB);
+        HintsService.instance.updateConfiguration();
+    }
+
     public static int getHintedHandoffThrottleBacklogThreshold()
     {
         return conf.hinted_handoff_throttle_backlog_threshold;
