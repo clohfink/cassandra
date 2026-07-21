@@ -118,7 +118,7 @@ __update_cassandra_prompt() {
         cql_status="${red}CQL:${cross}${reset}"
     fi
 
-    if __tcp_port_listening 1B5B; then
+    if __tcp_port_listening 1BBF; then
         gossip_status="${green}GOSSIP:${check}${reset}"
     else
         gossip_status="${red}GOSSIP:${cross}${reset}"
