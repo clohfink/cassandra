@@ -10,6 +10,10 @@ DO NOT MANUALLY UPDATE - This file is automatically updated
 
 <!-- CI inserts new release sections directly below this line -->
 
+4.1.148 (2026-07-21)
+  * Change aliases to container init and handle ipv6, include new prompt (#526)
+  * Adding Minimum for Hints Throttle Rate (#521)
+
 4.1.147 (2026-06-30)
   * inc-21616: repair improvements (metrics, autorepair fixes, --no-purge-tombstones) (#520)
   * Fix netflix_views.cluster_view paging bug (#519)
