@@ -23,6 +23,9 @@ import java.nio.file.Path;
 import java.time.Instant;
 import java.util.Collection;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -60,7 +63,13 @@ public class TableSnapshot
         this.tag = tag;
         this.createdAt = createdAt;
         this.expiresAt = expiresAt;
-        this.snapshotDirs = snapshotDirs;
+        // If the data dir is a symlink, snapshotDirs can hold several entries for the same
+        // physical directory (paths differing only by symlink resolution). Dedupe by canonical
+        // path so a snapshot's contents aren't listed twice.
+        Map<File, File> byCanonical = new LinkedHashMap<>();
+        for (File dir : snapshotDirs)
+            byCanonical.putIfAbsent(dir.toCanonical(), dir);
+        this.snapshotDirs = new LinkedHashSet<>(byCanonical.values());
     }
 
     /**

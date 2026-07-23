@@ -242,6 +242,76 @@ public class BackupManifestBuilderTest extends CQLTester
     }
 
     @Test
+    public void listsEachComponentExactlyOnceWhenDirectoriesResolveToSameLocation() throws Throwable
+    {
+        createTable("CREATE TABLE %s (id int PRIMARY KEY, v int)");
+        execute("INSERT INTO %s (id, v) VALUES (1, 1)");
+        ColumnFamilyStore cfs = getCurrentColumnFamilyStore();
+        cfs.forceBlockingFlush(ColumnFamilyStore.FlushReason.UNIT_TESTS);
+
+        String tag = "dup_dirs_" + System.nanoTime();
+        TableSnapshot real = cfs.snapshotWithoutMemtable(tag);
+
+        // Reproduce the production condition: getDirectories() surfaces the SAME physical
+        // snapshot directory under two different Path representations. In production the
+        // SSTable-derived entry is canonicalized (Descriptor.directory.toCanonical()) while
+        // the manifest/schema-derived entry keeps the configured, possibly-symlinked data
+        // dir path, so a HashSet<File> can't dedupe them. Here we inject a redundant "."
+        // segment above the keyspace to get a distinct-but-equivalent Path (kept above the
+        // keyspace so Descriptor.fromFilename still parses ks/cf correctly).
+        File realDir = real.getDirectories().iterator().next();
+        File dataRoot = realDir.parent().parent().parent().parent();
+        String rel = dataRoot.toPath().relativize(realDir.toPath()).toString();
+        File variant = new File(new File(dataRoot, "."), rel);
+        assertFalse("variant must be a distinct Path", realDir.equals(variant));
+
+        Set<File> dupDirs = new HashSet<>();
+        dupDirs.add(realDir);
+        dupDirs.add(variant);
+        assertEquals("test setup must present two path variants of the snapshot dir", 2, dupDirs.size());
+
+        TableSnapshot snapshot = new TableSnapshot(real.getKeyspaceName(), real.getTableName(),
+                                                   real.getTableId(), tag,
+                                                   real.getCreatedAt(), real.getExpiresAt(), dupDirs);
+
+        File manifestRoot = manifestRoot(cfs);
+        BackupManifestBuilder builder = new BackupManifestBuilder(tag, Instant.ofEpochMilli(1775754001000L), ctx, manifestRoot);
+        builder.accept(snapshot);
+        builder.write();
+
+        File manifestFile = pendingManifest(manifestRoot, tag);
+        assertTrue("manifest not written: " + manifestFile, manifestFile.exists());
+        BackupManifest manifest = MAPPER.readValue(manifestFile.toJavaIOFile(), BackupManifest.class);
+
+        assertEquals(1, manifest.getData().size());
+        BackupManifest.Data data = manifest.getData().get(0);
+
+        boolean sawSSTableGroup = false;
+        for (BackupManifest.BackupSSTable group : data.getSstables())
+        {
+            if (group.getPrefix().startsWith("nb-"))
+                sawSSTableGroup = true;
+
+            Set<String> fileNames = new HashSet<>();
+            Set<String> backupPaths = new HashSet<>();
+            for (BackupManifest.BackupSSTableComponent component : group.getSstableComponents())
+            {
+                assertTrue("duplicate component fileName in group " + group.getPrefix() + ": " + component.getFileName(),
+                           fileNames.add(component.getFileName()));
+                assertTrue("duplicate component backupPath in group " + group.getPrefix() + ": " + component.getBackupPath(),
+                           backupPaths.add(component.getBackupPath()));
+            }
+            assertEquals("group " + group.getPrefix() + " lists a component more than once",
+                         group.getSstableComponents().size(), fileNames.size());
+        }
+        assertTrue("expected an nb- SSTable group", sawSSTableGroup);
+
+        // Sidecars must appear exactly once even though both dir variants contain them.
+        assertEquals("manifest.json", onlyComponentOf(data, "manifest").getFileName());
+        assertEquals("schema.cql", onlyComponentOf(data, "schema").getFileName());
+    }
+
+    @Test
     public void reusesBackupTimestampAcrossCalls() throws Throwable
     {
         createTable("CREATE TABLE %s (id int PRIMARY KEY, v int)");

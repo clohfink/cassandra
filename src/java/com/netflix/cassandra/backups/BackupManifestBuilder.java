@@ -174,6 +174,8 @@ public final class BackupManifestBuilder implements Consumer<TableSnapshot>
 
         Map<String, BackupManifest.BackupSSTable.Builder> byPrefix = new LinkedHashMap<>();
 
+        // TableSnapshot dedupes directories that resolve to the same physical path, so
+        // getDirectories() yields each snapshot directory once even when the data dir is a symlink.
         for (File snapshotDir : snapshot.getDirectories())
         {
             File[] entries = snapshotDir.tryList();
