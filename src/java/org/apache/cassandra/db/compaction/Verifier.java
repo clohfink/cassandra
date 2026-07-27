@@ -245,8 +245,13 @@ public class Verifier implements Closeable
             ByteBuffer nextIndexKey = ByteBufferUtil.readWithShortLength(indexFile);
             {
                 long firstRowPositionFromIndex = rowIndexEntrySerializer.deserializePositionAndSkip(indexFile);
-                if (firstRowPositionFromIndex != 0)
-                    markAndThrow(new RuntimeException("firstRowPositionFromIndex != 0: "+firstRowPositionFromIndex));
+                // Normally the first partition starts at 0 and this seek is a no-op. A child produced by
+                // ZeroCopySSTableSplitter starts with a dead prefix instead: compression chunk boundaries are
+                // pinned to multiples of chunkLength, so a child that does not begin on a chunk boundary
+                // carries leading bytes that belong to no partition. Start the linear data walk at the first
+                // position the index actually points at rather than failing. The whole-file Digest.crc32
+                // check above already covered those bytes.
+                dataFile.seek(firstRowPositionFromIndex);
             }
 
             List<Range<Token>> ownedRanges = isOffline ? Collections.emptyList() : Range.normalize(tokenLookup.apply(cfs.metadata().keyspace));

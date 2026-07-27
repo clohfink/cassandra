@@ -183,9 +183,14 @@ public class Scrubber implements Closeable
             nextIndexKey = indexAvailable() ? ByteBufferUtil.readWithShortLength(indexFile) : null;
             if (indexAvailable())
             {
-                // throw away variable so we don't have a side effect in the assert
                 long firstRowPositionFromIndex = rowIndexEntrySerializer.deserializePositionAndSkip(indexFile);
-                assert firstRowPositionFromIndex == 0 : firstRowPositionFromIndex;
+                // Normally the first partition starts at 0 and both statements below are no-ops. A child
+                // produced by ZeroCopySSTableSplitter starts with a dead prefix instead: compression chunk
+                // boundaries are pinned to multiples of chunkLength, so a child that does not begin on a
+                // chunk boundary carries leading bytes that belong to no partition. Start the linear data
+                // walk at the first position the index actually points at rather than asserting it is 0.
+                nextPartitionPositionFromIndex = firstRowPositionFromIndex;
+                dataFile.seek(firstRowPositionFromIndex);
             }
 
             StatsMetadata metadata = sstable.getSSTableMetadata();
