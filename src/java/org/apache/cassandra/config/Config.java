@@ -95,6 +95,21 @@ public class Config
     public volatile boolean enable_select_partition_range = true;
     public volatile boolean alter_table_enabled = true;
 
+    /**
+     * Use the zero-copy sstable splitter during anticompaction when an sstable's full / transient / unrepaired
+     * partitions form contiguous token runs, copying compression chunks verbatim instead of rewriting rows.
+     * Anything else (interleaved ranges, i.e. what vnodes produce) falls back to the normal rewrite.
+     * <p>
+     * ENABLING THIS MEANS ANTICOMPACTION NO LONGER PURGES TOMBSTONES for the sstables it handles. The copy-based
+     * split retains droppable tombstones and shadowed data that the rewrite path would drop. That is retention,
+     * never data loss -- nothing can be resurrected -- but it is a behaviour change, and disk usage after
+     * anticompaction can be higher than before until the children are compacted normally.
+     * <p>
+     * Suffix children also carry a dead prefix at the head of their Data.db, which costs them entire-SSTable
+     * zero-copy streaming eligibility (they fall back to partial streaming) until they are recompacted.
+     */
+    public volatile boolean zero_copy_anticompaction_enabled = true;
+
     public volatile int object_store_shared_chunk_cache_count = 64;
     // Size of each prefetch buffer. Should be >= the sstable compression chunk length (chunk_length_in_kb).
     // Defaults to 1 MB to match the 1 MB compressed chunk size used by TS backup sstables,

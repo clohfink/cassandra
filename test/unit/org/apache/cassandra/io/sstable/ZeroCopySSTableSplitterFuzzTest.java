@@ -722,7 +722,19 @@ public class ZeroCopySSTableSplitterFuzzTest extends CQLTester
         }
         flush();
 
-        SSTableReader sstable = onlySSTable(getCurrentColumnFamilyStore(), "straddle probe");
+        // The probe needs one sstable so that consecutive index positions give one partition's exact size.
+        // A memtable can flush on its own part way through the loop above (heap pressure from earlier test
+        // methods in this JVM is enough to trigger it), which leaves two sstables and used to make this an
+        // order-dependent flake. Consolidate instead of asserting and hoping.
+        ColumnFamilyStore probeCfs = getCurrentColumnFamilyStore();
+        if (probeCfs.getLiveSSTables().size() > 1)
+        {
+            compact();
+            assertEquals("straddle probe could not consolidate to a single sstable",
+                         1, probeCfs.getLiveSSTables().size());
+        }
+
+        SSTableReader sstable = onlySSTable(probeCfs, "straddle probe");
         ParentIndex index = readIndex(sstable);
         assertEquals("straddle probe wrote the wrong number of partitions", partitions, index.size());
 

@@ -182,6 +182,8 @@ public class KeyspaceMetrics
 
     public final Meter bytesAnticompacted;
     public final Meter bytesMutatedAnticompaction;
+    /** subset of {@link #bytesAnticompacted} that was copied verbatim by the zero-copy anticompaction split */
+    public final Meter bytesZeroCopyAnticompaction;
     public final Meter bytesPreviewed;
     public final Meter tokenRangesPreviewedDesynchronized;
     public final Meter bytesPreviewedDesynchronized;
@@ -294,6 +296,7 @@ public class KeyspaceMetrics
 
         bytesAnticompacted =  createKeyspaceMeter("BytesAnticompacted");
         bytesMutatedAnticompaction = createKeyspaceMeter("BytesMutatedAnticompaction");
+        bytesZeroCopyAnticompaction = createKeyspaceMeter("BytesZeroCopyAnticompaction");
         bytesPreviewed = createKeyspaceMeter("BytesPreviewed");
         tokenRangesPreviewedDesynchronized = createKeyspaceMeter("TokenRangesPreviewedDesynchronized");
         bytesPreviewedDesynchronized = createKeyspaceMeter("BytesPreviewedDesynchronized");

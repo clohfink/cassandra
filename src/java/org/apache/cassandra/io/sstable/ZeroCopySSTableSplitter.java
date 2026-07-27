@@ -66,12 +66,14 @@ import org.apache.cassandra.io.util.SequentialWriter;
 import org.apache.cassandra.io.util.SequentialWriterOption;
 import org.apache.cassandra.schema.Schema;
 import org.apache.cassandra.schema.TableMetadata;
+import org.apache.cassandra.service.ActiveRepairService;
 import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.Clock;
 import org.apache.cassandra.utils.EstimatedHistogram;
 import org.apache.cassandra.utils.FilterFactory;
 import org.apache.cassandra.utils.IFilter;
 import org.apache.cassandra.utils.MurmurHash;
+import org.apache.cassandra.utils.TimeUUID;
 
 /**
  * Splits one BIG-format SSTable into K children by copying verbatim compression-chunk runs of Data.db and
@@ -325,6 +327,82 @@ public final class ZeroCopySSTableSplitter
     // Results
     // ------------------------------------------------------------------------------------------------
 
+    /**
+     * Repair state to stamp into one child's Statistics.db, instead of inheriting the parent's. The triple is
+     * written by {@link #writeStatistics} <em>before</em> the child reader is opened, so the reader is born with
+     * the right state and no {@code mutateRepairedAndReload} is ever needed.
+     * <p>
+     * The two invariants enforced here are the ones {@code CompactionStrategyHolder.managesRepairedGroup} and
+     * {@code PendingRepairHolder.managesRepairedGroup} assert when the Tracker routes a newly visible sstable to
+     * a compaction strategy holder; violating them turns into an {@code IllegalArgumentException} thrown from
+     * inside a Tracker notification, which is a far worse place to find out.
+     */
+    public static final class RepairState
+    {
+        /** {@code ActiveRepairService.UNREPAIRED_SSTABLE} (0) unless the data is already repaired. */
+        public final long repairedAt;
+        /** The incremental repair session id, or {@code ActiveRepairService.NO_PENDING_REPAIR} (null). */
+        public final TimeUUID pendingRepair;
+        /** Only ever true when {@code pendingRepair != null}. */
+        public final boolean isTransient;
+
+        public RepairState(long repairedAt, TimeUUID pendingRepair, boolean isTransient)
+        {
+            this(repairedAt, pendingRepair, isTransient, true);
+        }
+
+        private RepairState(long repairedAt, TimeUUID pendingRepair, boolean isTransient, boolean validate)
+        {
+            if (validate)
+            {
+                Preconditions.checkArgument(pendingRepair == ActiveRepairService.NO_PENDING_REPAIR
+                                            || repairedAt == ActiveRepairService.UNREPAIRED_SSTABLE,
+                                            "SSTables cannot be both repaired and pending repair");
+                Preconditions.checkArgument(!isTransient || pendingRepair != ActiveRepairService.NO_PENDING_REPAIR,
+                                            "isTransient can only be true for sstables pending repairs");
+            }
+            this.repairedAt = repairedAt;
+            this.pendingRepair = pendingRepair;
+            this.isTransient = isTransient;
+        }
+
+        /**
+         * The state every child gets from the overloads that do not take an explicit one: the parent's, copied
+         * verbatim and deliberately unvalidated, so those overloads behave exactly as they did before per-child
+         * repair state existed.
+         */
+        public static RepairState inherit(StatsMetadata parentStats)
+        {
+            return new RepairState(parentStats.repairedAt, parentStats.pendingRepair, parentStats.isTransient, false);
+        }
+
+        @Override
+        public boolean equals(Object o)
+        {
+            if (this == o)
+                return true;
+            if (!(o instanceof RepairState))
+                return false;
+            RepairState that = (RepairState) o;
+            return repairedAt == that.repairedAt
+                   && isTransient == that.isTransient
+                   && Objects.equals(pendingRepair, that.pendingRepair);
+        }
+
+        @Override
+        public int hashCode()
+        {
+            return Objects.hash(repairedAt, pendingRepair, isTransient);
+        }
+
+        @Override
+        public String toString()
+        {
+            return String.format("RepairState[repairedAt=%d pendingRepair=%s transient=%s]",
+                                 repairedAt, pendingRepair, isTransient);
+        }
+    }
+
     /** One produced child sstable. */
     public static final class Child
     {
@@ -350,11 +428,18 @@ public final class ZeroCopySSTableSplitter
         public final long partitionCount;
         /** Components written for the child; the exact set passed to {@code SSTableReader.open}. */
         public final Set<Component> components;
+        /**
+         * The repair state actually stamped into this child's Statistics.db. This is the state of the boundary
+         * range the child came from, carried through rather than positionally re-derived, so an empty boundary
+         * range that produced no child cannot shift the pairing.
+         */
+        public final RepairState repairState;
         /** The opened, validated child reader. The caller owns this reference and must release it. */
         public final SSTableReader reader;
 
         Child(Descriptor descriptor, DecoratedKey first, DecoratedKey last, ChunkRange range,
-              long physicalBytes, long partitionCount, Set<Component> components, SSTableReader reader)
+              long physicalBytes, long partitionCount, Set<Component> components, RepairState repairState,
+              SSTableReader reader)
         {
             this.descriptor = descriptor;
             this.first = first;
@@ -367,14 +452,16 @@ public final class ZeroCopySSTableSplitter
             this.deadPrefixBytes = range.deadPrefixBytes;
             this.partitionCount = partitionCount;
             this.components = components;
+            this.repairState = repairState;
             this.reader = reader;
         }
 
         @Override
         public String toString()
         {
-            return String.format("Child[%s chunks=[%d,%d] physical=%d dataLength=%d shift=%d dead=%d partitions=%d]",
-                                 descriptor, firstChunk, lastChunk, physicalBytes, dataLength, shift, deadPrefixBytes, partitionCount);
+            return String.format("Child[%s chunks=[%d,%d] physical=%d dataLength=%d shift=%d dead=%d partitions=%d %s]",
+                                 descriptor, firstChunk, lastChunk, physicalBytes, dataLength, shift, deadPrefixBytes,
+                                 partitionCount, repairState);
         }
     }
 
@@ -446,7 +533,7 @@ public final class ZeroCopySSTableSplitter
             throw new IllegalArgumentException("cannot split " + scan.positions.length + " partitions into " +
                                                numChildren + " children");
         int[] runStarts = chooseByByteShare(scan.positions, parent.uncompressedLength(), numChildren);
-        return build(parent, scan.positions, runStarts, txn, start);
+        return build(parent, scan.positions, runStarts, null, txn, start);
     }
 
     /**
@@ -463,6 +550,34 @@ public final class ZeroCopySSTableSplitter
      */
     public static Result split(SSTableReader parent, List<DecoratedKey> boundaries, LifecycleTransaction txn)
     {
+        return split(parent, boundaries, null, txn);
+    }
+
+    /**
+     * Split at explicit boundaries, stamping a caller-supplied repair state into each child instead of
+     * inheriting the parent's. Boundary semantics are exactly those of
+     * {@link #split(SSTableReader, List, LifecycleTransaction)}: child {@code b} covers keys
+     * {@code [boundaries[b-1], boundaries[b])}, and {@code perChild.get(b)} is the state for that key range.
+     * <p>
+     * <b>Pairing.</b> A boundary range containing no partition still produces no child, so
+     * {@code result.children.size()} may be smaller than {@code perChild.size()}. The state is therefore
+     * <em>carried</em> with the range rather than re-derived from a child's index afterwards, and the state
+     * actually written is exposed on {@link Child#repairState}. Positional pairing of {@code children} against
+     * {@code perChild} is only valid when every range is known to be non-empty; use {@link Child#repairState}
+     * and do not assume it otherwise.
+     *
+     * @param perChild one state per boundary range, so exactly {@code boundaries.size() + 1} entries, in the
+     *                 same order as the ranges; may be null to inherit the parent's state for every child
+     * @param txn      optional; if non-null every child is {@code trackNew}'d on it once fully written
+     * @throws IllegalArgumentException      if {@code perChild.size() != boundaries.size() + 1}, if any entry is
+     *                                       null, or if the boundaries are not strictly increasing
+     * @throws UnsupportedOperationException if the parent is not a compressed BIG-format sstable
+     */
+    public static Result split(SSTableReader parent,
+                               List<DecoratedKey> boundaries,
+                               List<RepairState> perChild,
+                               LifecycleTransaction txn)
+    {
         Preconditions.checkNotNull(boundaries, "boundaries");
         requireSupported(parent);
         for (int b = 1; b < boundaries.size(); b++)
@@ -471,10 +586,22 @@ public final class ZeroCopySSTableSplitter
                 throw new IllegalArgumentException("boundaries must be strictly increasing: " +
                                                    boundaries.get(b - 1) + " >= " + boundaries.get(b));
         }
+        if (perChild != null)
+        {
+            if (perChild.size() != boundaries.size() + 1)
+                throw new IllegalArgumentException("perChild must have one entry per boundary range, i.e. " +
+                                                   (boundaries.size() + 1) + " entries for " + boundaries.size() +
+                                                   " interior boundaries, got " + perChild.size());
+            for (int b = 0; b < perChild.size(); b++)
+            {
+                if (perChild.get(b) == null)
+                    throw new IllegalArgumentException("perChild[" + b + "] is null");
+            }
+        }
 
         long start = Clock.Global.nanoTime();
         Scan scan = scan(parent, boundaries);
-        return build(parent, scan.positions, scan.runStarts, txn, start);
+        return build(parent, scan.positions, scan.runStarts, perChild, txn, start);
     }
 
     private static void requireSupported(SSTableReader parent)
@@ -614,7 +741,7 @@ public final class ZeroCopySSTableSplitter
     // ------------------------------------------------------------------------------------------------
 
     private static Result build(SSTableReader parent, long[] positions, int[] runStarts,
-                                LifecycleTransaction txn, long startNanos)
+                                List<RepairState> perRun, LifecycleTransaction txn, long startNanos)
     {
         CompressionMetadata meta = parent.getCompressionMetadata();  // owned by parent's dfile; never close it
         final int chunkLength = meta.chunkLength();
@@ -630,6 +757,11 @@ public final class ZeroCopySSTableSplitter
         // on read and would be silently dropped from the child's Statistics.db.
         Map<MetadataType, MetadataComponent> parentMetadata = readParentMetadata(parent.descriptor);
         StatsMetadata parentStats = (StatsMetadata) parentMetadata.get(MetadataType.STATS);
+
+        if (perRun != null && perRun.size() != runStarts.length)
+            throw new IllegalStateException("perRun has " + perRun.size() + " entries for " + runStarts.length +
+                                            " runs; the caller-visible check in split() should have caught this");
+        RepairState inherited = perRun == null ? RepairState.inherit(parentStats) : null;
 
         Supplier<Descriptor> descriptors = descriptorAllocator(parent);
 
@@ -660,10 +792,14 @@ public final class ZeroCopySSTableSplitter
                 if (physicalBytes <= 0)
                     throw new IllegalStateException("non-positive physical length " + physicalBytes + " for " + range);
 
+                // Carried with the range, never re-derived positionally: an empty range above produced no child
+                // and must not shift the state of the ranges after it.
+                RepairState repairState = perRun == null ? inherited : perRun.get(b);
+
                 Descriptor child = descriptors.get();
                 created.add(child);
                 children.add(buildChild(parent, child, index, positions, from, to, range,
-                                        meta, copyFrom, physicalBytes, parentMetadata, parentStats, txn));
+                                        meta, copyFrom, physicalBytes, parentMetadata, parentStats, repairState, txn));
 
                 physicalTotal += physicalBytes;
                 deadTotal += range.deadPrefixBytes;
@@ -721,6 +857,7 @@ public final class ZeroCopySSTableSplitter
                                     long physicalBytes,
                                     Map<MetadataType, MetadataComponent> parentMetadata,
                                     StatsMetadata parentStats,
+                                    RepairState repairState,
                                     LifecycleTransaction txn) throws IOException
     {
         TableMetadata metadata = parent.metadata();
@@ -829,7 +966,7 @@ public final class ZeroCopySSTableSplitter
 
         // ---------- Statistics.db ----------
         writeStatistics(child, parentMetadata, parentStats, partitionSizes, cardinality,
-                        physicalBytes, range.dataLength);
+                        physicalBytes, range.dataLength, repairState);
 
         // ---------- Digest.crc32: CRC32 over EVERY physical byte of the child Data.db ----------
         writeDigest(child);
@@ -853,7 +990,7 @@ public final class ZeroCopySSTableSplitter
             txn.trackNew(reader);
 
         return new Child(child, first, last, range, physicalBytes, partitionCount,
-                         ImmutableSet.copyOf(components), reader);
+                         ImmutableSet.copyOf(components), repairState, reader);
     }
 
     // ------------------------------------------------------------------------------------------------
@@ -939,6 +1076,17 @@ public final class ZeroCopySSTableSplitter
      * every MetadataCollector constructor does) while inheriting a foreign parent's intervals: the replayer
      * gates on {@code originatingHostId.equals(localhostId)} and would then interpret foreign segment ids
      * against the local commitlog, discarding acked-but-unflushed mutations.
+     * <p>
+     * {@code repairedAt}/{@code pendingRepair}/{@code isTransient} come from {@code repairState}, which
+     * defaults to the parent's triple. Writing them here rather than mutating afterwards means the reader
+     * opened a few lines later is already correct, so nothing ever publishes a child with the wrong repair
+     * state -- the Tracker routes a newly visible sstable to a compaction strategy holder by exactly this
+     * triple ({@code CompactionStrategyManager.handleListChangedNotification}).
+     * <p>
+     * {@code sstableLevel} is still inherited. That matches what {@code createWriterForAntiCompaction} does for
+     * a single-input anticompaction (it preserves the level when all inputs agree), and it is safe here: the
+     * children are disjoint contiguous key sub-ranges of the parent's range, so they cannot overlap each other,
+     * and they occupy exactly the slot the obsoleted parent vacated.
      */
     private static void writeStatistics(Descriptor child,
                                         Map<MetadataType, MetadataComponent> parentMetadata,
@@ -946,7 +1094,8 @@ public final class ZeroCopySSTableSplitter
                                         EstimatedHistogram partitionSizes,
                                         ICardinality cardinality,
                                         long physicalBytes,
-                                        long dataLength) throws IOException
+                                        long dataLength,
+                                        RepairState repairState) throws IOException
     {
         StatsMetadata childStats = new StatsMetadata(partitionSizes,                              // DERIVED, exact
                                                      parentStats.estimatedCellPerPartitionCount,  // needs row iteration
@@ -963,12 +1112,12 @@ public final class ZeroCopySSTableSplitter
                                                      parentStats.minClusteringValues,
                                                      parentStats.maxClusteringValues,
                                                      parentStats.hasLegacyCounterShards,
-                                                     parentStats.repairedAt,
+                                                     repairState.repairedAt,                      // CALLER SUPPLIED
                                                      parentStats.totalColumnsSet,
                                                      parentStats.totalRows,
                                                      parentStats.originatingHostId,               // atomic pair, see javadoc
-                                                     parentStats.pendingRepair,
-                                                     parentStats.isTransient);
+                                                     repairState.pendingRepair,                   // CALLER SUPPLIED
+                                                     repairState.isTransient);                    // CALLER SUPPLIED
 
         Map<MetadataType, MetadataComponent> components = new EnumMap<>(parentMetadata);
         components.put(MetadataType.STATS, childStats);

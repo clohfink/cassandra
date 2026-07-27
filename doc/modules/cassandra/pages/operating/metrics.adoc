@@ -252,6 +252,11 @@ read during validation.
 anticompacting because the sstable was fully contained in the repaired
 range.
 
+|BytesZeroCopyAnticompaction |Meter |How many Data.db bytes we copied
+verbatim during anticompaction instead of rewriting them, because the
+sstable's full/transient/unrepaired partitions formed contiguous token
+runs. A subset of BytesAnticompacted.
+
 |BytesPreviewed |Meter |Estimated number of bytes that were scanned for local replica during preview repair
 
 |BytesPreviewedDesynchronized |Meter |Number of desynchronized bytes that were detected among all replicas during preview repair

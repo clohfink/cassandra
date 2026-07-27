@@ -2112,6 +2112,21 @@ drop_compact_storage_enabled: false
 #         # exceed other configuration parameters like bytes_per_assignment or partitions_per_assignment.
 #         max_tables_per_assignment: 64
 
+# Use the zero-copy sstable splitter during anticompaction when an sstable's full / transient / unrepaired
+# partitions form contiguous token runs. Such an sstable is split by copying its compression chunks verbatim
+# instead of rewriting every row; anything else (interleaved ranges, i.e. what vnodes produce) falls back to
+# the normal rewrite. Defaults to true; set to false to disable the optimisation entirely.
+#
+# NOTE: when this is enabled, anticompaction NO LONGER PURGES TOMBSTONES for the sstables it handles. The
+# copy-based split retains droppable tombstones and shadowed data that the rewrite path would drop. That is
+# retention only, never data loss - nothing can be resurrected - but disk usage after anticompaction can be
+# higher than it is today, until the children are compacted normally.
+#
+# NOTE: children written from the middle or the end of the parent carry a dead prefix at the head of their
+# Data.db, which costs them entire-SSTable zero-copy streaming eligibility (they fall back to partial
+# streaming) until they are recompacted.
+# zero_copy_anticompaction_enabled: true
+
 # Enable to run scheduled compactions - this generates a lot of compaction on the node, so enable with care:
 # enable_scheduled_compactions: false
 # minimum number of sub ranges we should compact:

@@ -5202,6 +5202,22 @@ public class DatabaseDescriptor
 
     public static void setEnableCreateSecondaryIndex(boolean enabled) { conf.enable_create_secondary_index = enabled; }
 
+    /**
+     * @see Config#zero_copy_anticompaction_enabled -- note that enabling this means anticompaction no longer
+     * purges tombstones for the sstables it handles (retention only, never data loss).
+     */
+    public static boolean getZeroCopyAnticompactionEnabled()
+    {
+        return conf.zero_copy_anticompaction_enabled;
+    }
+
+    public static void setZeroCopyAnticompactionEnabled(boolean enabled)
+    {
+        if (conf.zero_copy_anticompaction_enabled != enabled)
+            logger.info("Changing zero_copy_anticompaction_enabled to {}", enabled);
+        conf.zero_copy_anticompaction_enabled = enabled;
+    }
+
     public static boolean getEnableScheduledCompactions()
     {
         return conf.enable_scheduled_compactions;
