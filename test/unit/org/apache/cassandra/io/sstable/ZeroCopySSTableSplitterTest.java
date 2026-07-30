@@ -25,13 +25,18 @@ import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.EnumSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.zip.CRC32;
 
+import com.google.common.util.concurrent.RateLimiter;
+
 import org.junit.Test;
 
+import org.apache.cassandra.config.Config;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.cql3.CQLTester;
 import org.apache.cassandra.db.ClusteringComparator;
@@ -40,25 +45,34 @@ import org.apache.cassandra.db.DecoratedKey;
 import org.apache.cassandra.db.RowIndexEntry;
 import org.apache.cassandra.db.Slice;
 import org.apache.cassandra.db.Slices;
+import org.apache.cassandra.db.compaction.CompactionInfo;
+import org.apache.cassandra.db.compaction.CompactionInterruptedException;
 import org.apache.cassandra.db.compaction.OperationType;
 import org.apache.cassandra.db.compaction.Scrubber;
 import org.apache.cassandra.db.compaction.Verifier;
 import org.apache.cassandra.db.filter.ColumnFilter;
 import org.apache.cassandra.db.lifecycle.LifecycleTransaction;
 import org.apache.cassandra.db.rows.UnfilteredRowIterator;
+import org.apache.cassandra.db.streaming.CassandraOutgoingFile;
+import org.apache.cassandra.dht.Range;
+import org.apache.cassandra.dht.Token;
 import org.apache.cassandra.io.compress.CompressionMetadata;
 import org.apache.cassandra.io.sstable.ZeroCopySSTableSplitter.Child;
 import org.apache.cassandra.io.sstable.ZeroCopySSTableSplitter.Result;
 import org.apache.cassandra.io.sstable.format.SSTableReader;
 import org.apache.cassandra.io.sstable.format.SSTableReadsListener;
+import org.apache.cassandra.io.sstable.metadata.MetadataComponent;
+import org.apache.cassandra.io.sstable.metadata.MetadataType;
 import org.apache.cassandra.io.sstable.metadata.StatsMetadata;
 import org.apache.cassandra.io.util.File;
 import org.apache.cassandra.io.util.FileInputStreamPlus;
 import org.apache.cassandra.io.util.RandomAccessReader;
 import org.apache.cassandra.schema.TableMetadata;
+import org.apache.cassandra.streaming.StreamOperation;
 import org.apache.cassandra.utils.BloomFilterSerializer;
 import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.IFilter;
+import org.apache.cassandra.utils.OutputHandler;
 
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
@@ -157,6 +171,257 @@ public class ZeroCopySSTableSplitterTest extends CQLTester
         {
             for (SSTableReader reader : reopened)
                 reader.selfRef().release();
+        }
+    }
+
+    /**
+     * REGRESSION: the parent here is built by a COMPACTION, not by a flush, and is reopened from disk.
+     *
+     * <p>Those two properties together are what every other test in this class lacks, and they are the normal
+     * state of an anticompaction target. A compaction-produced sstable carries one more chunk offset than its
+     * {@code dataLength} needs: {@code SSTableRewriter.doPrepare} syncs the data file twice --
+     * {@code switchWriter(null)} -> {@code openFinalEarly()} -> {@code dataFile.sync()}, then
+     * {@code prepareToCommit()} -> {@code syncInternal()} -- and {@code CompressedSequentialWriter.flushData}
+     * appends a chunk unconditionally, even on an empty buffer. So the physical file ends a few bytes past the
+     * last chunk holding data and {@code chunkCount == ceil(dataLength / chunkLength) + 1}. A flush calls
+     * {@code flushData} exactly once and has neither property.
+     *
+     * <p>This test has to switch preemptive open on by hand, and that is the deeper reason the regression could
+     * not be caught by anything already here: {@code Config.sstable_preemptive_open_interval} defaults to
+     * {@code null}, i.e. disabled ({@code DatabaseDescriptor.getSSTablePreemptiveOpenIntervalInMiB} returns -1,
+     * so {@code SSTableRewriter.calculateOpenInterval} yields {@code Long.MAX_VALUE} and
+     * {@code switchWriter(null)} never calls {@code openFinalEarly()}). {@code test/conf/cassandra.yaml} leaves
+     * it unset, while the shipped {@code conf/cassandra.yaml} sets {@code 50MiB} -- so the double sync, and
+     * therefore the trailing chunk, happens on every real node and on no test.
+     *
+     * <p>The reopen matters just as much: {@code CompressionMetadata.Writer.open} trims the offsets table to
+     * {@code ceil(dataLength / chunkLength)} and resets {@code compressedLength} to {@code offsets[thatCount]},
+     * so the reader a compaction hands back hides the trailing chunk completely. Only a reader built by
+     * {@code CompressionMetadata.create} -- startup, {@code nodetool refresh}, streaming receive, i.e. anything
+     * that has been through a restart -- sees the physical file length.
+     *
+     * <p>The bug: the splitter took the end of a child's last chunk to be {@code compressedFileLength} whenever
+     * {@code lastChunk + 1} reached {@code ceil(dataLength / chunkLength)}, so the LAST child copied the trailing
+     * chunk's bytes as slack. A reader derives a chunk's length from the following offset, so the child's final
+     * chunk then claimed to be longer than it was, and every read of it failed its inline CRC32 -- or, once the
+     * inflated length crossed {@code maxCompressedLength}, took the raw-chunk branch and returned compressed
+     * bytes as row data. Digest.crc32 could not catch it, being computed over whatever bytes were written, and
+     * the parent had already been obsoleted by then.
+     */
+    @Test
+    public void splitOfCompactionProducedParentDoesNotAbsorbTheTrailingChunk() throws Throwable
+    {
+        int previousInterval = DatabaseDescriptor.getSSTablePreemptiveOpenIntervalInMiB();
+        SSTableReader parent = null;
+        try
+        {
+            // What conf/cassandra.yaml ships, and what test/conf/cassandra.yaml leaves unset.
+            DatabaseDescriptor.setSSTablePreemptiveOpenIntervalInMiB(50);
+
+            createCompressedTable(4);
+            disableCompaction();
+            insertPartitions(60, 5, 480);
+            flush();
+            insertPartitions(60, 5, 480);
+            flush();
+
+            ColumnFamilyStore cfs = getCurrentColumnFamilyStore();
+            assertEquals("need two sstables to have something to compact", 2, cfs.getLiveSSTables().size());
+            cfs.forceMajorCompaction();
+            SSTableReader compacted = onlySSTable(cfs);
+
+            parent = SSTableReader.open(compacted.descriptor, compacted.components, cfs.metadata);
+
+            long[] offsets = readChunkOffsets(parent.descriptor);
+            CompressionMetadata meta = parent.getCompressionMetadata();
+            int chunkLength = meta.chunkLength();
+            int dataChunks = (int) ((meta.dataLength + chunkLength - 1) / chunkLength);
+            long physical = parent.descriptor.fileFor(Component.DATA).length();
+
+            // Guard the guard. If compaction ever stops emitting the trailing chunk, or the reopen stops
+            // exposing it, this test silently stops testing anything -- so fail loudly instead.
+            assertEquals("a compaction-produced sstable is expected to carry exactly one trailing " +
+                         "zero-uncompressed-length chunk; without it this test cannot exercise the regression",
+                         dataChunks + 1, offsets.length);
+            assertEquals("the parent must be the on-disk view, whose length includes the trailing chunk",
+                         physical, meta.compressedFileLength);
+            assertTrue("the trailing chunk must put the physical end past the last data chunk",
+                       physical > offsets[dataChunks]);
+            assertTrue("more than one chunk, otherwise the whole exercise is trivial", dataChunks > 20);
+
+            Result result = ZeroCopySSTableSplitter.split(parent, 3, null);
+            try
+            {
+                assertEquals(3, result.children.size());
+
+                // The last child is the only one that could have swallowed the trailing chunk.
+                Child last = result.children.get(result.children.size() - 1);
+                assertEquals("the last child must end at the last DATA chunk", dataChunks - 1, last.lastChunk);
+                assertEquals("the last child must stop at the end of the last data chunk",
+                             offsets[dataChunks] - offsets[(int) last.firstChunk], last.physicalBytes);
+                assertEquals("and that must be its exact on-disk length, head pad aside",
+                             last.onDiskLength(), last.descriptor.fileFor(Component.DATA).length());
+                assertTrue("the trailing slack must not have been copied",
+                           last.physicalBytes < physical - offsets[(int) last.firstChunk]);
+
+                // The failure mode was confined to the final chunk, so read it: a wrong derived length shows up
+                // as a CorruptSSTableException here and nowhere else.
+                try (RandomAccessReader in = last.reader.openDataReader())
+                {
+                    in.seek(last.reader.uncompressedLength() - 1);
+                    in.readByte();
+                }
+
+                assertStructure(cfs, parent, result);
+                assertComponents(cfs, result);
+                assertConcatenatedContentEquals(parent, readers(result));
+                assertPointReads(parent, result);
+            }
+            finally
+            {
+                release(result);
+            }
+        }
+        finally
+        {
+            if (parent != null)
+                parent.selfRef().release();
+            DatabaseDescriptor.setSSTablePreemptiveOpenIntervalInMiB(previousInterval);
+        }
+    }
+
+    /**
+     * A stop request aborts the copy and leaves nothing behind, and the {@link ZeroCopySSTableSplitter.Progress}
+     * holder carries what the callers of {@link CompactionInfo.Holder#stop()} need in order to find it.
+     *
+     * <p>This is the wiring that makes {@code nodetool stop ANTICOMPACTION}, {@code nodetool stop --id},
+     * TRUNCATE, DROP and {@code runWithCompactionsDisabled} work. Every one of them walks
+     * {@code CompactionManager.active.getCompactions()} and decides whether to stop a holder from its
+     * {@link CompactionInfo}: {@code stopCompaction} matches on {@code getTaskType()},
+     * {@code stopCompactionById} on {@code getTaskId()}, and {@code interruptCompactionFor} on
+     * {@code getTableMetadata()} plus the sstables in {@code shouldStop}. Before this existed the split
+     * registered nothing, so all of them silently found no work to stop -- and truncate reported success while
+     * the copy carried on.
+     */
+    @Test
+    public void stopRequestAbortsTheSplitAndLeavesNoFilesBehind() throws Throwable
+    {
+        createCompressedTable(4);
+        disableCompaction();
+        insertPartitions(80, 5, 480);
+        flush();
+
+        ColumnFamilyStore cfs = getCurrentColumnFamilyStore();
+        SSTableReader parent = onlySSTable(cfs);
+        int sstablesBefore = countDataFiles(parent.descriptor);
+
+        ZeroCopySSTableSplitter.Progress progress =
+            ZeroCopySSTableSplitter.progressFor(parent, RateLimiter.create(Double.MAX_VALUE));
+
+        // What nodetool stop / truncate / drop look at to decide this operation is theirs to cancel.
+        CompactionInfo info = progress.getCompactionInfo();
+        assertEquals(OperationType.ANTICOMPACTION, info.getTaskType());
+        assertEquals(cfs.metadata(), info.getTableMetadata());
+        assertNotNull("a null task id would make nodetool stop --id unable to address this", info.getTaskId());
+        assertEquals("the parent must be in the info, or interruptCompactionFor cannot match it",
+                     Collections.singleton(parent), info.getSSTables());
+        assertEquals(CompactionInfo.Unit.BYTES, info.getUnit());
+        assertTrue("total must be positive or compactionstats shows no progress", info.getTotal() > 0);
+        assertFalse(progress.isStopRequested());
+
+        progress.stop();
+        assertTrue(progress.isStopRequested());
+
+        try
+        {
+            ZeroCopySSTableSplitter.split(parent, 4, null, progress);
+            fail("a stopped split must raise CompactionInterruptedException rather than finish");
+        }
+        catch (CompactionInterruptedException expected)
+        {
+            // exactly what the rewrite path raises when its CompactionIterator is interrupted
+        }
+
+        assertEquals("an aborted split must not leave child sstables on disk",
+                     sstablesBefore, countDataFiles(parent.descriptor));
+        assertEquals("the parent must be untouched", parent, onlySSTable(cfs));
+    }
+
+    private static int countDataFiles(Descriptor descriptor)
+    {
+        java.io.File[] files = new java.io.File(descriptor.directory.toString())
+                               .listFiles((dir, name) -> name.endsWith("-Data.db"));
+        return files == null ? 0 : files.length;
+    }
+
+    /**
+     * A split child with a dead prefix is still eligible for entire-SSTable zero-copy streaming.
+     *
+     * <p>Entire-SSTable streaming copies every component file verbatim, so it is legal whenever the
+     * requested ranges cover all of the child's live data. {@link CassandraOutgoingFile#contained} used to
+     * compare the requested byte span against the physical data length, which a dead prefix makes
+     * unreachable ({@code transferLength == uncompressedLength() - deadPrefixBytes}), needlessly refusing
+     * the fast path until the child was recompacted. The check now measures against the live span, so the
+     * child is eligible as-is. A genuinely partial range must still fall back to the rewrite path.
+     */
+    @Test
+    public void childWithDeadPrefixIsEligibleForEntireSSTableStreaming() throws Throwable
+    {
+        createCompressedTable(4);
+        disableCompaction();
+        insertPartitions(80, 5, 480);
+        flush();
+
+        ColumnFamilyStore cfs = getCurrentColumnFamilyStore();
+        SSTableReader parent = onlySSTable(cfs);
+
+        Result result = ZeroCopySSTableSplitter.split(parent, 4, null);
+        try
+        {
+            Child dead = firstChildWithDeadPrefix(result);
+            assertNotNull("no child started off a chunk boundary; the dead-prefix path was not exercised", dead);
+            assertTrue(dead.deadPrefixBytes > 0);
+
+            SSTableReader child = dead.reader;
+
+            // The first live partition sits at deadPrefixBytes, so getPositionsForRanges() over the whole
+            // token range yields [deadPrefixBytes, uncompressedLength) -- a span short of the physical length.
+            long firstPosition = child.getPosition(child.first.getToken().minKeyBound(), SSTableReader.Operator.GT).position;
+            assertEquals(dead.deadPrefixBytes, firstPosition);
+
+            List<Range<Token>> fullRange = Range.normalize(Collections.singletonList(
+                new Range<>(cfs.getPartitioner().getMinimumToken(), child.last.getToken())));
+            List<SSTableReader.PartitionPositionBounds> sections = child.getPositionsForRanges(fullRange);
+            long transferLength = sections.stream().mapToLong(p -> p.upperPosition - p.lowerPosition).sum();
+            assertEquals(child.uncompressedLength() - firstPosition, transferLength);
+            assertTrue("the dead prefix must make the byte span fall short of the physical length",
+                       transferLength < child.uncompressedLength());
+
+            CassandraOutgoingFile cof = new CassandraOutgoingFile(StreamOperation.BOOTSTRAP, child.ref(),
+                                                                  sections, fullRange, child.estimatedKeys());
+            try
+            {
+                // The whole live span is requested, so despite the dead prefix the child is eligible.
+                assertTrue("a dead prefix must not disqualify a fully-covered child", cof.contained(sections, child));
+
+                // A range covering only part of the child must still fall back to the rewrite path.
+                List<Rec> childIndex = readIndex(child.descriptor);
+                assertTrue("need at least two partitions for a partial range", childIndex.size() >= 2);
+                Token midToken = child.decorateKey(childIndex.get(childIndex.size() / 2).key).getToken();
+                List<Range<Token>> partialRange = Range.normalize(Collections.singletonList(
+                    new Range<>(cfs.getPartitioner().getMinimumToken(), midToken)));
+                List<SSTableReader.PartitionPositionBounds> partialSections = child.getPositionsForRanges(partialRange);
+                assertFalse("a partial range must not be treated as containing the whole sstable",
+                            cof.contained(partialSections, child));
+            }
+            finally
+            {
+                cof.finish();
+            }
+        }
+        finally
+        {
+            release(result);
         }
     }
 
@@ -558,6 +823,247 @@ public class ZeroCopySSTableSplitterTest extends CQLTester
         }
     }
 
+    /**
+     * The ALIGNED layout, which is what extent sharing costs: a child's Data.db starts with up to 64 KiB of the
+     * parent's previous compression chunk, so its {@code offsets[0]} is that pad instead of 0 and every physical
+     * offset in it is shifted.
+     *
+     * <p>This forces the layout on rather than requiring a filesystem that can share extents -- no developer
+     * laptop and no CI box can, and this must not be a test that only ever runs on xfs. The layout is a
+     * property of {@code copyPlan}, not of the mechanism: a padded range that gets copied instead of cloned
+     * produces a byte-identical child, so copying it here exercises exactly the file a reflink would have
+     * produced. What is NOT covered by forcing it is the ioctl itself, which either shares the range or reports
+     * that it cannot.
+     *
+     * <p>Everything is asserted through the ordinary readers, because the point is that nothing downstream
+     * notices. The one consumer that did notice, and had to be fixed, is {@code MmappedRegions}: it placed
+     * segments at a cumulative sum of chunk lengths seeded at physical 0, so a padded file's last chunk ran off
+     * the end of the last mapped region. {@code test/conf/cassandra.yaml} sets {@code disk_access_mode: mmap},
+     * so every read below goes through that path -- which is why the content assertions here are the regression
+     * test for it, and why a child of more than one chunk is not enough: it has to be read to the last byte.
+     */
+    @Test
+    public void alignedChildrenAreReadableEverywhere() throws Throwable
+    {
+        createCompressedTable(4);
+        disableCompaction();
+        // Big enough that the parent spans several 64 KiB alignment units, so the pads are real residues of
+        // O(i) rather than just "everything before this chunk".
+        insertPartitions(400, 5, 480);
+        flush();
+
+        ColumnFamilyStore cfs = getCurrentColumnFamilyStore();
+        SSTableReader parent = onlySSTable(cfs);
+        assertEquals("this test needs the mmap read path to be the one under test",
+                     Config.DiskAccessMode.mmap, DatabaseDescriptor.getDiskAccessMode());
+        assertTrue("the parent must span several alignment units for the residues to mean anything",
+                   parent.descriptor.fileFor(Component.DATA).length() > 4 * 64 * 1024);
+
+        Result result;
+        ZeroCopySSTableSplitter.forceAlignedLayoutForTesting = true;
+        try
+        {
+            result = ZeroCopySSTableSplitter.split(parent, 4, null);
+        }
+        finally
+        {
+            ZeroCopySSTableSplitter.forceAlignedLayoutForTesting = false;
+        }
+
+        try
+        {
+            assertEquals(4, result.children.size());
+
+            // Guard the guard: without a padded child this test asserts nothing new. Only the first child can
+            // legitimately have no pad, its first chunk being at physical 0.
+            assertEquals("the first child starts at physical 0 and cannot be padded",
+                         0, result.children.get(0).headPadBytes);
+            int padded = 0;
+            for (Child child : result.children)
+            {
+                if (child.headPadBytes > 0)
+                    padded++;
+                assertTrue("head pad must be under one alignment unit", child.headPadBytes < 64 * 1024);
+                assertEquals("offsets[0] must be the head pad",
+                             child.headPadBytes, child.reader.getCompressionMetadata().chunkFor(0).offset);
+                assertEquals("the pad is on disk and nowhere else",
+                             child.onDiskLength(), child.descriptor.fileFor(Component.DATA).length());
+                // The uncompressed dead prefix is a DIFFERENT thing and must not have moved: the head pad is
+                // physical, the dead prefix is where the first partition sits in uncompressed space.
+                RowIndexEntry first = child.reader.getPosition(child.first, SSTableReader.Operator.EQ, false);
+                assertNotNull(first);
+                assertEquals(child.deadPrefixBytes, first.position);
+            }
+            assertTrue("no child was padded; the aligned layout was not exercised", padded > 0);
+            assertEquals(sumHeadPad(result), result.totalHeadPadBytes);
+            assertTrue("the pad is accounted for in the result", result.totalHeadPadBytes > 0);
+
+            // Reading, in every way there is to read.
+            assertStructure(cfs, parent, result);
+            assertComponents(cfs, result);
+            assertConcatenatedContentEquals(parent, readers(result));
+            assertPointReads(parent, result);
+
+            // The last byte of every child, which is the read the MmappedRegions bug broke and nothing else did.
+            for (Child child : result.children)
+            {
+                try (RandomAccessReader in = child.reader.openDataReader())
+                {
+                    in.seek(child.reader.uncompressedLength() - 1);
+                    in.readByte();
+                }
+            }
+
+            // Digest.crc32 covers the pad, because Verifier CRCs the whole physical file with no reference to
+            // CompressionInfo.db. Extended verification also walks Data.db linearly and rebuilds the index.
+            for (Child child : result.children)
+            {
+                assertEquals(String.valueOf(crc32Of(child.descriptor.fileFor(Component.DATA))),
+                             readDigest(child.descriptor));
+                try (Verifier verifier = new Verifier(cfs, child.reader, true,
+                                                      Verifier.options().extendedVerification(true).build()))
+                {
+                    verifier.verify();
+                }
+            }
+        }
+        finally
+        {
+            release(result);
+        }
+
+        // And from a cold open, where CompressionMetadata is built from the file length rather than handed over.
+        List<SSTableReader> reopened = new ArrayList<>();
+        try
+        {
+            for (Child child : result.children)
+                reopened.add(SSTableReader.open(child.descriptor, child.components, cfs.metadata));
+            assertConcatenatedContentEquals(parent, reopened);
+            for (int i = 0; i < reopened.size(); i++)
+                assertEquals(result.children.get(i).onDiskLength(),
+                             reopened.get(i).getCompressionMetadata().compressedFileLength);
+        }
+        finally
+        {
+            for (SSTableReader reader : reopened)
+                reader.selfRef().release();
+        }
+    }
+
+    /**
+     * Digest.crc32 is optional. It is the only component whose cost is proportional to the DATA rather than to
+     * the index -- one full sequential read of every child -- so with the extents shared it is the entire
+     * remaining cost of a split, and {@code zero_copy_split_digest_enabled: false} takes a split down to its
+     * Index.db pass.
+     *
+     * <p>What this pins is that skipping it is a supported state and not a broken one:
+     * <ul>
+     *   <li>the file does not exist, TOC does not claim it, and the component set does not contain it -- the
+     *       three have to agree or {@code SSTable.discoverComponentsFor} and the transaction's file bookkeeping
+     *       disagree about what belongs to the sstable;</li>
+     *   <li>the children still open, read and scan identically, from memory and from a cold open;</li>
+     *   <li>{@code Verifier} still passes, and passes by the documented route: a missing digest makes it say so
+     *       and upgrade to a full extended verification rather than fail. That upgrade is the whole cost of this
+     *       option, so it is asserted directly rather than inferred from "verify did not throw".</li>
+     * </ul>
+     */
+    @Test
+    public void digestIsOptional() throws Throwable
+    {
+        createCompressedTable(4);
+        disableCompaction();
+        insertPartitions(60, 4, 480);
+        flush();
+
+        ColumnFamilyStore cfs = getCurrentColumnFamilyStore();
+        SSTableReader parent = onlySSTable(cfs);
+
+        Result result;
+        DatabaseDescriptor.setZeroCopySplitDigestEnabled(false);
+        try
+        {
+            result = ZeroCopySSTableSplitter.split(parent, 3, null);
+        }
+        finally
+        {
+            DatabaseDescriptor.setZeroCopySplitDigestEnabled(true);
+        }
+
+        try
+        {
+            assertEquals(3, result.children.size());
+            for (Child child : result.children)
+            {
+                String context = "child " + child.descriptor;
+                assertFalse(context + ": Digest.crc32 must not have been written",
+                            child.descriptor.fileFor(Component.DIGEST).exists());
+                assertFalse(context + ": DIGEST must not be a component", child.components.contains(Component.DIGEST));
+                assertFalse(context + ": TOC must not list DIGEST",
+                            SSTable.readTOC(child.descriptor, false).contains(Component.DIGEST));
+                assertFalse(context + ": nothing on disk may claim DIGEST",
+                            SSTable.discoverComponentsFor(child.descriptor).contains(Component.DIGEST));
+            }
+
+            // Everything else is unchanged, including the components that ARE written.
+            assertStructure(cfs, parent, result);
+            assertComponents(cfs, result);
+            assertConcatenatedContentEquals(parent, readers(result));
+            assertPointReads(parent, result);
+
+            // The documented Verifier fallback: not quick, not extended, no digest -> says so, then does the
+            // full walk and succeeds.
+            for (Child child : result.children)
+            {
+                List<String> output = new ArrayList<>();
+                OutputHandler handler = new OutputHandler.LogOutput()
+                {
+                    @Override
+                    public void output(String msg)
+                    {
+                        output.add(msg);
+                    }
+                };
+                try (Verifier verifier = new Verifier(cfs, child.reader, handler, true,
+                                                      Verifier.options().extendedVerification(false).build()))
+                {
+                    verifier.verify();
+                }
+                assertTrue("Verifier did not report the missing digest: " + output,
+                           output.stream().anyMatch(m -> m.contains("Data digest missing")));
+                assertTrue("Verifier did not fall through to the extended walk: " + output,
+                           output.stream().anyMatch(m -> m.contains("Extended Verify requested")));
+            }
+
+            // ...and the quick path, which never looks at the digest at all.
+            for (Child child : result.children)
+            {
+                try (Verifier verifier = new Verifier(cfs, child.reader, true,
+                                                      Verifier.options().quick(true).build()))
+                {
+                    verifier.verify();
+                }
+            }
+        }
+        finally
+        {
+            release(result);
+        }
+
+        // A cold open must not miss the component either: componentsFor() rediscovers from TOC.
+        List<SSTableReader> reopened = new ArrayList<>();
+        try
+        {
+            for (Child child : result.children)
+                reopened.add(SSTableReader.open(child.descriptor, child.components, cfs.metadata));
+            assertConcatenatedContentEquals(parent, reopened);
+        }
+        finally
+        {
+            for (SSTableReader reader : reopened)
+                reader.selfRef().release();
+        }
+    }
+
     /** An uncompressed parent is refused up front rather than producing a child with a misaligned CRC.db. */
     @Test
     public void uncompressedParentIsRefused() throws Throwable
@@ -717,8 +1223,11 @@ public class ZeroCopySSTableSplitterTest extends CQLTester
         long parentUncompressed = parent.uncompressedLength();
         assertEquals(meta.dataLength, parentUncompressed);
         long parentPhysical = parent.descriptor.fileFor(Component.DATA).length();
-        assertEquals(parentPhysical, meta.compressedFileLength);
-        int parentChunks = (int) ((parentUncompressed + chunkLength - 1) / chunkLength);
+        long[] parentOffsets = readChunkOffsets(parent.descriptor);
+        int parentDataChunks = (int) ((parentUncompressed + chunkLength - 1) / chunkLength);
+        // A flushed parent's offsets table stops at the last data chunk and its metadata length is the physical
+        // length; a compaction-produced one has a trailing chunk beyond both. Either is legal input.
+        assertTrue("offsets table must address every data chunk", parentOffsets.length >= parentDataChunks);
 
         StatsMetadata parentStats = parent.getSSTableMetadata();
 
@@ -748,8 +1257,8 @@ public class ZeroCopySSTableSplitterTest extends CQLTester
             long firstChunk = lo / chunkLength;
             long lastChunk = (hi - 1) / chunkLength;
             long dataLength = hi - firstChunk * chunkLength;
-            long physicalBytes = chunkOffset(meta, lastChunk + 1, parentChunks, parentPhysical, chunkLength)
-                                 - chunkOffset(meta, firstChunk, parentChunks, parentPhysical, chunkLength);
+            long physicalBytes = chunkEndOnDisk(parentOffsets, lastChunk, parentPhysical)
+                                 - parentOffsets[(int) firstChunk];
 
             assertEquals(context + ": firstChunk", firstChunk, child.firstChunk);
             assertEquals(context + ": lastChunk", lastChunk, child.lastChunk);
@@ -762,20 +1271,28 @@ public class ZeroCopySSTableSplitterTest extends CQLTester
             assertTrue(context + ": (C-1)*L < Dp", (chunkCount - 1) * chunkLength < dataLength);
             assertTrue(context + ": Dp <= C*L", dataLength <= chunkCount * chunkLength);
 
-            // FACT 6: not one byte of trailing slack on disk.
+            // FACT 6: not one byte of trailing slack on disk. The head pad is the one thing that may sit in
+            // front of the run -- zero unless the child was aligned so its extents could be shared with the
+            // parent -- so every physical length here is measured from the pad, not from 0.
+            long pad = child.headPadBytes;
+            assertTrue(context + ": head pad must be under one alignment unit", pad < 64 * 1024);
+            assertTrue(context + ": head pad must be O(i) mod alignment, or nothing",
+                       pad == 0 || pad == parentOffsets[(int) firstChunk] % (64 * 1024));
+            assertEquals(context + ": on-disk Data.db length", pad + physicalBytes, child.onDiskLength());
             assertEquals(context + ": physical Data.db length",
-                         physicalBytes, child.descriptor.fileFor(Component.DATA).length());
+                         pad + physicalBytes, child.descriptor.fileFor(Component.DATA).length());
             assertEquals(context + ": uncompressedLength", dataLength, child.reader.uncompressedLength());
 
             CompressionMetadata childMeta = child.reader.getCompressionMetadata();
-            assertEquals(context + ": offsets[0]", 0, childMeta.chunkFor(0).offset);
+            assertEquals(context + ": offsets[0]", pad, childMeta.chunkFor(0).offset);
             assertEquals(context + ": chunkLength", chunkLength, childMeta.chunkLength());
             assertEquals(context + ": maxCompressedLength", meta.maxCompressedLength(), childMeta.maxCompressedLength());
             assertEquals(context + ": CompressionInfo dataLength", dataLength, childMeta.dataLength);
-            assertEquals(context + ": compressedFileLength", physicalBytes, childMeta.compressedFileLength);
+            assertEquals(context + ": compressedFileLength", pad + physicalBytes, childMeta.compressedFileLength);
             // the last chunk plus its 4 byte inline CRC32 must end exactly at the physical end of the file
             CompressionMetadata.Chunk tail = childMeta.chunkFor((chunkCount - 1) * chunkLength);
-            assertEquals(context + ": last chunk overruns the file", physicalBytes, tail.offset + tail.length + 4);
+            assertEquals(context + ": last chunk overruns the file",
+                         pad + physicalBytes, tail.offset + tail.length + 4);
 
             // Index.db: same keys, same promoted blobs, positions rebased by exactly shift.
             List<Rec> childIndex = readIndex(child.descriptor);
@@ -815,7 +1332,7 @@ public class ZeroCopySSTableSplitterTest extends CQLTester
             assertEquals(context + ": repairedAt", parentStats.repairedAt, childStats.repairedAt);
             assertEquals(context + ": originatingHostId", parentStats.originatingHostId, childStats.originatingHostId);
             assertEquals(context + ": compressionRatio",
-                         (double) physicalBytes / dataLength, childStats.compressionRatio, 1e-9);
+                         (double) (pad + physicalBytes) / dataLength, childStats.compressionRatio, 1e-9);
             assertEquals(context + ": estimatedPartitionSize count",
                          child.partitionCount, childStats.estimatedPartitionSize.count());
 
@@ -823,8 +1340,8 @@ public class ZeroCopySSTableSplitterTest extends CQLTester
             deadSum += lo % chunkLength;
             partitionSum += child.partitionCount;
             if (previousLastChunk == firstChunk)
-                duplicatedSum += chunkOffset(meta, firstChunk + 1, parentChunks, parentPhysical, chunkLength)
-                                 - chunkOffset(meta, firstChunk, parentChunks, parentPhysical, chunkLength);
+                duplicatedSum += chunkEndOnDisk(parentOffsets, firstChunk, parentPhysical)
+                                 - parentOffsets[(int) firstChunk];
             previousLastChunk = lastChunk;
             cursor = to;
         }
@@ -838,10 +1355,43 @@ public class ZeroCopySSTableSplitterTest extends CQLTester
         assertEquals(parent.last, result.children.get(result.children.size() - 1).last);
     }
 
-    /** {@code O(k)}, with {@code O(N)} defined as the physical file length. */
-    private static long chunkOffset(CompressionMetadata meta, long k, int chunkCount, long compressedFileLength, int chunkLength)
+    /**
+     * End of chunk {@code k}, inclusive of its 4-byte inline CRC32, derived from the offsets table exactly as it
+     * exists in CompressionInfo.db.
+     *
+     * <p>The physical file length is the end of chunk {@code k} only when there is no entry after {@code k}.
+     * This used to key off {@code ceil(dataLength / chunkLength)} instead -- the same formula production used --
+     * so it agreed with the code it was supposed to be checking, and both were wrong for a compaction-produced
+     * parent, which carries one extra chunk offset past the end of its data. See
+     * {@link #splitOfCompactionProducedParentDoesNotAbsorbTheTrailingChunk}.
+     */
+    private static long chunkEndOnDisk(long[] offsets, long k, long compressedFileLength)
     {
-        return k == chunkCount ? compressedFileLength : meta.chunkFor(k * (long) chunkLength).offset;
+        assertTrue("chunk " + k + " is not in the offsets table", k >= 0 && k < offsets.length);
+        return k + 1 < offsets.length ? offsets[(int) (k + 1)] : compressedFileLength;
+    }
+
+    /** The chunk offsets as stored, parsed here rather than through {@link CompressionMetadata}. */
+    private static long[] readChunkOffsets(Descriptor descriptor) throws IOException
+    {
+        try (FileInputStreamPlus in = descriptor.fileFor(Component.COMPRESSION_INFO).newInputStream())
+        {
+            in.readUTF();                       // compressor class name
+            int optionCount = in.readInt();
+            for (int i = 0; i < optionCount; i++)
+            {
+                in.readUTF();
+                in.readUTF();
+            }
+            in.readInt();                       // chunkLength
+            if (descriptor.version.hasMaxCompressedLength())
+                in.readInt();                   // maxCompressedLength
+            in.readLong();                      // dataLength
+            long[] offsets = new long[in.readInt()];
+            for (int i = 0; i < offsets.length; i++)
+                offsets[i] = in.readLong();
+            return offsets;
+        }
     }
 
     // ----------------------------------------------------------------------------------------------------
@@ -866,10 +1416,36 @@ public class ZeroCopySSTableSplitterTest extends CQLTester
             for (Component component : child.components)
                 assertTrue(context + ": missing " + component, child.descriptor.fileFor(component).exists());
 
-            // Digest.crc32 is the decimal CRC32 of every physical byte of Data.db.
-            assertEquals(context + ": digest",
-                         Long.toString(crc32Of(child.descriptor.fileFor(Component.DATA))),
-                         readDigest(child.descriptor));
+            // Digest.crc32, when it was written at all, is the decimal CRC32 of every physical byte of Data.db.
+            // It is optional (zero_copy_split_digest_enabled), and the two states must be exactly two states:
+            // the component is claimed and the file is right, or it is claimed nowhere and exists nowhere. A
+            // file on disk that TOC does not list, or the reverse, is what the checks above would catch.
+            if (child.components.contains(Component.DIGEST))
+            {
+                assertEquals(context + ": digest",
+                             Long.toString(crc32Of(child.descriptor.fileFor(Component.DATA))),
+                             readDigest(child.descriptor));
+            }
+            else
+            {
+                assertFalse(context + ": Digest.crc32 must not exist when it is not a component",
+                            child.descriptor.fileFor(Component.DIGEST).exists());
+            }
+
+            // Statistics.db: all four metadata components must deserialise standalone. This is the component
+            // whose loss is unrecoverable -- it carries the SerializationHeader every relocated row is decoded
+            // against, plus the repair state -- and it is written here through a SequentialWriter (so that it is
+            // fsynced) rather than through MetadataSerializer.rewriteSSTableMetadata, so assert the bytes are
+            // still exactly what the deserialiser expects.
+            Map<MetadataType, MetadataComponent> childMetadata =
+                child.descriptor.getMetadataSerializer()
+                                .deserialize(child.descriptor, EnumSet.allOf(MetadataType.class));
+            for (MetadataType type : MetadataType.values())
+                assertNotNull(context + ": Statistics.db is missing " + type, childMetadata.get(type));
+
+            // ...and it is written in place, so no tmp file may survive the split.
+            assertFalse(context + ": leftover Statistics.db tmp file",
+                        new File(child.descriptor.tmpFilenameFor(Component.STATS)).exists());
 
             List<Rec> childIndex = readIndex(child.descriptor);
 
@@ -983,6 +1559,14 @@ public class ZeroCopySSTableSplitterTest extends CQLTester
         for (Child child : result.children)
             readers.add(child.reader);
         return readers;
+    }
+
+    private static long sumHeadPad(Result result)
+    {
+        long sum = 0;
+        for (Child child : result.children)
+            sum += child.headPadBytes;
+        return sum;
     }
 
     private static Child firstChildWithDeadPrefix(Result result)

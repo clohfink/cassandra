@@ -5218,6 +5218,38 @@ public class DatabaseDescriptor
         conf.zero_copy_anticompaction_enabled = enabled;
     }
 
+    /**
+     * @see Config#zero_copy_split_reflink_enabled -- filesystem support is discovered by trying, so this being
+     * true does not mean any extent will actually be shared.
+     */
+    public static boolean getZeroCopySplitReflinkEnabled()
+    {
+        return conf.zero_copy_split_reflink_enabled;
+    }
+
+    public static void setZeroCopySplitReflinkEnabled(boolean enabled)
+    {
+        if (conf.zero_copy_split_reflink_enabled != enabled)
+            logger.info("Changing zero_copy_split_reflink_enabled to {}", enabled);
+        conf.zero_copy_split_reflink_enabled = enabled;
+    }
+
+    /**
+     * @see Config#zero_copy_split_digest_enabled -- turning this off makes {@code nodetool verify} and
+     * {@code nodetool import --verify-sstables} fall back to a full extended verification for the children.
+     */
+    public static boolean getZeroCopySplitDigestEnabled()
+    {
+        return conf.zero_copy_split_digest_enabled;
+    }
+
+    public static void setZeroCopySplitDigestEnabled(boolean enabled)
+    {
+        if (conf.zero_copy_split_digest_enabled != enabled)
+            logger.info("Changing zero_copy_split_digest_enabled to {}", enabled);
+        conf.zero_copy_split_digest_enabled = enabled;
+    }
+
     public static boolean getEnableScheduledCompactions()
     {
         return conf.enable_scheduled_compactions;

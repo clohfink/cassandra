@@ -107,8 +107,59 @@ public class Config
      * <p>
      * Suffix children also carry a dead prefix at the head of their Data.db, which costs them entire-SSTable
      * zero-copy streaming eligibility (they fall back to partial streaming) until they are recompacted.
+     * <p>
+     * ACCEPTED IMPRECISION IN SSTABLE STATISTICS. A child's per-sstable totals -- cell count, row count,
+     * tombstone-drop histogram -- cannot be recomputed without deserialising every row, which is the cost this
+     * path exists to avoid, so each child inherits the parent's whole-sstable values while its partition count
+     * and partition-size histogram are exact per child. Consequences, all accepted: per-table aggregates
+     * (nodetool tablestats mean row count, estimated column count, droppable-tombstone ratio) over-report by
+     * roughly the number of children; the droppable-tombstone check that triggers single-sstable tombstone
+     * compaction under-fires by roughly the same factor, so retained tombstones are cleaned up later than
+     * tombstone_threshold implies; and an all-expired child is not dropped whole. Every one of these errs in the
+     * conservative direction and none can lose or resurrect data. See ZeroCopySSTableSplitter's class javadoc.
      */
     public volatile boolean zero_copy_anticompaction_enabled = true;
+
+    /**
+     * Let the zero-copy splitter share a child's Data.db extents with its parent instead of copying them, using
+     * the Linux {@code FICLONERANGE} ioctl ("reflink"). A split then writes no data blocks and consumes no
+     * additional disk space; the parent's extents become the children's when the parent is unlinked.
+     * <p>
+     * Requires a filesystem that can share extents -- xfs formatted with {@code -m reflink=1} (the mkfs default
+     * since xfsprogs 5.1), btrfs -- and is discovered by trying: on ext4 and everything else the first attempt
+     * per data directory fails, is logged once at INFO, and every split from then on copies as before. There is
+     * no correctness difference between the two paths, so this is a knob for turning off an unwanted behaviour
+     * (shared extents make {@code du} over-report until the parent is gone, and page cache is per inode so
+     * bytes read through both files are cached twice), not for turning on a risky one.
+     * <p>
+     * The cost of making sharing possible at all is up to 64 KiB of alignment padding at the head of each
+     * child's Data.db, which is why children below 1 MiB are copied regardless.
+     */
+    public volatile boolean zero_copy_split_reflink_enabled = true;
+
+    /**
+     * Write Digest.crc32 for the children of a zero-copy split. Producing it means a full sequential read of
+     * every child, which -- once {@link #zero_copy_split_reflink_enabled} has removed the copy -- is the ENTIRE
+     * remaining cost of a split: turning this off takes a split from "read the whole sstable" to "read its
+     * Index.db", i.e. about 0.05% of the bytes.
+     * <p>
+     * Nothing requires the component. {@code SSTableReader.open} asserts only DATA, PRIMARY_INDEX and STATS;
+     * entire-SSTable streaming skips components whose file does not exist and the receiver never validates the
+     * digest; the Netflix backup manifest enumerates the component files that exist and its restore path does
+     * not list DIGEST among the components it downloads. A compressed sstable is also self-checking without it,
+     * because every chunk carries an inline CRC32 that this path preserves verbatim and that the read path
+     * verifies on every chunk it decompresses. The digest's only unique coverage is bytes that no read ever
+     * touches: the child's dead prefix and its alignment pad.
+     * <p>
+     * WHAT IT DOES COST. {@code Verifier} is the only reader (via {@code DataIntegrityMetadata}), and a missing
+     * digest is not an error there -- it logs "Data digest missing, assuming extended verification of disk
+     * values" and falls through to the full row-by-row walk. So {@code nodetool verify} and {@code nodetool
+     * import --verify-sstables} on such a child get SLOWER (a deserializing scan instead of a whole-file CRC),
+     * not weaker. {@code nodetool verify -q} and an import without {@code --verify-sstables} return before the
+     * digest is looked at and are unaffected. Since restore-then-import is this fork's own workflow, and a
+     * child's file set travels through backup without a digest, this defaults to ON.
+     */
+    public volatile boolean zero_copy_split_digest_enabled = true;
 
     public volatile int object_store_shared_chunk_cache_count = 64;
     // Size of each prefetch buffer. Should be >= the sstable compression chunk length (chunk_length_in_kb).

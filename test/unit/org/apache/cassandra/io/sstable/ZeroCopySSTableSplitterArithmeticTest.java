@@ -25,8 +25,10 @@ import java.util.Random;
 import org.junit.Test;
 
 import org.apache.cassandra.io.sstable.ZeroCopySSTableSplitter.ChunkRange;
+import org.apache.cassandra.io.sstable.ZeroCopySSTableSplitter.CopyPlan;
 
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotEquals;
@@ -60,6 +62,12 @@ public class ZeroCopySSTableSplitterArithmeticTest
 
     /** Fixed so a sweep failure reproduces; the value is echoed in every sweep failure message. */
     private static final long SEED = 20260726L;
+
+    /**
+     * The alignment {@code copyPlan} works to, restated here rather than read from the class under test: these
+     * tests are the definition of it. It has to match {@link org.apache.cassandra.io.util.Reflink#RANGE_ALIGNMENT}.
+     */
+    private static final long A = 64 * 1024;
 
     // ------------------------------------------------------------------------------------------------
     // chunkIndexFor / firstChunk: boundary, one before, one after
@@ -779,6 +787,82 @@ public class ZeroCopySSTableSplitterArithmeticTest
     }
 
     /**
+     * The load-bearing test for the streaming selector.
+     *
+     * <p>{@code RunSelector} exists because materialising a {@code long} per partition is a hard ceiling on how
+     * large an sstable can be split -- a terabyte of small partitions is tens of gigabytes of heap for an array
+     * whose every access is sequential. It is also much harder to read than {@link
+     * ZeroCopySSTableSplitter#chooseByByteShare}, which is kept precisely so that this test can assert the two
+     * agree exactly, run start for run start, on randomised layouts. Anything that makes them disagree is a
+     * regression in the streaming version, not a new policy.
+     *
+     * <p>The sweep is shaped to hit the two clamps that are the whole difficulty, because they are the only
+     * places the array version reaches somewhere other than the cursor:
+     * <ul>
+     *   <li>{@code numChildren == n} and near it, which forces the tail-room clamp on nearly every run;</li>
+     *   <li>partitions large enough that one of them spans several byte-share targets, which forces the
+     *       non-empty clamp and, with it, the deferred offset resolution.</li>
+     * </ul>
+     */
+    @Test
+    public void runSelectorAgreesWithChooseByByteShare()
+    {
+        long seed = SEED + 7;
+        Random rnd = new Random(seed);
+        String ctx = "";
+        try
+        {
+            for (int t = 0; t < 4000; t++)
+            {
+                int n = 1 + (int) nextLong(rnd, 120);
+                // A mix of tiny and huge partitions: a partition wider than total/numChildren is what forces
+                // several targets onto one record, hence the non-empty clamp.
+                boolean lumpy = (t % 3) == 0;
+                long[] positions = new long[n];
+                long p = nextLong(rnd, 1L << 20);
+                for (int i = 0; i < n; i++)
+                {
+                    positions[i] = p;
+                    p += 1 + nextLong(rnd, lumpy && (i % 7) == 0 ? 5_000_000 : 1000);
+                }
+                long uncompressedLength = p + 1 + nextLong(rnd, 1000);
+
+                // exercise the extremes as well as the middle
+                int numChildren;
+                if (t % 4 == 0)
+                    numChildren = n;                              // every run on the tail-room clamp
+                else if (t % 4 == 1)
+                    numChildren = Math.max(1, n - 1);
+                else if (t % 4 == 2)
+                    numChildren = 1;
+                else
+                    numChildren = 1 + (int) nextLong(rnd, n);
+
+                ctx = "n=" + n + " numChildren=" + numChildren + " lumpy=" + lumpy;
+                int[] expected = ZeroCopySSTableSplitter.chooseByByteShare(positions, uncompressedLength, numChildren);
+
+                ZeroCopySSTableSplitter.RunSelector selector =
+                    new ZeroCopySSTableSplitter.RunSelector(uncompressedLength, numChildren, n);
+                for (int i = 0; i < n; i++)
+                    selector.offer(i, positions[i]);
+                ZeroCopySSTableSplitter.Runs runs = selector.finish();
+
+                assertArrayEquals(ctx, expected, runs.runStarts);
+                assertEquals(ctx, n, runs.partitionCount);
+
+                // and the offsets it carries have to be the ones those run starts point at, since build() takes
+                // every child's lo straight from them
+                for (int m = 0; m < numChildren; m++)
+                    assertEquals(ctx + " offset of run " + m, positions[expected[m]], runs.runPositions[m]);
+            }
+        }
+        catch (AssertionError | RuntimeException e)
+        {
+            throw new AssertionError("RunSelector sweep failed with seed=" + seed + " at " + ctx + ": " + e, e);
+        }
+    }
+
+    /**
      * Byte shares chosen by {@code chooseByByteShare} must be consumable by {@code chunkRange}: every run is
      * non-empty, so every {@code [lo, hi)} it implies is a legal child.
      */
@@ -818,6 +902,126 @@ public class ZeroCopySSTableSplitterArithmeticTest
                 assertEquals("the runs must cover the whole parent", uncompressedLength, previousHi);
             }
         }
+    }
+
+    // ------------------------------------------------------------------------------------------------
+    // copyPlan: the physical half, i.e. the alignment extent sharing needs
+    // ------------------------------------------------------------------------------------------------
+
+    /** Without alignment the plan must be exactly what the splitter did before extent sharing existed. */
+    @Test
+    public void copyPlanWithoutAlignmentIsTheOldBehaviour()
+    {
+        for (long copyFrom : new long[]{ 0, 1, 4095, A, A + 1, 3 * A - 7, 1L << 40, (1L << 40) + 12345 })
+        {
+            for (long physical : new long[]{ 1, 4096, A - 1, A, A + 1, 1 << 20, 3L << 30 })
+            {
+                CopyPlan plan = ZeroCopySSTableSplitter.copyPlan(copyFrom, physical, false, false);
+                String ctx = "from=" + copyFrom + " physical=" + physical;
+                assertEquals(ctx + " srcStart", copyFrom, plan.srcStart);
+                assertEquals(ctx + " pad", 0, plan.headPadBytes);
+                assertEquals(ctx + " childLength", physical, plan.childLength);
+                assertEquals(ctx + " cloneLength", 0, plan.cloneLength);
+                assertEquals(ctx + " tailLength", physical, plan.tailLength());
+            }
+        }
+    }
+
+    /**
+     * The three properties the ioctl actually demands, over every residue of the alignment: the source offset
+     * is aligned, the destination offset is aligned (it is always 0), and the cloned length is aligned. Plus
+     * the two the format demands: the child's byte 0 comes from at or before {@code O(i)}, and the pad is
+     * exactly the distance between them.
+     */
+    @Test
+    public void copyPlanAlignsEveryResidue()
+    {
+        Random rnd = new Random(SEED + 11);
+        for (int trial = 0; trial < 20000; trial++)
+        {
+            // A base far enough out that a 32-bit intermediate would have overflowed long ago
+            long copyFrom = trial < A ? trial : (1L << 42) + nextLong(rnd, 1L << 30);
+            long physical = 1 + nextLong(rnd, 1L << 26);
+            CopyPlan plan = ZeroCopySSTableSplitter.copyPlan(copyFrom, physical, true, true);
+            String ctx = "from=" + copyFrom + " physical=" + physical + ' ' + plan;
+
+            assertEquals(ctx + " -- srcStart must be alignment aligned", 0, plan.srcStart % A);
+            assertEquals(ctx + " -- cloneLength must be alignment aligned", 0, plan.cloneLength % A);
+            assertEquals(ctx + " -- pad is the distance from srcStart to O(i)",
+                         copyFrom - plan.srcStart, plan.headPadBytes);
+            assertTrue(ctx + " -- pad must be under one alignment unit", plan.headPadBytes < A);
+            assertTrue(ctx + " -- srcStart must not overshoot O(i)", plan.srcStart <= copyFrom);
+            assertEquals(ctx + " -- childLength", plan.headPadBytes + physical, plan.childLength);
+
+            // the clone must never read past the child's last live byte, i.e. into the parent's trailing slack
+            assertTrue(ctx + " -- clone overruns the run", plan.cloneLength <= plan.childLength);
+            assertTrue(ctx + " -- tail must be under one alignment unit", plan.tailLength() < A);
+            assertEquals(ctx + " -- clone + tail must cover the child exactly",
+                         plan.childLength, plan.cloneLength + plan.tailLength());
+            // and the range read from the parent is exactly [srcStart, O(i) + physical)
+            assertEquals(ctx + " -- range end", copyFrom + physical, plan.srcStart + plan.childLength);
+        }
+    }
+
+    /**
+     * Aligning without sharing is what a test does on a filesystem that cannot share extents: identical layout,
+     * nothing cloned. The layout has to be independent of the mechanism or that test proves nothing.
+     */
+    @Test
+    public void copyPlanCanAlignWithoutCloning()
+    {
+        for (long copyFrom : new long[]{ 0, 1, 999, A - 1, A, A + 1, 5 * A + 4097 })
+        {
+            CopyPlan shared = ZeroCopySSTableSplitter.copyPlan(copyFrom, 1 << 20, true, true);
+            CopyPlan copied = ZeroCopySSTableSplitter.copyPlan(copyFrom, 1 << 20, true, false);
+            String ctx = "from=" + copyFrom;
+            assertEquals(ctx + " srcStart", shared.srcStart, copied.srcStart);
+            assertEquals(ctx + " pad", shared.headPadBytes, copied.headPadBytes);
+            assertEquals(ctx + " childLength", shared.childLength, copied.childLength);
+            assertEquals(ctx + " nothing cloned", 0, copied.cloneLength);
+            assertEquals(ctx + " everything tail", copied.childLength, copied.tailLength());
+        }
+    }
+
+    /** A run whose whole length is under one alignment unit has nothing to clone, but still gets its pad. */
+    @Test
+    public void copyPlanBelowOneAlignmentUnitClonesNothing()
+    {
+        CopyPlan plan = ZeroCopySSTableSplitter.copyPlan(A + 100, 200, true, true);
+        assertEquals(A, plan.srcStart);
+        assertEquals(100, plan.headPadBytes);
+        assertEquals(300, plan.childLength);
+        assertEquals(0, plan.cloneLength);
+        assertEquals(300, plan.tailLength());
+    }
+
+    /** Exactly one alignment unit, and one byte either side of it. */
+    @Test
+    public void copyPlanAtTheAlignmentBoundary()
+    {
+        // copyFrom already aligned: no pad, and the whole run is cloneable when it is a whole number of units
+        assertEquals(new CopyPlan(2 * A, 0, 3 * A, 3 * A),
+                     ZeroCopySSTableSplitter.copyPlan(2 * A, 3 * A, true, true));
+        // one byte short of a unit: the last (partial) unit is the tail
+        assertEquals(new CopyPlan(2 * A, 0, 3 * A - 1, 2 * A),
+                     ZeroCopySSTableSplitter.copyPlan(2 * A, 3 * A - 1, true, true));
+        // one byte over: the extra byte is the tail
+        assertEquals(new CopyPlan(2 * A, 0, 3 * A + 1, 3 * A),
+                     ZeroCopySSTableSplitter.copyPlan(2 * A, 3 * A + 1, true, true));
+        // pad and tail together, both maximal
+        assertEquals(new CopyPlan(0, A - 1, 3 * A - 1, 2 * A),
+                     ZeroCopySSTableSplitter.copyPlan(A - 1, 2 * A, true, true));
+    }
+
+    @Test
+    public void copyPlanRejectsNonsense()
+    {
+        assertThatThrownBy(() -> ZeroCopySSTableSplitter.copyPlan(-1, 1024, true, true))
+        .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("negative copyFrom");
+        assertThatThrownBy(() -> ZeroCopySSTableSplitter.copyPlan(0, 0, true, true))
+        .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("non-positive physicalBytes");
+        assertThatThrownBy(() -> ZeroCopySSTableSplitter.copyPlan(0, -4096, false, false))
+        .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("non-positive physicalBytes");
     }
 
     // ------------------------------------------------------------------------------------------------

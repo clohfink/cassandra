@@ -196,9 +196,17 @@ public class CassandraOutgoingFile implements OutgoingStream
         if (sections == null || sections.isEmpty())
             return false;
 
-        // if transfer sections contain entire sstable
+        // Entire-SSTable streaming copies every component file verbatim, so it is eligible whenever the
+        // requested sections cover all of the sstable's live data - not only when the byte span equals the
+        // physical data length. A zero-copy split child can carry a "dead prefix": bytes before its first
+        // indexed partition (the head of a boundary compression chunk copied verbatim) that no read path
+        // ever enters. getPositionsForRanges() starts the first section at the first partition's data
+        // position, so the eligible span runs from there to the end of the file. Comparing against
+        // (uncompressedLength - firstPosition) accounts for that prefix; for an ordinary sstable
+        // firstPosition == 0 and this reduces to the original transferLength == uncompressedLength check.
+        long firstPosition = sstable.getPosition(sstable.first.getToken().minKeyBound(), SSTableReader.Operator.GT).position;
         long transferLength = sections.stream().mapToLong(p -> p.upperPosition - p.lowerPosition).sum();
-        return transferLength == sstable.uncompressedLength();
+        return transferLength == sstable.uncompressedLength() - firstPosition;
     }
 
     @Override

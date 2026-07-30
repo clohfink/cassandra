@@ -2125,7 +2125,59 @@ drop_compact_storage_enabled: false
 # NOTE: children written from the middle or the end of the parent carry a dead prefix at the head of their
 # Data.db, which costs them entire-SSTable zero-copy streaming eligibility (they fall back to partial
 # streaming) until they are recompacted.
+#
+# NOTE: the children's sstable statistics are deliberately imprecise, because recomputing them would mean
+# deserializing every row - the exact cost this path avoids. Each child inherits the parent's whole-sstable
+# cell count, row count and tombstone-drop histogram, while its partition count and partition size histogram
+# are exact. So after a zero-copy anticompaction, expect per-table aggregates (nodetool tablestats mean row
+# count, estimated column count, droppable tombstone ratio) to over-report by roughly the number of children,
+# and expect single-sstable tombstone compaction to fire less readily than tombstone_threshold suggests -
+# meaning the retained tombstones above are purged later than they otherwise would be. Tables that are
+# sensitive to this can set unchecked_tombstone_compaction or lower tombstone_threshold. All of these errors
+# are in the conservative direction and none of them can lose or resurrect data.
+#
+# The copy participates in the compaction framework: it is bounded by compaction_throughput, appears in
+# nodetool compactionstats as an ANTICOMPACTION, and is stopped by nodetool stop ANTICOMPACTION, nodetool
+# stop --id, TRUNCATE and DROP.
 # zero_copy_anticompaction_enabled: true
+
+# Let the zero-copy splitter SHARE each child's Data.db extents with the parent instead of copying them, using
+# the Linux FICLONERANGE ioctl ("reflink"). Where it works, a split writes no data blocks at all and needs no
+# additional disk space: the parent's extents become the children's when the parent is unlinked, so an
+# anticompaction of a 1 TiB sstable stops needing 1 TiB of headroom and stops doing 1 TiB of writes.
+#
+# Requires a filesystem that can share extents - xfs formatted with `-m reflink=1` (the mkfs default since
+# xfsprogs 5.1), or btrfs. Support is discovered by trying: on ext4 and everything else the first attempt per
+# data directory fails, is logged once at INFO, and every split from then on copies exactly as before. Both
+# paths produce identical children, so this is only worth turning off if the side effects below are unwanted.
+#
+# NOTE: making sharing possible costs up to 64 KiB of alignment padding at the head of each child's Data.db
+# (the ioctl requires block-aligned offsets and a compression chunk boundary is aligned to nothing). Children
+# smaller than 1 MiB are copied regardless, since the padding would not pay for itself.
+#
+# NOTE: shared extents are counted once per file by `du` but only once in total by `df`, so per-table disk
+# usage over-reports until the parent is unlinked. Page cache is also per inode, so bytes read through both
+# the parent and a child are cached twice for as long as both are live - which, during a split, is brief.
+# zero_copy_split_reflink_enabled: true
+
+# Write Digest.crc32 for the children of a zero-copy split. Producing it means one full sequential read of
+# every child, which - once the extents above are shared and the copy is gone - is the ENTIRE remaining cost
+# of a split. Turning it off takes a split from "read the whole sstable" to "read its Index.db", about 0.05%
+# of the bytes, and is a supported configuration rather than a degraded one.
+#
+# Nothing requires the component: opening an sstable asserts only Data, Index and Statistics; entire-SSTable
+# streaming skips components whose file does not exist and the receiver never validates the digest; and the
+# backup manifest enumerates the component files that exist, with the restore path not asking for Digest.crc32
+# at all. A compressed sstable is self-checking without it, because every compression chunk carries an inline
+# CRC32 that this path preserves verbatim and that every read verifies. The digest's only unique coverage is
+# bytes no read ever touches: the child's dead prefix and its alignment padding.
+#
+# NOTE: what it does cost is verification SPEED, not strength. `nodetool verify` and
+# `nodetool import --verify-sstables` treat a missing digest as a reason to run a full extended verification -
+# a row-by-row scan instead of a whole-file CRC. `nodetool verify -q` and an import without
+# --verify-sstables never look at it. Restore-then-import is a normal workflow here and a child's file set
+# travels through backup without a digest, so this defaults to true.
+# zero_copy_split_digest_enabled: true
 
 # Enable to run scheduled compactions - this generates a lot of compaction on the node, so enable with care:
 # enable_scheduled_compactions: false

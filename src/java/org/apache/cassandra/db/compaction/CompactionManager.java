@@ -1767,6 +1767,17 @@ public class CompactionManager implements CompactionManagerMBean
      * sstable anticompacted -- {@code abort()} would unmark it as compacting and let a normal compaction take
      * it. Only a failure after the first {@code update()} is unrecoverable; that aborts and rethrows rather
      * than silently leaving data unrepaired.
+     * <p>
+     * A {@link CompactionInterruptedException} is the one failure NOT retried on the rewrite path: it means an
+     * operator, a truncate or a drop asked the work to stop, and answering that with a full rewrite would do
+     * strictly more I/O than the copy that was just cancelled.
+     *
+     * <h2>Throttling and visibility</h2>
+     * Each split registers a {@link CompactionInfo.Holder} with {@code active} for its duration and pushes every
+     * transferred slice through {@link #getRateLimiter()}, so the copy is bounded by
+     * {@code compaction_throughput}, appears in {@code nodetool compactionstats}, and is stoppable by
+     * {@code nodetool stop ANTICOMPACTION}, {@code nodetool stop --id}, TRUNCATE, DROP and anything else that
+     * goes through {@code runWithCompactionsDisabled}.
      *
      * @param handledByZeroCopy out-param: every parent removed from {@code groupTxn} by this method, all of
      *                          which have been fully anticompacted by the time it returns
@@ -1784,8 +1795,10 @@ public class CompactionManager implements CompactionManagerMBean
         // groupTxn.originals() is a live view that split() mutates, so iterate over a copy
         for (SSTableReader parent : new ArrayList<>(groupTxn.originals()))
         {
-            // A verbatim chunk copy cannot be interrupted part way, so cancellation is only honoured between
-            // sstables; whatever is left stays in groupTxn and antiCompactGroup raises the interruption.
+            // Two independent cancellation channels. This one is the repair session's own predicate, checked
+            // between sstables: whatever is left stays in groupTxn and antiCompactGroup raises the interruption.
+            // The other is the CompactionInfo.Holder registered in zeroCopySplitOne, which is what nodetool stop,
+            // truncate and drop use, and which aborts mid-copy.
             if (isCancelled.getAsBoolean())
             {
                 logger.info("Zero-copy anticompaction cancelled for {}, leaving the rest to the rewrite path",
@@ -1854,7 +1867,23 @@ public class CompactionManager implements CompactionManagerMBean
             ZeroCopySSTableSplitter.Result result;
             try
             {
-                result = ZeroCopySSTableSplitter.split(parent, plan.boundaries, plan.perChild, zcTxn);
+                // Registering the split with `active` for the duration is what makes the copy an ordinary
+                // compaction-family operation: it shows up in nodetool compactionstats, getRateLimiter() bounds
+                // it to compaction_throughput, and nodetool stop / truncate / drop /
+                // runWithCompactionsDisabled can stop it, because all of those work by walking
+                // active.getCompactions() and calling Holder.stop(). The CompactionInfo carries the parent, so
+                // CompactionInfo.shouldStop matches it against the sstable predicate they pass.
+                ZeroCopySSTableSplitter.Progress progress =
+                    ZeroCopySSTableSplitter.progressFor(parent, getRateLimiter());
+                active.beginCompaction(progress);
+                try
+                {
+                    result = ZeroCopySSTableSplitter.split(parent, plan.boundaries, plan.perChild, zcTxn, progress);
+                }
+                finally
+                {
+                    active.finishCompaction(progress);
+                }
                 children = result.children;
                 // Every planned run holds at least one partition, so the splitter cannot have dropped one; if it
                 // somehow did, the per-child repair state would be mis-paired and children would be stamped with
@@ -1863,6 +1892,15 @@ public class CompactionManager implements CompactionManagerMBean
                     throw new IllegalStateException("zero-copy split of " + parent.descriptor + " produced " +
                                                     children.size() + " children for " + plan.perChild.size() +
                                                     " planned runs; repair state would be mis-paired");
+            }
+            catch (CompactionInterruptedException e)
+            {
+                // Somebody asked for this to STOP -- nodetool stop, a truncate, a drop, a global pause. Falling
+                // back to the rewrite would answer "stop" with strictly more work than the copy they just
+                // cancelled, so propagate instead and let the finally below abort zcTxn and delete the children.
+                // This matches what the rewrite path does when its CompactionIterator is interrupted.
+                logger.info("Zero-copy anticompaction of {} was stopped", parent.descriptor);
+                throw e;
             }
             catch (Throwable t)
             {
@@ -1889,13 +1927,19 @@ public class CompactionManager implements CompactionManagerMBean
             zcTxn.commit();
             settled = true;
 
+            // The METRIC stays the data volume that went through this path, not the I/O it cost: it is
+            // documented as a subset of bytesAnticompacted, and sharing extents does not make less data get
+            // anticompacted. The LOG line below reports both, because the difference is the whole point.
             cfs.metric.bytesZeroCopyAnticompaction.mark(result.totalPhysicalBytesCopied);
-            logger.info("Zero-copy anticompacted {} in {}.{} into {} children for {}: {} bytes copied, " +
-                        "{} bytes dead prefix, {} bytes duplicated, {} ms. NOTE: this path copies compression " +
-                        "chunks verbatim and therefore RETAINS droppable tombstones and shadowed data that a " +
-                        "rewriting anticompaction would have purged (retention only, never data loss).",
+            logger.info("Zero-copy anticompacted {} in {}.{} into {} children for {}: {} bytes handled, " +
+                        "{} of them shared with the parent as copy-on-write extents and {} actually written, " +
+                        "{} bytes dead prefix, {} bytes head pad, {} bytes duplicated, {} ms. NOTE: this path " +
+                        "copies compression chunks verbatim and therefore RETAINS droppable tombstones and " +
+                        "shadowed data that a rewriting anticompaction would have purged (retention only, " +
+                        "never data loss).",
                         parent.descriptor, cfs.keyspace.getName(), cfs.getTableName(), children.size(),
-                        pendingRepair, result.totalPhysicalBytesCopied, result.totalDeadPrefixBytes,
+                        pendingRepair, result.totalPhysicalBytesCopied, result.totalBytesCloned,
+                        result.totalBytesWritten(), result.totalDeadPrefixBytes, result.totalHeadPadBytes,
                         result.duplicatedChunkBytes, TimeUnit.NANOSECONDS.toMillis(result.nanos));
             return children.size();
         }

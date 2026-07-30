@@ -1403,6 +1403,90 @@
         </jar>
     </target>
 
+    <!--
+        A single self-contained executable jar for the large-scale zero-copy split benchmark, so it can be
+        scp'd to a production host and run there with nothing but a JVM:
+
+            ant zerocopy-split-bench-jar -Duse.jdk11=true
+            java -Xmx8G -jar build/tools/lib/zerocopy-split-bench.jar (pass the help flag for options)
+
+        See test/long/org/apache/cassandra/io/sstable/LargeSSTableSplitBench.java.
+    -->
+    <property name="splitbench.jar" value="${build.dir}/tools/lib/zerocopy-split-bench.jar"/>
+    <property name="splitbench.staging" value="${build.dir}/tools/zerocopy-split-bench-staging"/>
+
+    <!--
+        Cassandra needs the module access that bin/cassandra normally passes on the command line from
+        conf/jvm11-server.options. A benchmark that has to be launched with forty JVM flags is a benchmark
+        nobody runs, so the same grants are baked into the jar's manifest instead: the JVM honours the
+        Add-Opens/Add-Exports attributes (implicitly to ALL-UNNAMED) for the main jar of a "java -jar" launch.
+        Kept in sync with the _jvm11_arg_items / _jvm21_arg_items lists near the top of this file; their
+        jdk.compiler entries are test-suite only and are left out so this does not warn on a JRE. Single line
+        on purpose: XML normalises embedded newlines to spaces, and the JVM splits these on whitespace.
+    -->
+    <property name="splitbench.add-exports" value="java.base/jdk.internal.misc java.base/jdk.internal.ref java.base/sun.nio.ch java.management.rmi/com.sun.jmx.remote.internal.rmi java.rmi/sun.rmi.registry java.rmi/sun.rmi.server java.rmi/sun.rmi.transport java.rmi/sun.rmi.transport.tcp java.sql/java.sql jdk.unsupported/sun.misc"/>
+    <property name="splitbench.add-opens" value="java.base/java.lang java.base/java.lang.ref java.base/java.lang.module java.base/java.lang.reflect java.base/java.lang.invoke java.base/java.io java.base/java.net java.base/java.nio java.base/java.nio.channels.spi java.base/java.nio.charset java.base/java.nio.file.attribute java.base/java.math java.base/java.security java.base/java.util java.base/java.util.jar java.base/java.util.zip java.base/java.util.concurrent java.base/java.util.concurrent.atomic java.base/java.util.concurrent.locks java.base/jdk.internal.loader java.base/jdk.internal.math java.base/jdk.internal.module java.base/jdk.internal.ref java.base/jdk.internal.reflect java.base/jdk.internal.util.jar java.base/jdk.internal.vm java.base/sun.nio.ch java.base/sun.nio.fs java.base/sun.security.util java.base/sun.security.x509 java.base/sun.reflect.generics.repository java.base/sun.reflect.generics.tree java.base/sun.net.www.protocol.jar java.base/sun.util.locale java.base/sun.util.locale.provider java.base/com.sun.crypto.provider java.logging/java.util.logging java.management/javax.management java.rmi/sun.rmi.transport.tcp jdk.management/com.sun.management.internal"/>
+
+    <target name="zerocopy-split-bench-jar"
+            depends="build-test"
+            description="Assemble a self-contained executable jar for the zero-copy split benchmark">
+        <delete dir="${splitbench.staging}" quiet="true"/>
+        <mkdir dir="${splitbench.staging}"/>
+        <mkdir dir="${build.dir}/tools/lib"/>
+
+        <!-- Explode every runtime dependency. unzip rather than <zipgroupfileset>, because only unzip can drop
+             the entries that make an uber jar refuse to load: the signature files of a signed dependency
+             (ecj is signed) and the per-jar manifests. -->
+        <unzip dest="${splitbench.staging}">
+            <fileset dir="${build.dir.lib}" includes="**/*.jar"/>
+            <patternset>
+                <exclude name="META-INF/MANIFEST.MF"/>
+                <exclude name="META-INF/*.SF"/>
+                <exclude name="META-INF/*.DSA"/>
+                <exclude name="META-INF/*.RSA"/>
+                <exclude name="META-INF/*.EC"/>
+                <exclude name="META-INF/INDEX.LIST"/>
+                <exclude name="module-info.class"/>
+                <exclude name="META-INF/versions/*/module-info.class"/>
+                <!-- Legal boilerplate and build metadata: pure bloat, and a source of hard failures, because
+                     one dependency ships META-INF/license as a file and another as a directory. -->
+                <exclude name="META-INF/LICENSE*"/>
+                <exclude name="META-INF/license"/>
+                <exclude name="META-INF/license/**"/>
+                <exclude name="META-INF/NOTICE*"/>
+                <exclude name="META-INF/notice"/>
+                <exclude name="META-INF/notice/**"/>
+                <exclude name="META-INF/DEPENDENCIES"/>
+                <exclude name="META-INF/maven/**"/>
+                <exclude name="META-INF/*.txt"/>
+                <exclude name="META-INF/*.md"/>
+            </patternset>
+        </unzip>
+
+        <!-- WARN to stderr and nothing else, so the report on stdout stays readable. The benchmark writes its
+             own cassandra.yaml into the scratch directory at startup, so none is shipped here: picking up a
+             node's real yaml, and with it a node's real data directories, is exactly what must not happen. -->
+        <copy file="conf/logback-tools.xml" tofile="${splitbench.staging}/logback.xml"/>
+
+        <jar destfile="${splitbench.jar}" duplicate="preserve">
+            <manifest>
+                <attribute name="Main-Class" value="org.apache.cassandra.io.sstable.LargeSSTableSplitBench"/>
+                <attribute name="Multi-Release" value="true"/>
+                <attribute name="Implementation-Title" value="ZeroCopySSTableSplitter large-scale benchmark"/>
+                <attribute name="Implementation-Version" value="${version}"/>
+                <attribute name="Add-Exports" value="${splitbench.add-exports}"/>
+                <attribute name="Add-Opens" value="${splitbench.add-opens}"/>
+            </manifest>
+            <fileset dir="${build.classes.main}"/>
+            <!-- only the benchmark's own classes from the test tree, not the whole test suite -->
+            <fileset dir="${test.classes}" includes="org/apache/cassandra/io/sstable/LargeSSTableSplitBench*.class"/>
+            <fileset dir="${splitbench.staging}"/>
+        </jar>
+
+        <delete dir="${splitbench.staging}" quiet="true"/>
+        <echo message="built ${splitbench.jar} -- run it with: java -Xmx8G -jar ${splitbench.jar} --help"/>
+    </target>
+
     <target name="jar"
             depends="_main-jar,build-test,stress-jar,fqltool-jar,write-poms"
             description="Assemble Cassandra JAR files">

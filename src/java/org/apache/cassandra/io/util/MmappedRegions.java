@@ -155,7 +155,16 @@ public class MmappedRegions extends SharedCloseableImpl
     private void updateState(CompressionMetadata metadata)
     {
         long offset = 0;
-        long lastSegmentOffset = 0;
+        // Where the first chunk physically starts, which is 0 for every sstable a writer produces and NOT 0
+        // for one whose Data.db carries leading bytes that belong to no chunk -- a ZeroCopySSTableSplitter
+        // child aligned so its extents can be shared with its parent. Segments are placed at a cumulative sum
+        // of chunk lengths, so seeding that sum at 0 for such a file maps every segment ceil(pad) bytes too
+        // early: interior chunks still read correctly (they are indexed as chunk.offset - region.offset()), but
+        // the total mapped length comes out short by the padding, so the final chunk runs off the end of the
+        // last region and the tail of the file is never mapped at all. Seeding it here instead keeps every
+        // region's recorded offset equal to the physical offset of the first chunk it holds, which is the
+        // invariant CompressedChunkReader.Mmap actually relies on.
+        long lastSegmentOffset = metadata.dataLength > 0 ? metadata.chunkFor(0).offset : 0;
         long segmentSize = 0;
 
         while (offset < metadata.dataLength)

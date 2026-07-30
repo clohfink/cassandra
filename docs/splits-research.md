@@ -457,7 +457,8 @@ cumulative sum seeded at physical 0, and `CompressedChunkReader.Mmap` indexes as
   Interior chunks read correctly, so a front-padded file would pass a smoke test and fail at the
   tail. Fixing it looks like seeding `lastSegmentOffset = metadata.chunkFor(0).offset`, plus updating
   `MmappedRegionsTest.java:335` which asserts `chunk.offset == region.offset()`. Sufficiency across
-  other consumers is **UNVERIFIED**.
+  other consumers is **UNVERIFIED**. *(Since done, and it was sufficient; the test did not need
+  updating. See the superseding note at the end of this section.)*
 - The requirement that copied chunks be *contiguous* does **not** come from this loop — it comes from
   `chunkFor` deriving length from the offset delta, so an interior gap inflates `chunk.length` and
   corrupts reads on the non-mmap path too.
@@ -467,6 +468,39 @@ cumulative sum seeded at physical 0, and `CompressedChunkReader.Mmap` indexes as
 `copy_file_range`); or a single userspace pass with an inline `CRC32` if you prefer one pass. Do
 **not** build the design around reflink: it is filesystem-conditional (see §7), it doubles page-cache
 footprint, and the front-padding it needs is blocked above.
+
+> **SUPERSEDED (2026-07-29).** Reflink was implemented, as an option rather than a foundation, which is
+> the part of the recommendation above that still stands. `ZeroCopySSTableSplitter.copyPlan` front-pads
+> the child to a 64 KiB boundary and `org.apache.cassandra.io.util.Reflink` hands the aligned interior
+> to `FICLONERANGE` through a JNA `ioctl` shim; the ≤64 KiB tail is transferred. Support is discovered
+> by trying and remembered per directory, so on ext4 the cost is one failing syscall per data directory
+> and the copy runs exactly as described above. Off with `zero_copy_split_reflink_enabled: false`.
+>
+> Three corrections to the analysis above:
+>
+> - **The `MmappedRegions` blocker was real, and the proposed fix is the fix.** Seeding
+>   `lastSegmentOffset` with `metadata.chunkFor(0).offset` is the whole change
+>   (`MmappedRegions.java:155-193`), and `MmappedRegionsTest:335` did **not** need updating: for an
+>   unpadded file `chunkFor(0).offset` is 0, so every existing region offset is unchanged. Sufficiency
+>   across other consumers is no longer UNVERIFIED — it was the only one. Two regression tests pin it:
+>   `MmappedRegionsTest.testMapForCompressionMetadataWithFrontPad` (multi-region, offsets wrong) and
+>   `ZeroCopySSTableSplitterTest.alignedChildrenAreReadableEverywhere` (single region, tail unmapped;
+>   fails with `floor()`'s `position <= length` assert). The fuzz test runs half its matrix padded.
+> - **"Reflink doubles page-cache footprint" overstates it for this use.** Two `address_space`s only
+>   cost twice when both inodes stay hot; here the parent is unlinked as the children are published, so
+>   the double-caching lasts as long as the split does. What survives is one duplicated boundary chunk
+>   per interior split point.
+> - **The digest, not the copy, is now the floor** — and it is optional. With the bytes shared,
+>   `Digest.crc32` is the only full pass left, so a shared split costs the read half of the old cost.
+>   `zero_copy_split_digest_enabled: false` removes it: measured on a 1 GiB parent split 4 ways, that is
+>   1.9 MiB read and 1.0 MiB written, versus 1998 MiB read and 750 MiB written today (see
+>   `docs/large-split-bench.md`). §3.4's audit holds and was re-verified — `Verifier` is the only reader,
+>   a missing digest makes it upgrade to a full extended verification rather than fail, and the fork's own
+>   backup manifest enumerates the component files that exist while `BackupMemtableContext`'s
+>   `COMPONENTS_TO_DOWNLOAD` never asks for DIGEST. So the cost of skipping it is verification *speed* on
+>   `nodetool verify` and `import --verify-sstables`, which is why it defaults to on.
+>   §3.6's `crc32_combine` route — keep the component for 4 bytes per chunk, 1/4 of the data read at
+>   `chunk_length_in_kb: 16` and 1/16 at 64 — is still the way to have both, and is still unimplemented.
 
 ### 3.6 Per-chunk CRCs survive for free; the whole-file digest does not
 

@@ -319,6 +319,19 @@ public class ZeroCopySSTableSplitterFuzzTest extends CQLTester
         boolean byKeys = rnd.nextBoolean();
         cfg.splitMode = byKeys ? "boundaries" : "numChildren";
         cfg.useTxn = rnd.nextBoolean();
+        // Half the iterations use the ALIGNED layout, in which every child's Data.db starts with up to 64 KiB
+        // of the parent's previous chunk so that its extents could be shared with the parent by FICLONERANGE.
+        // Forced rather than left to the filesystem: no CI box can share extents, and the layout is the part
+        // that has to survive every compressor, chunk length and raw-chunk threshold in this matrix. A padded
+        // range that is copied instead of shared produces a byte-identical child, so this covers the layout
+        // fully and the ioctl not at all.
+        cfg.alignedLayout = rnd.nextBoolean();
+        ZeroCopySSTableSplitter.forceAlignedLayoutForTesting = cfg.alignedLayout;
+        // ...and a quarter of them skip Digest.crc32 entirely, which is a supported configuration and therefore
+        // has to hold for every compressor, chunk length and raw-chunk threshold in the matrix, not just for the
+        // one case a dedicated test would pick.
+        cfg.writeDigest = rnd.nextInt(4) != 0;
+        DatabaseDescriptor.setZeroCopySplitDigestEnabled(cfg.writeDigest);
 
         LifecycleTransaction txn = cfg.useTxn ? LifecycleTransaction.offline(OperationType.UNKNOWN) : null;
         ZeroCopySSTableSplitter.Result result = null;
@@ -347,6 +360,8 @@ public class ZeroCopySSTableSplitterFuzzTest extends CQLTester
         }
         finally
         {
+            ZeroCopySSTableSplitter.forceAlignedLayoutForTesting = false;
+            DatabaseDescriptor.setZeroCopySplitDigestEnabled(true);
             releaseChildren(result);
             if (txn != null)
             {
@@ -459,8 +474,19 @@ public class ZeroCopySSTableSplitterFuzzTest extends CQLTester
                          copyTo - copyFrom, child.physicalBytes);
 
             // ---- the child's files on disk ----
+            // A child aligned for extent sharing carries a head pad of O(i) mod 64 KiB, and its physical
+            // lengths are all measured from there rather than from 0. Zero on a filesystem that cannot share.
+            long pad = child.headPadBytes;
+            assertTrue(cctx + " -- head pad must be under one alignment unit", pad >= 0 && pad < 64 * 1024);
+            assertTrue(cctx + " -- head pad must be O(i) mod alignment, or nothing",
+                       pad == 0 || pad == copyFrom % (64 * 1024));
+            // If the layout was forced aligned, the pad is not optional: it is exactly O(i) mod A. Without this
+            // the forcing could quietly stop working and half the fuzz matrix would test the plain layout twice.
+            if (cfg.alignedLayout)
+                assertEquals(cctx + " -- forced aligned layout did not pad", copyFrom % (64 * 1024), pad);
+            assertEquals(cctx + " -- onDiskLength", pad + child.physicalBytes, child.onDiskLength());
             long onDisk = child.descriptor.fileFor(Component.DATA).length();
-            assertEquals(cctx + " -- child Data.db has trailing slack (or is short)", child.physicalBytes, onDisk);
+            assertEquals(cctx + " -- child Data.db has trailing slack (or is short)", child.onDiskLength(), onDisk);
             assertEquals(cctx + " -- child uncompressedLength", child.dataLength, child.reader.uncompressedLength());
 
             CompressionMetadata childMeta = new CompressionMetadata(child.descriptor, onDisk);
@@ -470,7 +496,7 @@ public class ZeroCopySSTableSplitterFuzzTest extends CQLTester
                 assertEquals(cctx + " -- child chunkLength", chunkLength, childMeta.chunkLength());
                 assertEquals(cctx + " -- child maxCompressedLength", parentMeta.maxCompressedLength(),
                              childMeta.maxCompressedLength());
-                assertEquals(cctx + " -- child offsets[0] must be 0", 0L, childMeta.chunkFor(0).offset);
+                assertEquals(cctx + " -- child offsets[0] must be the head pad", pad, childMeta.chunkFor(0).offset);
                 // the last chunk must end exactly at the physical end of the file
                 long lastChunkStart = (long) ((childMeta.dataLength - 1) / chunkLength) * chunkLength;
                 CompressionMetadata.Chunk lastChunk = childMeta.chunkFor(lastChunkStart);
@@ -482,9 +508,21 @@ public class ZeroCopySSTableSplitterFuzzTest extends CQLTester
                 childMeta.close();
             }
 
-            assertEquals(cctx + " -- Digest.crc32 does not match the child Data.db",
-                         crc32(child.descriptor.fileFor(Component.DATA)),
-                         Long.parseLong(readAll(child.descriptor.fileFor(Component.DIGEST)).trim()));
+            // Digest.crc32 is optional (zero_copy_split_digest_enabled), and the component set is the authority:
+            // if it claims the digest the value must be right, and if it does not the file must not exist.
+            assertEquals(cctx + " -- the digest component must follow the config",
+                         cfg.writeDigest, child.components.contains(Component.DIGEST));
+            if (cfg.writeDigest)
+            {
+                assertEquals(cctx + " -- Digest.crc32 does not match the child Data.db",
+                             crc32(child.descriptor.fileFor(Component.DATA)),
+                             Long.parseLong(readAll(child.descriptor.fileFor(Component.DIGEST)).trim()));
+            }
+            else
+            {
+                assertFalse(cctx + " -- Digest.crc32 exists but was not requested",
+                            child.descriptor.fileFor(Component.DIGEST).exists());
+            }
 
             // ---- every index position was rebased by exactly `shift` ----
             for (int r = from; r < to; r++)
@@ -647,33 +685,44 @@ public class ZeroCopySSTableSplitterFuzzTest extends CQLTester
         cfg.parentPartitions = index.size();
         cfg.parentUncompressedLength = parent.uncompressedLength();
         cfg.parentChunkLength = chunkLength;
+        // Alternate the aligned (extent-shareable) layout with the plain one across the six scenarios, so the
+        // partitions engineered to land exactly on chunk boundaries are exercised against both.
+        cfg.alignedLayout = delta >= 0;
+        ZeroCopySSTableSplitter.forceAlignedLayoutForTesting = cfg.alignedLayout;
 
-        // (a) one child per partition: every interior boundary is a chunk boundary +/- delta
-        int[] all = new int[partitions - 1];
-        for (int i = 0; i < all.length; i++)
-            all[i] = i + 1;
-        runSplitByBoundaries(parent, index, cfg, all);
-
-        // (b) a plain byte-share split over the same adversarial layout
-        cfg.splitMode = "numChildren";
-        cfg.numChildren = 3;
-        cfg.boundaryIndices = null;
-        ZeroCopySSTableSplitter.Result byCount = null;
         try
         {
-            byCount = ZeroCopySSTableSplitter.split(parent, 3, null);
-            cfg.actualChildren = byCount.children.size();
-            verify(parent, index, byCount, cfg, null);
+            // (a) one child per partition: every interior boundary is a chunk boundary +/- delta
+            int[] all = new int[partitions - 1];
+            for (int i = 0; i < all.length; i++)
+                all[i] = i + 1;
+            runSplitByBoundaries(parent, index, cfg, all);
+
+            // (b) a plain byte-share split over the same adversarial layout
+            cfg.splitMode = "numChildren";
+            cfg.numChildren = 3;
+            cfg.boundaryIndices = null;
+            ZeroCopySSTableSplitter.Result byCount = null;
+            try
+            {
+                byCount = ZeroCopySSTableSplitter.split(parent, 3, null);
+                cfg.actualChildren = byCount.children.size();
+                verify(parent, index, byCount, cfg, null);
+            }
+            finally
+            {
+                releaseChildren(byCount);
+                deleteChildFiles(byCount);
+            }
+
+            // (c) a random subset of the same boundaries
+            int[] subset = pickBoundaryIndices(rnd, index, chunkLength);
+            runSplitByBoundaries(parent, index, cfg, subset);
         }
         finally
         {
-            releaseChildren(byCount);
-            deleteChildFiles(byCount);
+            ZeroCopySSTableSplitter.forceAlignedLayoutForTesting = false;
         }
-
-        // (c) a random subset of the same boundaries
-        int[] subset = pickBoundaryIndices(rnd, index, chunkLength);
-        runSplitByBoundaries(parent, index, cfg, subset);
 
         return converged;
     }
@@ -1197,6 +1246,8 @@ public class ZeroCopySSTableSplitterFuzzTest extends CQLTester
         int[] boundaryIndices;
         int actualChildren = -1;
         boolean useTxn;
+        boolean alignedLayout;
+        boolean writeDigest = true;
         String adversarialNote;
 
         Config(long seed)
@@ -1227,7 +1278,9 @@ public class ZeroCopySSTableSplitterFuzzTest extends CQLTester
               .append(" numChildren=").append(numChildren)
               .append(" boundaryIndices=").append(Arrays.toString(boundaryIndices))
               .append(" actualChildren=").append(actualChildren)
-              .append(" useTxn=").append(useTxn);
+              .append(" useTxn=").append(useTxn)
+              .append(" alignedLayout=").append(alignedLayout)
+              .append(" writeDigest=").append(writeDigest);
             if (adversarialNote != null)
                 sb.append(" adversarial=").append(adversarialNote);
             sb.append("\n  rowsPerPartition=").append(Arrays.toString(rowsPerPartition));
