@@ -161,6 +161,60 @@ public class Config
      */
     public volatile boolean zero_copy_split_digest_enabled = true;
 
+    /**
+     * Stream a PARTIAL sstable through the entire-sstable (zero-copy) path instead of the row-by-row one, by
+     * sending a verbatim run of the parent's compression chunks and synthesising the other components for it the
+     * way {@code ZeroCopySSTableSplitter} synthesises them for a split child. The sender already sends whole
+     * compression chunks when it streams sections of a compressed sstable; what this removes is the RECEIVER
+     * decompressing, deserialising, re-serialising and recompressing every row it is sent, and rebuilding the
+     * index, filter and summary it could have been handed.
+     * <p>
+     * The requested sections become byte ranges aligned to the sstable's grid -- the compression chunk length, or
+     * CRC.db's chunk size for an uncompressed sstable -- and are sent in order with the cells between them
+     * skipped. A non-BIG format and legacy counter shards fall back to the row-by-row path unchanged, as does
+     * anything the arithmetic cannot express. {@code stream_entire_sstables} gates this too, since it is that
+     * protocol and that rate limiter ({@code stream_entire_sstable_throughput_outbound}) being used.
+     * <p>
+     * ACCEPTED IMPRECISION. The receiver gets a child with the same statistics imprecision a split child has --
+     * parent-wide cell/row totals and tombstone-drop histogram, inherited min/max timestamp and clustering
+     * bounds, no tombstone purging -- because none of it can be recomputed without deserialising rows, which is
+     * the cost this exists to avoid. See {@link #zero_copy_anticompaction_enabled} for the consequences; they are
+     * conservative in direction and last until the sstable is compacted normally. Entire-sstable streaming
+     * already copies statistics verbatim, so this is a difference in degree, not in kind.
+     * <p>
+     * MIXED VERSIONS. A received sstable can carry a dead prefix (bytes before its first indexed partition, the
+     * head of a boundary chunk), which every read path tolerates -- they all enter Data.db at a position read
+     * from Index.db -- but which {@code Scrubber} and {@code Verifier} only tolerate with the seeks added
+     * alongside the splitter. A peer running a build without those will read and compact such an sstable
+     * correctly, but {@code nodetool verify} on it will fail and mark it unrepaired. Leave this off until every
+     * node that can RECEIVE a stream has them.
+     * <p>
+     * Digest.crc32 is not SENT -- it is a CRC over every byte of the sliced Data.db, and the sender cannot produce
+     * one without a full extra read, since the bytes go to the socket by {@code sendfile} and are never in process
+     * -- so the receiver computes it as it writes the component instead. The sstable that lands therefore has one,
+     * and {@code nodetool verify} on it is a whole-file CRC like any other.
+     */
+    public volatile boolean zero_copy_partial_stream_enabled = true;
+
+    /**
+     * The most DEAD SPACE a partial zero-copy stream may carry before it gives up and falls back to the
+     * row-by-row path, as a fraction of the child's uncompressed length.
+     * <p>
+     * A grid cell -- a compression chunk, or a CRC.db chunk for an uncompressed sstable -- is pinned to a multiple
+     * of its length and cannot be treated as an origin, so the whole cells covering the requested sections also
+     * carry the head of the first cell (up to a cell of partitions before the range) and, where two sections are
+     * separated by less than a cell, the partitions in between. Those bytes are not indexed, so no read can reach
+     * them and nothing counts them -- they are simply transferred and stored for nothing, until the sstable is
+     * compacted. Sections further apart than a cell are sent as separate ranges, so the gap between them costs
+     * nothing.
+     * <p>
+     * The ratio is what matters rather than the byte count: dead space is bounded by roughly a cell per section
+     * boundary, so it is immaterial for anything large and can dominate a narrow range (a 4 KiB section inside
+     * one 16 KiB chunk is 75% dead). At the 0.25 default the transfer is allowed to be up to a third larger than
+     * the data it is for. 0.0 permits only ranges that fall exactly on cell boundaries; 1.0 disables the check.
+     */
+    public volatile double zero_copy_partial_stream_max_dead_space_ratio = 0.25;
+
     public volatile int object_store_shared_chunk_cache_count = 64;
     // Size of each prefetch buffer. Should be >= the sstable compression chunk length (chunk_length_in_kb).
     // Defaults to 1 MB to match the 1 MB compressed chunk size used by TS backup sstables,

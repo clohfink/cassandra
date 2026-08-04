@@ -203,6 +203,20 @@ public class Scrubber implements Closeable
                 if (scrubInfo.isStopRequested())
                     throw new CompactionInterruptedException(scrubInfo.getCompactionInfo());
 
+                // An sstable received as a partial zero-copy stream can carry unindexed bytes BETWEEN partitions,
+                // not only before the first one: the tail of a boundary compression chunk, holding partitions the
+                // receiver did not ask for. nextIndexKey/nextPartitionPositionFromIndex describe the partition
+                // about to be read (they are shifted to current only by updateIndexKey below), and a non-null
+                // nextIndexKey is what distinguishes a real position from the dataFile.length() sentinel the
+                // index sets when it is exhausted. So skip to where the index says the next partition is rather
+                // than reading those bytes as a partition and recovering from the failure.
+                //
+                // This does not change what gets scrubbed: reading the gap fails the key comparison below and the
+                // "Retrying from partition index" path then seeks to exactly this position anyway. What it avoids
+                // is one alarming warning per gap for an sstable that is not corrupt.
+                if (nextIndexKey != null && nextPartitionPositionFromIndex > dataFile.getFilePointer())
+                    dataFile.seek(nextPartitionPositionFromIndex);
+
                 long partitionStart = dataFile.getFilePointer();
                 outputHandler.debug("Reading row at " + partitionStart);
 

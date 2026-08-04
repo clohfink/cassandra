@@ -5250,6 +5250,38 @@ public class DatabaseDescriptor
         conf.zero_copy_split_digest_enabled = enabled;
     }
 
+    /**
+     * @see Config#zero_copy_partial_stream_enabled -- note that a receiving node needs the {@code Scrubber} and
+     * {@code Verifier} seeks that accept an sstable whose first partition is not at position 0.
+     */
+    public static boolean getZeroCopyPartialStreamEnabled()
+    {
+        return conf.zero_copy_partial_stream_enabled;
+    }
+
+    public static void setZeroCopyPartialStreamEnabled(boolean enabled)
+    {
+        if (conf.zero_copy_partial_stream_enabled != enabled)
+            logger.info("Changing zero_copy_partial_stream_enabled to {}", enabled);
+        conf.zero_copy_partial_stream_enabled = enabled;
+    }
+
+    /** @see Config#zero_copy_partial_stream_max_dead_space_ratio */
+    public static double getZeroCopyPartialStreamMaxDeadSpaceRatio()
+    {
+        return conf.zero_copy_partial_stream_max_dead_space_ratio;
+    }
+
+    public static void setZeroCopyPartialStreamMaxDeadSpaceRatio(double ratio)
+    {
+        if (ratio < 0.0 || ratio > 1.0 || Double.isNaN(ratio))
+            throw new IllegalArgumentException("zero_copy_partial_stream_max_dead_space_ratio must be in [0.0, 1.0]," +
+                                               " got " + ratio);
+        if (conf.zero_copy_partial_stream_max_dead_space_ratio != ratio)
+            logger.info("Changing zero_copy_partial_stream_max_dead_space_ratio to {}", ratio);
+        conf.zero_copy_partial_stream_max_dead_space_ratio = ratio;
+    }
+
     public static boolean getEnableScheduledCompactions()
     {
         return conf.enable_scheduled_compactions;

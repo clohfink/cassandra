@@ -20,9 +20,11 @@ package org.apache.cassandra.io.sstable.format.big;
 import java.io.EOFException;
 import java.io.IOException;
 import java.nio.channels.ClosedChannelException;
+import java.nio.charset.StandardCharsets;
 import java.util.Collection;
 import java.util.EnumMap;
 import java.util.Map;
+import java.util.zip.CRC32;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
@@ -42,6 +44,7 @@ import org.apache.cassandra.io.sstable.SSTable;
 import org.apache.cassandra.io.sstable.SSTableMultiWriter;
 import org.apache.cassandra.io.sstable.format.SSTableReader;
 import org.apache.cassandra.io.util.DataInputPlus;
+import org.apache.cassandra.io.util.FileOutputStreamPlus;
 import org.apache.cassandra.io.util.SequentialWriter;
 import org.apache.cassandra.io.util.SequentialWriterOption;
 import org.apache.cassandra.net.AsyncStreamingInputPlus;
@@ -58,6 +61,18 @@ public class BigTableZeroCopyWriter extends SSTable implements SSTableMultiWrite
     private final TableMetadataRef metadata;
     private volatile SSTableReader finalReader;
     private final Map<Component.Type, SequentialWriter> componentWriters;
+
+    /**
+     * CRC32 of every byte written to Data.db, kept only when the sender did not send a Digest.crc32 of its own.
+     * <p>
+     * A partial zero-copy stream cannot produce one: its Data.db is byte ranges of a larger file that reach the
+     * socket by {@code sendfile} without ever entering the sending process, so a digest there would cost a second
+     * full read of the data. Computing it here costs nothing -- the bytes are already in hand on their way to the
+     * file -- and produces exactly the same value, because it is a checksum of the same bytes. Null when the
+     * manifest named DIGEST, in which case the sender's file is authoritative and is written verbatim like any
+     * other component.
+     */
+    private final CRC32 dataDigest;
 
     private static final SequentialWriterOption WRITER_OPTION =
         SequentialWriterOption.newBuilder()
@@ -93,6 +108,8 @@ public class BigTableZeroCopyWriter extends SSTable implements SSTableMultiWrite
 
         for (Component c : components)
             componentWriters.put(c.type, makeWriter(descriptor, c));
+
+        this.dataDigest = components.contains(Component.DIGEST) ? null : new CRC32();
     }
 
     private static SequentialWriter makeWriter(Descriptor descriptor, Component component)
@@ -100,7 +117,7 @@ public class BigTableZeroCopyWriter extends SSTable implements SSTableMultiWrite
         return new SequentialWriter(new File(descriptor.filenameFor(component)), WRITER_OPTION, false);
     }
 
-    private void write(DataInputPlus in, long size, SequentialWriter out) throws FSWriteError
+    private void write(DataInputPlus in, long size, SequentialWriter out, CRC32 digest) throws FSWriteError
     {
         final int BUFFER_SIZE = 1 << 20;
         long bytesRead = 0;
@@ -113,6 +130,8 @@ public class BigTableZeroCopyWriter extends SSTable implements SSTableMultiWrite
                 in.readFully(buff, 0, toRead);
                 int count = Math.min(toRead, BUFFER_SIZE);
                 out.write(buff, 0, count);
+                if (digest != null)
+                    digest.update(buff, 0, count);
                 bytesRead += count;
             }
             out.sync(); // finish will also call sync(). Leaving here to get stuff flushed as early as possible
@@ -151,6 +170,14 @@ public class BigTableZeroCopyWriter extends SSTable implements SSTableMultiWrite
     {
         if (finalReader == null)
         {
+            // The sender could not produce a Digest.crc32 for what it sent -- a partial zero-copy stream never has
+            // the bytes in process -- so this is where the component comes from. It is a CRC of exactly the file
+            // just written, which is what Verifier compares against, and writing it here rather than leaving it
+            // out is what keeps `nodetool verify` on a received sstable a whole-file CRC instead of an extended
+            // row-by-row verification.
+            if (dataDigest != null && components.contains(Component.DATA))
+                writeDigest();
+
             // Wire format omits TOC.txt; write it locally so snapshot createLinks
             // hardlinks it and the on-disk layout matches flush/compaction output.
             components.add(Component.TOC);
@@ -216,23 +243,54 @@ public class BigTableZeroCopyWriter extends SSTable implements SSTableMultiWrite
             writer.close();
     }
 
+    /**
+     * Digest.crc32 the way {@code ChecksumWriter.writeFullChecksum} writes it: the plain decimal ASCII of the
+     * CRC32, no newline and no prefix, fsynced. Failure to write it is logged rather than thrown: the sstable is
+     * complete and correct without the component, and the only consequence is a slower verification.
+     */
+    private void writeDigest()
+    {
+        File file = new File(descriptor.filenameFor(Component.DIGEST));
+        try (FileOutputStreamPlus out = new FileOutputStreamPlus(file))
+        {
+            out.write(String.valueOf(dataDigest.getValue()).getBytes(StandardCharsets.UTF_8));
+            out.flush();
+            out.sync();
+            components.add(Component.DIGEST);
+        }
+        catch (IOException e)
+        {
+            logger.warn("Failed writing {} for a received sstable; it will verify by extended verification instead",
+                        file, e);
+            file.deleteIfExists();
+        }
+    }
+
     public void writeComponent(Component.Type type, DataInputPlus in, long size) throws ClosedChannelException
     {
         logger.info("Writing component {} to {} length {}", type, componentWriters.get(type).getPath(), prettyPrintMemory(size));
 
+        // Only Data.db is digested, and only when the sender sent no digest of its own.
+        CRC32 digest = type == Component.Type.DATA ? dataDigest : null;
+
         if (in instanceof AsyncStreamingInputPlus)
-            write((AsyncStreamingInputPlus) in, size, componentWriters.get(type));
+            write((AsyncStreamingInputPlus) in, size, componentWriters.get(type), digest);
         else
-            write(in, size, componentWriters.get(type));
+            write(in, size, componentWriters.get(type), digest);
     }
 
-    private void write(AsyncStreamingInputPlus in, long size, SequentialWriter writer) throws ClosedChannelException
+    private void write(AsyncStreamingInputPlus in, long size, SequentialWriter writer, CRC32 digest) throws ClosedChannelException
     {
         logger.info("Block Writing component to {} length {}", writer.getPath(), prettyPrintMemory(size));
 
         try
         {
-            in.consume(writer::writeDirectlyToChannel, size);
+            in.consume(buffer -> {
+                // duplicate(): update() consumes the buffer it is given, and the channel still needs it.
+                if (digest != null)
+                    digest.update(buffer.duplicate());
+                return writer.writeDirectlyToChannel(buffer);
+            }, size);
             writer.sync();
         }
         catch (EOFException e)

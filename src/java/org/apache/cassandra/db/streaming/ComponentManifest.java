@@ -66,6 +66,30 @@ public final class ComponentManifest implements Iterable<Component>
         return new ComponentManifest(components);
     }
 
+    /**
+     * A manifest whose components are not all the descriptor's own files -- a partial stream synthesises every
+     * one but Data.db, and sends only a range of that -- ordered the way {@link #create(Descriptor)} would have
+     * ordered them. The order is part of the wire contract, since both the writer and the reader walk the
+     * manifest to decide what the next bytes are, so it is fixed here rather than at each call site.
+     */
+    public static ComponentManifest ordered(Map<Component, Long> sizes)
+    {
+        LinkedHashMap<Component, Long> components = new LinkedHashMap<>(sizes.size());
+
+        for (Component component : STREAM_COMPONENTS)
+        {
+            Long size = sizes.get(component);
+            if (size != null)
+                components.put(component, size);
+        }
+
+        if (components.size() != sizes.size())
+            throw new IllegalArgumentException("Cannot stream components " + sizes.keySet() +
+                                              ", only " + STREAM_COMPONENTS + " are streamable");
+
+        return new ComponentManifest(components);
+    }
+
     public long sizeOf(Component component)
     {
         Long size = components.get(component);

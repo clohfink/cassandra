@@ -33,6 +33,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
 import java.util.zip.CRC32;
 
 import com.google.common.annotations.VisibleForTesting;
@@ -60,6 +61,7 @@ import org.apache.cassandra.dht.IPartitioner;
 import org.apache.cassandra.io.compress.CompressionMetadata;
 import org.apache.cassandra.io.sstable.format.SSTableFormat;
 import org.apache.cassandra.io.sstable.format.SSTableReader;
+import org.apache.cassandra.io.sstable.format.Version;
 import org.apache.cassandra.io.sstable.metadata.CompactionMetadata;
 import org.apache.cassandra.io.sstable.metadata.MetadataComponent;
 import org.apache.cassandra.io.sstable.metadata.MetadataType;
@@ -273,11 +275,11 @@ public final class ZeroCopySSTableSplitter
     static volatile boolean forceAlignedLayoutForTesting = false;
 
     /** {@code MetadataCollector.defaultPartitionSizeHistogram()} is package-private; this is bit-identical. */
-    private static final int PARTITION_SIZE_HISTOGRAM_BUCKETS = 150;
+    static final int PARTITION_SIZE_HISTOGRAM_BUCKETS = 150;
 
     /** {@code MetadataCollector.cardinality} is {@code new HyperLogLogPlus(13, 25)} (CASSANDRA-5906). */
-    private static final int HLL_P = 13;
-    private static final int HLL_SP = 25;
+    static final int HLL_P = 13;
+    static final int HLL_SP = 25;
 
     /** Every component this class can write, i.e. everything {@link #cleanUp} has to remove. */
     private static final List<Component> WRITTEN_COMPONENTS = ImmutableList.of(Component.DATA,
@@ -895,12 +897,61 @@ public final class ZeroCopySSTableSplitter
     // ------------------------------------------------------------------------------------------------
 
     /**
-     * @return true iff {@link #split} can handle this parent, i.e. it is a compressed BIG-format sstable.
-     *         An uncompressed or non-BIG parent is refused with {@link UnsupportedOperationException}.
+     * @return true iff {@link #split} can handle this parent: a compressed BIG-format sstable, at a version whose
+     *         components this class can write ({@link #writesReadableComponents}), on a table with no secondary
+     *         index ({@link #hasNoPerSSTableIndex}). Anything else is refused by {@link #requireSupported} with
+     *         {@link UnsupportedOperationException}.
      */
     public static boolean isSupported(SSTableReader parent)
     {
-        return parent.descriptor.formatType == SSTableFormat.Type.BIG && parent.compression;
+        return parent.descriptor.formatType == SSTableFormat.Type.BIG
+               && parent.compression
+               && writesReadableComponents(parent.descriptor.version)
+               && hasNoPerSSTableIndex(parent);
+    }
+
+    /**
+     * Whether the components this class writes can be read back at {@code version}.
+     * <p>
+     * A child keeps the PARENT's version -- {@link #descriptorAllocator} stamps it from the parent's descriptor,
+     * because the child's Data.db is the parent's bytes verbatim and nothing in them is re-encoded. Two of the
+     * component writers, though, are version-blind: {@link CompressionMetadata.Writer} always emits the
+     * {@code maxCompressedLength} field that only {@code na}+ reads back, and {@link BloomFilterSerializer} always
+     * writes the 4.0 bit order that only {@code na}+ expects (CASSANDRA-9067). Stamped with a 3.x version those
+     * two are read back wrong rather than rejected: CompressionInfo.db is parsed four bytes out of phase, which
+     * makes {@code chunkCount} the low half of {@code dataLength} and turns {@code SSTableReader.open} into a
+     * multi-gigabyte {@code Memory.allocate} followed by {@code CorruptSSTableException}.
+     * <p>
+     * Rather than teach those writers to downgrade, refuse: a 3.x-format sstable is one {@code upgradesstables}
+     * away, and every caller's fallback is a normal rewrite, which produces a current-version sstable anyway.
+     * Statistics.db is not at issue -- {@link #writeStatistics} passes {@code child.version} through to the
+     * metadata serializer.
+     */
+    static boolean writesReadableComponents(Version version)
+    {
+        return version.hasMaxCompressedLength() && !version.hasOldBfFormat();
+    }
+
+    /**
+     * Whether the parent's table is free of secondary indexes, which a split cannot carry across.
+     * <p>
+     * The rewrite path this replaces hands {@code cfs.indexManager.listIndexes()} to {@code SSTableWriter.create},
+     * so an index that keeps per-sstable state gets a {@code SSTableFlushObserver} and its component is written
+     * alongside each output. SASI is the one such index in this tree, and its {@code SI_*.db} would have to be
+     * rebuilt from the rows -- which is the entire cost this class exists to avoid. Emitting children without it
+     * fails silently rather than loudly: {@code ColumnIndex.update} drops the un-indexed set that
+     * {@code DataTracker.update} returns, and {@code DataTracker.getBuiltIndexes} skips any sstable whose index
+     * file is absent, so queries just stop matching those partitions until a restart or {@code rebuild_index}.
+     * <p>
+     * This refuses on ANY index rather than only on the ones with per-sstable components. A plain
+     * {@code CassandraIndex} keeps its data in a separate table and would in fact survive a split untouched, so
+     * that is stricter than it has to be; it is also the cheap, obviously-correct test -- it needs no
+     * {@code ColumnFamilyStore}, so it holds for offline callers too -- and the cost of being wrong in this
+     * direction is only that such a table falls back to the rewrite it would have done before this existed.
+     */
+    static boolean hasNoPerSSTableIndex(SSTableReader parent)
+    {
+        return parent.metadata().indexes.isEmpty();
     }
 
     /**
@@ -1042,6 +1093,20 @@ public final class ZeroCopySSTableSplitter
                                                     "from origin 0) has to be regenerated wholesale rather " +
                                                     "than sliced. Refusing rather than emitting a child with " +
                                                     "a misaligned CRC.db.");
+        if (!writesReadableComponents(parent.descriptor.version))
+            throw new UnsupportedOperationException("ZeroCopySSTableSplitter cannot write components for sstable " +
+                                                    "version " + parent.descriptor.version + " (" +
+                                                    parent.descriptor + "): a child keeps its parent's version, " +
+                                                    "but CompressionInfo.db and Filter.db are written in the 'na'+ " +
+                                                    "formats only. Run nodetool upgradesstables first.");
+        if (!hasNoPerSSTableIndex(parent))
+            throw new UnsupportedOperationException("ZeroCopySSTableSplitter cannot split " + parent.descriptor +
+                                                    ": table " + parent.metadata().keyspace + '.' +
+                                                    parent.metadata().name + " has secondary indexes " +
+                                                    parent.metadata().indexes.stream()
+                                                          .map(i -> i.name).collect(Collectors.joining(", ")) +
+                                                    ", whose per-sstable components a split cannot rebuild " +
+                                                    "without reading the rows.");
         if (!parent.descriptor.fileFor(Component.STATS).exists())
             throw new IllegalStateException("parent has no Statistics.db: " + parent.descriptor +
                                             "; MetadataSerializer would silently fabricate defaults");
@@ -1501,7 +1566,7 @@ public final class ZeroCopySSTableSplitter
     }
 
     /** The absolute Data.db offset at which chunk {@code k} begins. */
-    private static long chunkStart(CompressionMetadata meta, long k, int chunkLength)
+    static long chunkStart(CompressionMetadata meta, long k, int chunkLength)
     {
         return chunkFor(meta, k, chunkLength).offset;
     }
@@ -1533,7 +1598,7 @@ public final class ZeroCopySSTableSplitter
      * {@code flushData} exactly once, at prepare, with the final partial buffer. Only the double-sync in
      * {@code SSTableRewriter} produces the extra chunk.
      */
-    private static long chunkEnd(CompressionMetadata meta, long k, int chunkLength)
+    static long chunkEnd(CompressionMetadata meta, long k, int chunkLength)
     {
         CompressionMetadata.Chunk chunk = chunkFor(meta, k, chunkLength);
         return chunk.offset + chunk.length + 4;   // "4": the inline CRC32 the reader expects to follow the chunk
@@ -1749,6 +1814,15 @@ public final class ZeroCopySSTableSplitter
 
     // ------------------------------------------------------------------------------------------------
     // Component writers
+    //
+    // Several of these are package-private rather than private because {@link ZeroCopySSTableSlice} synthesises
+    // the same components for the same reason -- verbatim byte ranges need an index rebased onto them, and
+    // everything else follows from that index -- and every remark below about what may and may not be inherited
+    // applies there identically. Sharing them is what keeps the two paths from drifting; a second copy of
+    // writeStatistics in particular would be a second place to get the SerializationHeader and the
+    // commitlog-interval/host-id pair wrong. writeCompressionInfo is NOT shared: a split child is one chunk run
+    // with an alignment pad, a slice is a concatenation of runs with none, and the two loops have nothing in
+    // common but the writer they call.
     // ------------------------------------------------------------------------------------------------
 
     /**
@@ -1891,7 +1965,7 @@ public final class ZeroCopySSTableSplitter
      * children are disjoint contiguous key sub-ranges of the parent's range, so they cannot overlap each other,
      * and they occupy exactly the slot the obsoleted parent vacated.
      */
-    private static void writeStatistics(Descriptor child,
+    static void writeStatistics(Descriptor child,
                                         Map<MetadataType, MetadataComponent> parentMetadata,
                                         StatsMetadata parentStats,
                                         EstimatedHistogram partitionSizes,
@@ -1956,7 +2030,7 @@ public final class ZeroCopySSTableSplitter
      * deletes the half-written file and returns normally, so an online {@code open()} would quietly rebuild the
      * filter and hide the error, and a crash could leave a torn one behind.
      */
-    private static void writeFilter(Descriptor child, IFilter filter) throws IOException
+    static void writeFilter(Descriptor child, IFilter filter) throws IOException
     {
         try (FileOutputStreamPlus out = new FileOutputStreamPlus(child.fileFor(Component.FILTER)))
         {
@@ -1972,7 +2046,7 @@ public final class ZeroCopySSTableSplitter
      * rebuilds it from Index.db -- but "survivable" means a full Index.db pass per child at startup, so write it
      * durably like the others.
      */
-    private static void writeSummary(Descriptor child, DecoratedKey first, DecoratedKey last, IndexSummary summary)
+    static void writeSummary(Descriptor child, DecoratedKey first, DecoratedKey last, IndexSummary summary)
     throws IOException
     {
         try (FileOutputStreamPlus out = new FileOutputStreamPlus(child.fileFor(Component.SUMMARY)))
@@ -2108,7 +2182,7 @@ public final class ZeroCopySSTableSplitter
                      child.descriptor, partitionCount, physicalBytes, range.deadPrefixBytes, lastEntry.position);
     }
 
-    private static Map<MetadataType, MetadataComponent> readParentMetadata(Descriptor parent)
+    static Map<MetadataType, MetadataComponent> readParentMetadata(Descriptor parent)
     {
         Map<MetadataType, MetadataComponent> components;
         try
@@ -2132,7 +2206,7 @@ public final class ZeroCopySSTableSplitter
      * ColumnFamilyStore's id generator so we cannot collide with a concurrent flush or compaction; falls back
      * to a directory-derived generator plus an existence loop for offline use.
      */
-    private static Supplier<Descriptor> descriptorAllocator(SSTableReader parent)
+    static Supplier<Descriptor> descriptorAllocator(SSTableReader parent)
     {
         Descriptor template = parent.descriptor;
         ColumnFamilyStore cfs = null;
@@ -2165,7 +2239,7 @@ public final class ZeroCopySSTableSplitter
         };
     }
 
-    private static SequentialWriterOption writerOption()
+    static SequentialWriterOption writerOption()
     {
         return SequentialWriterOption.newBuilder()
                                      .trickleFsync(DatabaseDescriptor.getTrickleFsync())
@@ -2178,7 +2252,7 @@ public final class ZeroCopySSTableSplitter
      * is a cheap post-condition rather than the only error signal it once was -- the {@code SSTableReader.save*}
      * helpers it used to guard against log at TRACE, delete the half-written file and return normally.
      */
-    private static void requireNonEmpty(Descriptor descriptor, Component component)
+    static void requireNonEmpty(Descriptor descriptor, Component component)
     {
         File file = descriptor.fileFor(component);
         if (!file.exists() || file.length() == 0)
