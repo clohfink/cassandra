@@ -143,6 +143,20 @@ import static org.apache.cassandra.io.sstable.ZeroCopySSTableSplitter.writerOpti
  *       back immediately and deleted) and is kept rather than forked, because a handful of small fsyncs are
  *       cheaper than a second copy of {@code writeStatistics}.</li>
  * </ul>
+ *
+ * <h2>JBOD on the RECEIVER: not supported, and not refused</h2>
+ * A slice arrives through the entire-sstable receiver, and that receiver chooses ONE data directory for the whole
+ * sstable from the header's first key -- {@code CassandraEntireSSTableStreamReader} does
+ * {@code getLocationForDisk(getCorrectDiskForKey(header.firstKey))} -- because a zero-copy receive writes
+ * component files verbatim and has no partition-level place to make a per-disk decision. The row-by-row path this
+ * replaces builds a {@code RangeAwareSSTableWriter}, which splits the incoming partitions across the receiver's
+ * disk boundaries as it deserialises them. So on a receiver with more than one {@code data_file_directories}
+ * entry, a slice whose key range crosses several boundaries lands entirely on the first key's disk, where
+ * {@code DiskBoundaries.isInCorrectLocation} then reports it out of position until a compaction or
+ * {@code nodetool relocatesstables} moves it. Nothing here checks the peer's layout -- the sender cannot see it --
+ * so this is a constraint on the deployment: leave {@code zero_copy_partial_stream_enabled} off unless every node
+ * that can RECEIVE a stream has a single data directory. Note the sender's own layout is irrelevant; it is the
+ * receiver's that decides.
  */
 public final class ZeroCopySSTableSlice
 {

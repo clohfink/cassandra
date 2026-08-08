@@ -493,8 +493,8 @@ footprint, and the front-padding it needs is blocked above.
 > - **The digest, not the copy, is now the floor** — and it is optional. With the bytes shared,
 >   `Digest.crc32` is the only full pass left, so a shared split costs the read half of the old cost.
 >   `zero_copy_split_digest_enabled: false` removes it: measured on a 1 GiB parent split 4 ways, that is
->   1.9 MiB read and 1.0 MiB written, versus 1998 MiB read and 750 MiB written today (see
->   `docs/large-split-bench.md`). §3.4's audit holds and was re-verified — `Verifier` is the only reader,
+>   1.9 MiB read and 1.0 MiB written, versus 1998 MiB read and 750 MiB written today (measured with the
+>   benchmark harness since removed from the tree; see git history at `691d7acc0c`). §3.4's audit holds and was re-verified — `Verifier` is the only reader,
 >   a missing digest makes it upgrade to a full extended verification rather than fail, and the fork's own
 >   backup manifest enumerates the component files that exist while `BackupMemtableContext`'s
 >   `COMPONENTS_TO_DOWNLOAD` never asks for DIGEST. So the cost of skipping it is verification *speed* on
@@ -878,9 +878,9 @@ partitioner hard-exit).
 
 Added after the research above was written, and it **supersedes the stage-assembled estimates in §5.2** for
 the one comparison it covers. `ZeroCopySSTableSplitter` now exists and
-`test/long/org/apache/cassandra/io/sstable/ZeroCopySSTableSplitterBenchTest.java` drives it against the
-actual `SSTableSplitter` full-rewrite path in-process. Numbers are from that harness, written to
-`build/test/zerocopy-split-bench.txt`.
+a benchmark harness drove it against the
+actual `SSTableSplitter` full-rewrite path in-process. Numbers are from that harness, which has since been
+removed from the tree (recoverable from git history at `691d7acc0c`).
 
 | Config (parent/chunk/children/shape) | baseline ms | zero-copy ms | speedup | baseline alloc | zero-copy alloc |
 |---|---|---|---|---|---|

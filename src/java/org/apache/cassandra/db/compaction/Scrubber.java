@@ -208,13 +208,19 @@ public class Scrubber implements Closeable
                 // receiver did not ask for. nextIndexKey/nextPartitionPositionFromIndex describe the partition
                 // about to be read (they are shifted to current only by updateIndexKey below), and a non-null
                 // nextIndexKey is what distinguishes a real position from the dataFile.length() sentinel the
-                // index sets when it is exhausted. So skip to where the index says the next partition is rather
-                // than reading those bytes as a partition and recovering from the failure.
+                // index sets when it is exhausted. So skip such a gap rather than reading it as a partition and
+                // recovering from the failure, which costs one alarming warning per gap on a healthy sstable.
                 //
-                // This does not change what gets scrubbed: reading the gap fails the key comparison below and the
-                // "Retrying from partition index" path then seeks to exactly this position anyway. What it avoids
-                // is one alarming warning per gap for an sstable that is not corrupt.
-                if (nextIndexKey != null && nextPartitionPositionFromIndex > dataFile.getFilePointer())
+                // But ONLY when the data file does not already hold the expected partition here. This scrubber is
+                // data-primary by design -- the index is what it recovers WITH, per the constructor comment -- and
+                // an unconditional skip inverts that: when it is the index position that is corrupt rather than
+                // the data, the old code stayed where it was, matched the key and recovered the partition, while
+                // skipping lands in the middle of a partition body, fails, and drops it (and, because that counts
+                // as a bad partition, resets the whole sstable to UNREPAIRED). Peeking the key costs one bounded
+                // short-length read and tells the two cases apart exactly: in a real gap the bytes here are not
+                // the next indexed key, and when the index is wrong they are.
+                if (nextIndexKey != null && nextPartitionPositionFromIndex > dataFile.getFilePointer()
+                    && !startsPartition(dataFile, nextIndexKey))
                     dataFile.seek(nextPartitionPositionFromIndex);
 
                 long partitionStart = dataFile.getFilePointer();
@@ -406,6 +412,34 @@ public class Scrubber implements Closeable
         return reinsertOverflowedTTLRows ? new FixNegativeLocalDeletionTimeIterator(rowMergingIterator,
                                                                                     outputHandler,
                                                                                     negativeLocalDeletionInfoMetrics) : rowMergingIterator;
+    }
+
+    /**
+     * Whether {@code dataFile} is positioned at the start of the partition whose key is {@code expectedKey},
+     * leaving the position exactly as it found it.
+     * <p>
+     * Used to tell a genuine unindexed gap (the bytes here are not a partition at all, so skipping to the index
+     * position is right) from a corrupt index position (the bytes here ARE the expected partition, so skipping
+     * would discard it). Any failure to read answers false: this only ever suppresses the skip when the data file
+     * is demonstrably correct. The read is bounded -- {@code readWithShortLength} takes an unsigned short, so it
+     * can consume at most 64 KiB before it throws.
+     */
+    private boolean startsPartition(RandomAccessReader dataFile, ByteBuffer expectedKey)
+    {
+        long mark = dataFile.getFilePointer();
+        try
+        {
+            return expectedKey.equals(ByteBufferUtil.readWithShortLength(dataFile));
+        }
+        catch (Throwable th)
+        {
+            throwIfFatal(th);
+            return false;
+        }
+        finally
+        {
+            dataFile.seek(mark);
+        }
     }
 
     private void updateIndexKey()

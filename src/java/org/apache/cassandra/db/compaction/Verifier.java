@@ -249,8 +249,18 @@ public class Verifier implements Closeable
                 // ZeroCopySSTableSplitter starts with a dead prefix instead: compression chunk boundaries are
                 // pinned to multiples of chunkLength, so a child that does not begin on a chunk boundary
                 // carries leading bytes that belong to no partition. Start the linear data walk at the first
-                // position the index actually points at rather than failing. The whole-file Digest.crc32
-                // check above already covered those bytes.
+                // position the index actually points at rather than failing.
+                //
+                // Only a position that is actually inside the data file is a dead prefix, though. One outside it
+                // is a corrupt index, and it has to be reported the way every other corruption here is -- through
+                // markAndThrow, which resets the sstable to UNREPAIRED and honours invokeDiskFailurePolicy --
+                // rather than escaping as the bare IllegalArgumentException RandomAccessReader.seek would raise,
+                // which no caller treats as a verification failure. (The bytes skipped are covered by the
+                // whole-file Digest.crc32 check above only when there IS a digest; when there is not, its absence
+                // is exactly what set extended = true, and nothing else reads them.)
+                if (firstRowPositionFromIndex < 0 || firstRowPositionFromIndex >= dataFile.length())
+                    markAndThrow(new RuntimeException("firstRowPositionFromIndex is outside the data file: "
+                                                      + firstRowPositionFromIndex + " not in [0, " + dataFile.length() + ')'));
                 dataFile.seek(firstRowPositionFromIndex);
             }
 

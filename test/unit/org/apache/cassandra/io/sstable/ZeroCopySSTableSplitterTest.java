@@ -303,6 +303,52 @@ public class ZeroCopySSTableSplitterTest extends CQLTester
      * registered nothing, so all of them silently found no work to stop -- and truncate reported success while
      * the copy carried on.
      */
+    /**
+     * The crash-recovery contract: every child is covered by an ADD record in the transaction log, so a start that
+     * finds the log uncommitted deletes them all and leaves the parent alone.
+     * <p>
+     * This abandons the transaction without committing or aborting it -- the closest an in-process test can get to
+     * a {@code kill -9} -- and then runs the boot path, {@code removeUnfinishedLeftovers}. What it does NOT cover
+     * is the window the tracking has to be early for: a crash BETWEEN two of a child's components. In-process that
+     * window is unreachable, because {@code build}'s {@code finally} cleans partial children up itself, so no test
+     * here can distinguish tracking before the copy from tracking after it. The reason the splitter now registers
+     * before the first byte is the invariant {@code BigTableWriter} states outright -- "must track before any files
+     * are created" -- and this test is what guards the registration from being dropped altogether.
+     */
+    @Test
+    public void abandonedSplitIsCleanedUpByTheBootPath() throws Throwable
+    {
+        createCompressedTable(4);
+        disableCompaction();
+        insertPartitions(80, 5, 480);
+        flush();
+
+        ColumnFamilyStore cfs = getCurrentColumnFamilyStore();
+        SSTableReader parent = onlySSTable(cfs);
+        Descriptor parentDescriptor = parent.descriptor;
+        int sstablesBefore = countDataFiles(parentDescriptor);
+
+        LifecycleTransaction txn = cfs.getTracker().tryModify(parent, OperationType.ANTICOMPACTION);
+        ZeroCopySSTableSplitter.Result result = ZeroCopySSTableSplitter.split(parent, 4, txn);
+        assertEquals(4, result.children.size());
+        assertEquals("the children are on disk now", sstablesBefore + 4, countDataFiles(parentDescriptor));
+
+        // Drop every reader the split opened and walk away from the transaction, leaving its log uncommitted --
+        // what a power loss between the last child and the commit record leaves behind.
+        for (ZeroCopySSTableSplitter.Child child : result.children)
+            child.reader.selfRef().release();
+
+        assertTrue("the boot path must find work to do", LifecycleTransaction.removeUnfinishedLeftovers(cfs));
+
+        assertEquals("an uncommitted split's children must not survive a restart",
+                     sstablesBefore, countDataFiles(parentDescriptor));
+        for (ZeroCopySSTableSplitter.Child child : result.children)
+            assertFalse("orphaned child " + child.descriptor,
+                        child.descriptor.fileFor(Component.DATA).exists());
+        assertTrue("the parent must still be there, or the range is gone from this replica",
+                   parentDescriptor.fileFor(Component.DATA).exists());
+    }
+
     @Test
     public void stopRequestAbortsTheSplitAndLeavesNoFilesBehind() throws Throwable
     {

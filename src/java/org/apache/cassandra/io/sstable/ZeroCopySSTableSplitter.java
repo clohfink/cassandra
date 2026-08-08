@@ -74,6 +74,7 @@ import org.apache.cassandra.io.util.SequentialWriter;
 import org.apache.cassandra.io.util.SequentialWriterOption;
 import org.apache.cassandra.schema.Schema;
 import org.apache.cassandra.schema.TableMetadata;
+import org.apache.cassandra.schema.TableMetadataRef;
 import org.apache.cassandra.service.ActiveRepairService;
 import org.apache.cassandra.utils.BloomFilter;
 import org.apache.cassandra.utils.BloomFilterSerializer;
@@ -164,6 +165,31 @@ import org.apache.cassandra.utils.TimeUUID;
  * 64 KiB grid is addressed from origin 0 and a suffix cut is misaligned against it. Producing a child with a
  * stale or sliced CRC.db would corrupt outbound partial streaming silently, so this refuses instead.
  * Use {@link #isSupported(SSTableReader)} to test up front.
+ *
+ * <h2>Secondary indexes: not supported, and refused</h2>
+ * A table carrying any secondary index is rejected by {@link #isSupported(SSTableReader)} and falls back to the
+ * rewrite. The rewrite hands {@code cfs.indexManager.listIndexes()} to {@code SSTableWriter.create}, so an index
+ * that keeps per-sstable state -- SASI's {@code SI_*.db}, the only one in this tree -- gets an
+ * {@code SSTableFlushObserver} and is rebuilt as each output is written. A split cannot produce that component
+ * without deserialising the rows it exists to avoid deserialising. Omitting it would fail SILENTLY rather than
+ * loudly: {@code ColumnIndex.update} discards the un-indexed set {@code DataTracker.update} returns and
+ * {@code DataTracker.getBuiltIndexes} skips any sstable whose index file is missing, so queries would simply
+ * stop matching the child's partitions until a restart or {@code nodetool rebuild_index}. The gate is therefore
+ * deliberately conservative and refuses on ANY index, including a plain {@code CassandraIndex} whose data lives
+ * in a separate table and which a split would in fact survive untouched. See {@link #hasNoPerSSTableIndex}.
+ *
+ * <h2>JBOD: not supported, and NOT refused</h2>
+ * Unlike everything above, this one is not enforced -- it is a deployment constraint, and the only thing that
+ * makes it visible is this paragraph. {@link #descriptorAllocator} allocates every child in the PARENT's
+ * directory and nothing here ever consults {@code Directories} for a writeable location, where the
+ * anticompaction rewrite this replaces calls
+ * {@code getWriteableLocationAsFile(cfs.getExpectedCompactedFileSize(...))} and so lands on a disk with room.
+ * On a node with more than one {@code data_file_directories} entry that means the children cannot go anywhere
+ * but the parent's disk, {@code min_free_space_per_drive_in_mb} is not reserved on their behalf, and a parent
+ * larger than the free space on its own disk fills that disk -- failing every concurrent flush and compaction
+ * that had already chosen it -- rather than spilling to a sibling disk that had room. Reflink cannot span
+ * filesystems either, so on JBOD the sharing that makes a split nearly free is only ever available within the
+ * one directory. Run this on single-data-directory nodes.
  *
  * <h2>Accepted imprecision in the children's Statistics.db</h2>
  * Four of the {@code StatsMetadata} fields are absolute per-sstable <em>totals</em> rather than min/max bounds,
@@ -955,6 +981,25 @@ public final class ZeroCopySSTableSplitter
     }
 
     /**
+     * The least {@link SSTable} that can carry a child's identity into the transaction log before any of its files
+     * exist, so that a crash mid-split is cleaned up rather than half-adopted. See the call site in
+     * {@link #buildChild}.
+     * <p>
+     * {@code LogRecord.make(ADD, table)} reads only {@code descriptor.baseFilename()} and
+     * {@code getAllFilePaths().size()}, and the record's file list is rebuilt by listing the directory when it is
+     * replayed, so the component set here only has to be non-empty -- it is not a claim about what the child will
+     * have. {@code SSTable} is abstract solely to stop it being used as a reader; it declares no abstract methods.
+     */
+    private static final class PendingChild extends SSTable
+    {
+        PendingChild(Descriptor descriptor, TableMetadataRef metadata)
+        {
+            super(descriptor, ImmutableSet.of(Component.DATA), metadata,
+                  DatabaseDescriptor.getDiskOptimizationStrategy());
+        }
+    }
+
+    /**
      * Split at the partition boundaries nearest to {@code numChildren} approximately-equal byte shares of the
      * parent's uncompressed length.
      *
@@ -1639,6 +1684,27 @@ public final class ZeroCopySSTableSplitter
                                                               Component.STATS,
                                                               Component.SUMMARY);
 
+        // ---------- The transaction's ADD record, BEFORE the first byte of the child exists ----------
+        // Upstream writers register in their constructor -- BigTableWriter's "must track before any files are
+        // created" -- and this has to do the same, for the same reason: the ADD record is the ONLY thing that
+        // makes the child's files visible to LogTransaction.removeUnfinishedLeftovers after a crash. Registering
+        // after the components are written (which is where the reader exists, and where this used to happen)
+        // leaves a multi-minute window in which a kill -9 strands files no boot path reclaims --
+        // removeUnfinishedLeftovers skips them for want of a record, and scrubDataDirectories' orphan sweep keeps
+        // any descriptor whose Data.db is non-empty. What the next start then does depends only on how far the
+        // child got: a complete one is opened as a live sstable ALONGSIDE the parent it was meant to replace, so
+        // the same partitions exist twice in two different repair states; one interrupted inside writeStatistics
+        // leaves a durable zero-length Statistics.db, which SSTableReader.open turns into a
+        // CorruptSSTableException that the startup failure policy escalates on every subsequent boot. And with
+        // extents shared, a stranded Data.db pins the parent's blocks -- the one cost this class exists to avoid.
+        //
+        // The record needs nothing but the descriptor: LogRecord.make reads the base filename and the component
+        // count, the files it later deletes are found by listing the directory at replay time rather than from
+        // what existed when it was written (nothing), and LogFile's numFiles strictness is REMOVE-only. That is
+        // exactly what BigTableWriter already relies on.
+        if (txn != null)
+            txn.trackNew(new PendingChild(child, parent.metadata));
+
         // ---------- Data.db: verbatim compressed chunk run, shared with the parent where possible ----------
         // Sharing needs the head of the run aligned, which costs a pad, so it is only planned for when the
         // filesystem has not already said no. An unpadded run cannot be shared at all -- O(i) is aligned to
@@ -1805,8 +1871,9 @@ public final class ZeroCopySSTableSplitter
             throw t;
         }
 
-        if (txn != null)
-            txn.trackNew(reader);
+        // Deliberately no trackNew(reader) here: the ADD record for this descriptor went in before the copy
+        // started, and LifecycleTransaction.trackNew does nothing but write that record -- it is keyed on the
+        // base filename, so tracking the reader as well would only add a duplicate.
 
         return new Child(child, first, last, range, physicalBytes, plan.headPadBytes, cloned, partitionCount,
                          ImmutableSet.copyOf(components), repairState, reader);

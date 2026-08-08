@@ -117,6 +117,24 @@ public class Config
      * compaction under-fires by roughly the same factor, so retained tombstones are cleaned up later than
      * tombstone_threshold implies; and an all-expired child is not dropped whole. Every one of these errs in the
      * conservative direction and none can lose or resurrect data. See ZeroCopySSTableSplitter's class javadoc.
+     * <p>
+     * NOT SUPPORTED WITH SECONDARY INDEXES. A table carrying any secondary index is refused outright by
+     * {@code ZeroCopySSTableSplitter.isSupported} and takes the rewrite instead. The rewrite hands
+     * {@code cfs.indexManager.listIndexes()} to the writer, so an index with per-sstable state (SASI's
+     * {@code SI_*.db}) is rebuilt as each output is written; a split cannot produce that without deserialising
+     * the rows it exists to avoid. Leaving it out would fail silently rather than loudly -- the child is simply
+     * absent from the index and queries stop matching its partitions until a restart or {@code nodetool
+     * rebuild_index} -- so the gate refuses on ANY index, including a plain {@code CassandraIndex} that a split
+     * would in fact survive. No configuration is needed: such tables just keep the behaviour they have today.
+     * <p>
+     * NOT SUPPORTED ON JBOD, and NOT refused. The splitter allocates every child in the PARENT's directory and
+     * never asks {@code Directories} for a writeable location, where the rewrite it replaces calls
+     * {@code getWriteableLocationAsFile(expected size)} and so picks a disk with room. On a node with more than
+     * one {@code data_file_directories} entry the children therefore cannot land anywhere but the parent's disk,
+     * {@code min_free_space_per_drive_in_mb} is not reserved for them, and a parent bigger than the free space
+     * on its own disk fills that disk -- failing concurrent flushes and compactions already bound for it --
+     * instead of spilling to a sibling that had room. Reflink cannot cross filesystems either, so the sharing
+     * that makes a split nearly free is confined to the one directory. Leave this off on JBOD nodes.
      */
     public volatile boolean zero_copy_anticompaction_enabled = true;
 
@@ -193,6 +211,15 @@ public class Config
      * one without a full extra read, since the bytes go to the socket by {@code sendfile} and are never in process
      * -- so the receiver computes it as it writes the component instead. The sstable that lands therefore has one,
      * and {@code nodetool verify} on it is a whole-file CRC like any other.
+     * <p>
+     * NOT SUPPORTED WHERE THE RECEIVER IS JBOD, and not refused -- the sender cannot see the peer's layout. A
+     * slice arrives through the entire-sstable receiver, which picks ONE data directory for the whole sstable
+     * from the header's first key and writes it there; the row-by-row path it replaces builds a
+     * {@code RangeAwareSSTableWriter} that splits the incoming partitions across the receiver's disk boundaries.
+     * So on a receiver with several {@code data_file_directories}, a slice spanning several boundaries lands
+     * entirely on the first key's disk and stays out of position until a compaction or {@code nodetool
+     * relocatesstables} moves it. Leave this off unless every node that can RECEIVE a stream has a single data
+     * directory. The sender's own layout does not matter.
      */
     public volatile boolean zero_copy_partial_stream_enabled = true;
 
