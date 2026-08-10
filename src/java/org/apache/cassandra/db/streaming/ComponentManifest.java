@@ -67,10 +67,10 @@ public final class ComponentManifest implements Iterable<Component>
     }
 
     /**
-     * A manifest whose components are not all the descriptor's own files -- a partial stream synthesises every
-     * one but Data.db, and sends only a range of that -- ordered the way {@link #create(Descriptor)} would have
-     * ordered them. The order is part of the wire contract, since both the writer and the reader walk the
-     * manifest to decide what the next bytes are, so it is fixed here rather than at each call site.
+     * A manifest whose components are not all the descriptor's own files -- a partial stream synthesises every one but
+     * Data.db, and sends only ranges of that -- ordered the way {@link #create(Descriptor)} would order them. The order
+     * is part of the wire contract, since writer and reader both walk the manifest to decide what the next bytes are,
+     * so it is fixed here rather than at each call site.
      */
     public static ComponentManifest ordered(Map<Component, Long> sizes)
     {

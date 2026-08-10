@@ -57,18 +57,18 @@ import static org.junit.Assert.assertTrue;
  * sstable's FULL / TRANSIENT / UNREPAIRED partitions form few enough contiguous runs that the splitter can
  * reproduce the anticompaction, and if so where to cut and what repair state each piece gets.
  *
- * <p>Two layers are tested. The pure run-length encoding is driven through
+ * <p>Two layers. The pure run-length encoding is driven through
  * {@link AntiCompactionRunPlanner#planFromLabels} with no sstable at all, so every shape -- including the
- * pathological vnode interleavings -- is cheap to express. Then a handful of real compressed sstables are run
- * through {@link AntiCompactionRunPlanner#plan} with ranges derived from their own index keys, which is the only
- * way to prove the Index.db walk labels and cuts in the same places.
+ * pathological vnode interleavings -- is cheap to express. Then a handful of real compressed sstables go through
+ * {@link AntiCompactionRunPlanner#plan} with ranges derived from their own index keys, the only way to prove the
+ * Index.db walk labels and cuts in the same places.
  *
- * <p>The load-bearing assertion throughout is the exact identity of the boundary keys. A boundary is the FIRST
- * key of the NEW run (the splitter starts a run at the first record whose key is {@code >=} the boundary), so an
- * off-by-one there silently hands one partition to the wrong repair state -- data that should stay unrepaired
- * gets marked pending-repair for a session that never validated it, or vice versa. That is the worst bug this
- * feature can have and it is invisible in a "the children add up to the parent" test, so every eligible case
- * below pins the boundary keys down exactly.
+ * <p>The load-bearing assertion throughout is the exact identity of the boundary keys. A boundary is the FIRST key
+ * of the NEW run (the splitter starts a run at the first record whose key is {@code >=} the boundary), so an
+ * off-by-one silently hands one partition to the wrong repair state -- data that should stay unrepaired marked
+ * pending-repair for a session that never validated it, or vice versa. That is the worst bug this feature can
+ * have and it is invisible to a "the children add up to the parent" test, so every eligible case pins the
+ * boundary keys down exactly.
  */
 public class AntiCompactionRunPlannerTest extends CQLTester
 {

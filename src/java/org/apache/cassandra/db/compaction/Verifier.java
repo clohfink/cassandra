@@ -245,19 +245,16 @@ public class Verifier implements Closeable
             ByteBuffer nextIndexKey = ByteBufferUtil.readWithShortLength(indexFile);
             {
                 long firstRowPositionFromIndex = rowIndexEntrySerializer.deserializePositionAndSkip(indexFile);
-                // Normally the first partition starts at 0 and this seek is a no-op. A child produced by
-                // ZeroCopySSTableSplitter starts with a dead prefix instead: compression chunk boundaries are
-                // pinned to multiples of chunkLength, so a child that does not begin on a chunk boundary
-                // carries leading bytes that belong to no partition. Start the linear data walk at the first
-                // position the index actually points at rather than failing.
+                // Normally the first partition starts at 0 and this seek is a no-op. A ZeroCopySSTableSplitter child
+                // instead begins with a dead prefix: chunk boundaries are pinned to multiples of chunkLength, so a
+                // child not starting on one carries leading bytes belonging to no partition. Start the linear walk
+                // where the index points rather than failing.
                 //
-                // Only a position that is actually inside the data file is a dead prefix, though. One outside it
-                // is a corrupt index, and it has to be reported the way every other corruption here is -- through
-                // markAndThrow, which resets the sstable to UNREPAIRED and honours invokeDiskFailurePolicy --
-                // rather than escaping as the bare IllegalArgumentException RandomAccessReader.seek would raise,
-                // which no caller treats as a verification failure. (The bytes skipped are covered by the
-                // whole-file Digest.crc32 check above only when there IS a digest; when there is not, its absence
-                // is exactly what set extended = true, and nothing else reads them.)
+                // Only a position inside the data file is a dead prefix, though. One outside it is a corrupt index and
+                // has to be reported the way every other corruption here is -- through markAndThrow, which resets the
+                // sstable to UNREPAIRED and honours invokeDiskFailurePolicy -- rather than escaping as the bare
+                // IllegalArgumentException RandomAccessReader.seek raises, which no caller treats as a verification
+                // failure.
                 if (firstRowPositionFromIndex < 0 || firstRowPositionFromIndex >= dataFile.length())
                     markAndThrow(new RuntimeException("firstRowPositionFromIndex is outside the data file: "
                                                       + firstRowPositionFromIndex + " not in [0, " + dataFile.length() + ')'));

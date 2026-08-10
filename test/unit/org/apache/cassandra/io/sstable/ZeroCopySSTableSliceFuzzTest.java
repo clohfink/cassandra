@@ -63,28 +63,27 @@ import static org.junit.Assert.assertTrue;
  * ranges, the slice that gets planned and synthesised must be an sstable holding exactly the partitions in those
  * ranges and nothing else.
  *
- * <p>Every iteration MATERIALISES the slice -- copies the planned byte ranges of the parent's Data.db into place,
- * in order, which is exactly what the receiving node does with the bytes off the wire -- and then attacks the
- * result through the ordinary readers. The properties checked, in the order they would break:
+ * <p>Every iteration MATERIALISES the slice -- copying the planned byte ranges of the parent's Data.db into place
+ * in order, exactly what the receiving node does with the bytes off the wire -- and then attacks the result
+ * through the ordinary readers. The properties checked, in the order they would break:
  * <ul>
- *   <li>STRUCTURE: the slice's own CompressionInfo.db or CRC.db agrees with its data file, its chunk offsets are
- *       contiguous and start at 0, its declared length matches the plan, and there is no trailing slack -- a
- *       single spare byte at the end inflates the last chunk's derived length and can flip the reader into
- *       handing compressed bytes back as row data.</li>
+ *   <li>STRUCTURE: the slice's CompressionInfo.db or CRC.db agrees with its data file, its chunk offsets are
+ *       contiguous and start at 0, its declared length matches the plan, and there is no trailing slack -- one
+ *       spare byte inflates the last chunk's derived length and can flip the reader into handing compressed bytes
+ *       back as row data.</li>
  *   <li>CONTENT: every requested partition, in order, with every row, cell, timestamp and deletion identical to
  *       the parent's.</li>
- *   <li>UNREACHABILITY: every partition that was NOT requested -- including the ones physically carried inside a
- *       boundary cell -- cannot be found through the index, the summary or the filter.</li>
+ *   <li>UNREACHABILITY: every partition NOT requested -- including those physically carried inside a boundary
+ *       cell -- cannot be found through the index, the summary or the filter.</li>
  *   <li>VERIFICATION: {@code nodetool verify}'s extended pass, which walks the data by index position and checks
  *       every key against the filter and the summary, accepts the slice.</li>
  * </ul>
  *
- * <p>The generator deliberately covers the shapes the arithmetic is most likely to get wrong: partitions much
- * larger than a cell (promoted index entries, one partition spanning many cells) and much smaller (many partitions
- * per cell), ranges that start and end mid-cell, ranges close enough together to share a cell, ranges far enough
- * apart to be separate runs, and both formats -- compressed, where a cell cannot be cut and the last one is short
- * of what it decompresses to, and uncompressed, where the grid is CRC.db's and the last cell is cut and its
- * checksum recomputed.
+ * <p>The generator covers the shapes the arithmetic is most likely to get wrong: partitions much larger than a
+ * cell (promoted index entries, one partition spanning many cells) and much smaller (many partitions per cell),
+ * ranges starting and ending mid-cell, ranges close enough to share a cell, ranges far enough apart to be separate
+ * runs, and both formats -- compressed, where a cell cannot be cut and the last is short of what it decompresses
+ * to, and uncompressed, where the grid is CRC.db's and the last cell is cut and its checksum recomputed.
  *
  * <p>A failure prints the iteration's whole configuration and a command line that replays that one case.
  */

@@ -184,11 +184,10 @@ public class Scrubber implements Closeable
             if (indexAvailable())
             {
                 long firstRowPositionFromIndex = rowIndexEntrySerializer.deserializePositionAndSkip(indexFile);
-                // Normally the first partition starts at 0 and both statements below are no-ops. A child
-                // produced by ZeroCopySSTableSplitter starts with a dead prefix instead: compression chunk
-                // boundaries are pinned to multiples of chunkLength, so a child that does not begin on a
-                // chunk boundary carries leading bytes that belong to no partition. Start the linear data
-                // walk at the first position the index actually points at rather than asserting it is 0.
+                // Normally the first partition starts at 0 and both statements below are no-ops. A
+                // ZeroCopySSTableSplitter child instead begins with a dead prefix: chunk boundaries are pinned to
+                // multiples of chunkLength, so a child not starting on one carries leading bytes belonging to no
+                // partition. Start the linear walk where the index points rather than asserting 0.
                 nextPartitionPositionFromIndex = firstRowPositionFromIndex;
                 dataFile.seek(firstRowPositionFromIndex);
             }
@@ -203,22 +202,19 @@ public class Scrubber implements Closeable
                 if (scrubInfo.isStopRequested())
                     throw new CompactionInterruptedException(scrubInfo.getCompactionInfo());
 
-                // An sstable received as a partial zero-copy stream can carry unindexed bytes BETWEEN partitions,
-                // not only before the first one: the tail of a boundary compression chunk, holding partitions the
-                // receiver did not ask for. nextIndexKey/nextPartitionPositionFromIndex describe the partition
-                // about to be read (they are shifted to current only by updateIndexKey below), and a non-null
-                // nextIndexKey is what distinguishes a real position from the dataFile.length() sentinel the
-                // index sets when it is exhausted. So skip such a gap rather than reading it as a partition and
-                // recovering from the failure, which costs one alarming warning per gap on a healthy sstable.
+                // An sstable received as a partial zero-copy stream can carry unindexed bytes BETWEEN partitions, not
+                // only before the first: the tail of a boundary compression chunk, holding partitions the receiver
+                // did not ask for. Skipping such a gap avoids one alarming warning per gap on a healthy sstable.
+                // (nextIndexKey/nextPartitionPositionFromIndex describe the partition about to be read -- they are
+                // shifted to current only by updateIndexKey below -- and a non-null nextIndexKey is what tells a real
+                // position from the dataFile.length() sentinel set when the index is exhausted.)
                 //
                 // But ONLY when the data file does not already hold the expected partition here. This scrubber is
-                // data-primary by design -- the index is what it recovers WITH, per the constructor comment -- and
-                // an unconditional skip inverts that: when it is the index position that is corrupt rather than
-                // the data, the old code stayed where it was, matched the key and recovered the partition, while
-                // skipping lands in the middle of a partition body, fails, and drops it (and, because that counts
-                // as a bad partition, resets the whole sstable to UNREPAIRED). Peeking the key costs one bounded
-                // short-length read and tells the two cases apart exactly: in a real gap the bytes here are not
-                // the next indexed key, and when the index is wrong they are.
+                // data-primary by design; the index is what it recovers WITH. An unconditional skip inverts that: when
+                // it is the index position that is corrupt, the old code stayed put, matched the key and recovered the
+                // partition, while skipping lands mid-body, fails, and drops it -- resetting the whole sstable to
+                // UNREPAIRED, since that counts as a bad partition. Peeking the key costs one bounded short-length
+                // read and tells the cases apart exactly.
                 if (nextIndexKey != null && nextPartitionPositionFromIndex > dataFile.getFilePointer()
                     && !startsPartition(dataFile, nextIndexKey))
                     dataFile.seek(nextPartitionPositionFromIndex);
@@ -415,14 +411,13 @@ public class Scrubber implements Closeable
     }
 
     /**
-     * Whether {@code dataFile} is positioned at the start of the partition whose key is {@code expectedKey},
-     * leaving the position exactly as it found it.
+     * Whether {@code dataFile} is positioned at the start of the partition whose key is {@code expectedKey}, leaving
+     * the position exactly as it found it.
      * <p>
-     * Used to tell a genuine unindexed gap (the bytes here are not a partition at all, so skipping to the index
-     * position is right) from a corrupt index position (the bytes here ARE the expected partition, so skipping
-     * would discard it). Any failure to read answers false: this only ever suppresses the skip when the data file
-     * is demonstrably correct. The read is bounded -- {@code readWithShortLength} takes an unsigned short, so it
-     * can consume at most 64 KiB before it throws.
+     * Tells a genuine unindexed gap (these bytes are not a partition, so skipping to the index position is right) from
+     * a corrupt index position (these bytes ARE the expected partition, so skipping would discard it). Any failure to
+     * read answers false, so the skip is only ever suppressed when the data file is demonstrably correct. The read is
+     * bounded: {@code readWithShortLength} takes an unsigned short, so at most 64 KiB before it throws.
      */
     private boolean startsPartition(RandomAccessReader dataFile, ByteBuffer expectedKey)
     {

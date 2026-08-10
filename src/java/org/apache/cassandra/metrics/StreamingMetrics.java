@@ -48,8 +48,8 @@ public class StreamingMetrics
     /** Slices that could not be synthesised and fell back to partition-by-partition streaming. */
     public static final Counter partialZeroCopyStreamsFailed = Metrics.counter(DefaultNameFactory.createMetricName(TYPE_NAME, "PartialZeroCopyStreamsFailed", null));
     /**
-     * Uncompressed bytes those slices carried that no read can reach: the head of their first compression chunk
-     * plus anything between sections less than a chunk apart. This is what
+     * Uncompressed bytes those slices carried that no read can reach: the head of their first compression chunk plus
+     * anything between sections less than a chunk apart. What
      * {@code zero_copy_partial_stream_max_dead_space_ratio} trades against not deserialising rows.
      */
     public static final Counter partialZeroCopyStreamDeadBytes = Metrics.counter(DefaultNameFactory.createMetricName(TYPE_NAME, "PartialZeroCopyStreamDeadBytes", null));

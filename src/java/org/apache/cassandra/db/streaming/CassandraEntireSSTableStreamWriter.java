@@ -88,9 +88,8 @@ public class CassandraEntireSSTableStreamWriter
                          component,
                          prettyPrintMemory(length));
 
-            // One range for a whole sstable's component; for a partial stream Data.db is the byte ranges of the
-            // parent that the slice was cut from, and only those may be sent. A channel per range, because
-            // writing it hands over ownership.
+            // One range for a whole sstable's component; for a partial stream, Data.db is the parent byte ranges the
+            // slice was cut from and only those may be sent. A channel per range, since writing hands over ownership.
             long bytesWritten = 0;
             for (ComponentContext.ByteRange range : context.ranges(sstable.descriptor, component, length))
             {

@@ -169,21 +169,19 @@ public class ZeroCopySSTableSliceTest extends CQLTester
      * A slice reaching the end of a COMPACTION-produced parent, which is the shape production sstables actually
      * have and the one that hides a silent corruption.
      *
-     * <p>{@code SSTableRewriter.doPrepare} syncs the data file twice, and {@code CompressedSequentialWriter}
-     * appends a chunk unconditionally on each, so such an sstable carries a trailing zero-uncompressed-length
-     * chunk past its last real one. A slice that took its end from the physical file length rather than from its
-     * last chunk would copy that slack, and the receiver -- which derives the last chunk's compressed length as
-     * {@code compressedFileLength - offsets[C-1] - 4} -- would read the final chunk with an inflated length: a
-     * CRC failure, or worse, compressed bytes handed back as row data once the length crossed
-     * {@code maxCompressedLength}. Nothing upstream would notice, because the digest is computed over whatever
-     * was written.
+     * <p>{@code SSTableRewriter.doPrepare} syncs the data file twice and {@code CompressedSequentialWriter} appends
+     * a chunk unconditionally on each, so such an sstable carries a trailing zero-uncompressed-length chunk past its
+     * last real one. A slice taking its end from the physical file length rather than from its last chunk would copy
+     * that slack, and the receiver -- deriving the last chunk's length as
+     * {@code compressedFileLength - offsets[C-1] - 4} -- would read the final chunk inflated: a CRC failure, or
+     * compressed bytes handed back as row data once the length crossed {@code maxCompressedLength}. Nothing upstream
+     * would notice, the digest being computed over whatever was written.
      *
-     * <p>Two things have to be arranged for the slack to exist at all, both of them true of every real node and
-     * of no test by default: {@code sstable_preemptive_open_interval} has to be set, or {@code switchWriter(null)}
-     * never triggers the second sync; and the parent has to be REOPENED, because
-     * {@code CompressionMetadata.Writer.open} trims the offsets table and resets {@code compressedLength}, so the
-     * reader compaction hands back cannot see the trailing chunk. A streaming sender on a node that has restarted
-     * since the compaction is looking at the untrimmed view.
+     * <p>Two things must be arranged for the slack to exist, both true of every real node and of no test by default:
+     * {@code sstable_preemptive_open_interval} has to be set, or {@code switchWriter(null)} never triggers the second
+     * sync; and the parent has to be REOPENED, since {@code CompressionMetadata.Writer.open} trims the offsets table
+     * and resets {@code compressedLength}, so the reader compaction hands back cannot see the trailing chunk. A
+     * sender on a node that has restarted since the compaction is looking at the untrimmed view.
      */
     @Test
     public void sliceToTheEndOfACompactedParentExcludesTrailingSlack() throws Throwable

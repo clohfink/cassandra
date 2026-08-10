@@ -5202,10 +5202,7 @@ public class DatabaseDescriptor
 
     public static void setEnableCreateSecondaryIndex(boolean enabled) { conf.enable_create_secondary_index = enabled; }
 
-    /**
-     * @see Config#zero_copy_anticompaction_enabled -- note that enabling this means anticompaction no longer
-     * purges tombstones for the sstables it handles (retention only, never data loss).
-     */
+    /** @see Config#zero_copy_anticompaction_enabled */
     public static boolean getZeroCopyAnticompactionEnabled()
     {
         return conf.zero_copy_anticompaction_enabled;
@@ -5219,8 +5216,8 @@ public class DatabaseDescriptor
     }
 
     /**
-     * @see Config#zero_copy_split_reflink_enabled -- filesystem support is discovered by trying, so this being
-     * true does not mean any extent will actually be shared.
+     * @see Config#zero_copy_split_reflink_enabled -- filesystem support is discovered by trying, so true here does not
+     * mean any extent will actually be shared.
      */
     public static boolean getZeroCopySplitReflinkEnabled()
     {
@@ -5234,10 +5231,7 @@ public class DatabaseDescriptor
         conf.zero_copy_split_reflink_enabled = enabled;
     }
 
-    /**
-     * @see Config#zero_copy_split_digest_enabled -- turning this off makes {@code nodetool verify} and
-     * {@code nodetool import --verify-sstables} fall back to a full extended verification for the children.
-     */
+    /** @see Config#zero_copy_split_digest_enabled */
     public static boolean getZeroCopySplitDigestEnabled()
     {
         return conf.zero_copy_split_digest_enabled;
@@ -5251,8 +5245,8 @@ public class DatabaseDescriptor
     }
 
     /**
-     * @see Config#zero_copy_partial_stream_enabled -- note that a receiving node needs the {@code Scrubber} and
-     * {@code Verifier} seeks that accept an sstable whose first partition is not at position 0.
+     * @see Config#zero_copy_partial_stream_enabled -- a receiving node needs the {@code Scrubber} and {@code Verifier}
+     * seeks that accept an sstable whose first partition is not at position 0.
      */
     public static boolean getZeroCopyPartialStreamEnabled()
     {

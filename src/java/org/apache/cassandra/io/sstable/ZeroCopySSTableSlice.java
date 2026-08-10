@@ -76,87 +76,75 @@ import static org.apache.cassandra.io.sstable.ZeroCopySSTableSplitter.writerOpti
 /**
  * The components an sstable's Data.db byte ranges would need in order to BE an sstable, without the Data.db.
  *
- * <p>{@link ZeroCopySSTableSplitter} produces a child of an sstable by copying verbatim ranges of its Data.db and
- * rebuilding every other component from an Index.db pass. This does the second half of that and none of the first:
- * it synthesises Index.db, Statistics.db, Summary.db, Filter.db and whichever of CompressionInfo.db / CRC.db the
- * format calls for, describing ranges that stay where they are, so that those ranges can be sent to a peer as if
- * they were a whole sstable. The peer writes what it is given -- {@code CassandraEntireSSTableStreamReader} loops
- * the component manifest and copies bytes, and inspects none of them -- so what it ends up with is an ordinary
- * sstable holding exactly the requested partitions, at the cost of no row ever having been deserialised on either
- * side.
+ * <p>{@link ZeroCopySSTableSplitter} produces a child by copying verbatim ranges of a parent's Data.db and
+ * rebuilding every other component from an Index.db pass. This does the second half and none of the first: it
+ * synthesises Index.db, Statistics.db, Summary.db, Filter.db and whichever of CompressionInfo.db / CRC.db the
+ * format calls for, describing ranges that stay where they are, so those ranges can be sent to a peer as if they
+ * were a whole sstable. The peer inspects none of it -- {@code CassandraEntireSSTableStreamReader} loops the
+ * component manifest and copies bytes -- and ends up with an ordinary sstable holding exactly the requested
+ * partitions, with no row deserialised on either side.
  *
  * <h2>What it is for</h2>
  * Entire-sstable (zero-copy) streaming needs the requested ranges to cover the whole sstable. When they do not,
- * streaming falls back to a path whose sender is already cheap -- {@code CassandraCompressedStreamWriter} sends
- * whole compression chunks verbatim -- and whose RECEIVER decompresses, deserialises, re-serialises and
- * recompresses every row, then rebuilds the index, filter and summary it could have been handed. This exists to
- * hand it those instead. See {@code CassandraOutgoingFile}.
+ * streaming falls back to a path whose sender is already cheap ({@code CassandraCompressedStreamWriter} sends whole
+ * compression chunks verbatim) but whose RECEIVER decompresses, deserialises, re-serialises and recompresses every
+ * row, then rebuilds the index, filter and summary it could have been handed. See {@code CassandraOutgoingFile}.
  *
- * <h2>The grid, the runs, and what "dead space" is</h2>
- * Neither format lets an arbitrary byte offset be treated as an origin, so a slice is always a whole number of
- * fixed-size CELLS of a grid, and the grid is what everything here is arithmetic over:
+ * <h2>The grid, the runs, and dead space</h2>
+ * Neither format lets an arbitrary byte offset be an origin, so a slice is always a whole number of fixed-size
+ * CELLS of a grid:
  * <ul>
- *   <li>COMPRESSED: the cell is {@code chunk_length_in_kb}. Uncompressed positions are pinned to exact multiples
- *       of it, because {@link CompressionMetadata#chunkFor} indexes the offsets array with
- *       {@code 8 * (position / chunkLength)} and no per-chunk uncompressed length is stored. A cell's PHYSICAL
- *       extent is its compressed chunk plus the 4-byte inline CRC, and cannot be cut at all.</li>
- *   <li>UNCOMPRESSED: the cell is the chunk size in the header of CRC.db, whose per-chunk CRC32s are addressed as
- *       {@code 4 * (position / chunkSize) + 4} from origin 0. Physical and uncompressed positions are the same
- *       thing, and a cell CAN be cut, at the price of recomputing one CRC.</li>
+ *   <li>COMPRESSED: the cell is {@code chunk_length_in_kb}. Uncompressed positions are pinned to multiples of it,
+ *       since {@link CompressionMetadata#chunkFor} indexes the offsets array by {@code position / chunkLength} and
+ *       no per-chunk uncompressed length is stored. A cell's PHYSICAL extent is its compressed chunk plus the
+ *       4-byte inline CRC, and cannot be cut at all.</li>
+ *   <li>UNCOMPRESSED: the cell is the chunk size in CRC.db's header, whose per-chunk CRC32s are addressed as
+ *       {@code 4 * (position / chunkSize) + 4} from origin 0. Physical and uncompressed positions coincide, and a
+ *       cell CAN be cut, at the price of recomputing one CRC.</li>
  * </ul>
- * The sections a stream asks for become RUNS: maximal groups of sections whose cell intervals are contiguous. Two
- * sections a whole cell or more apart belong to different runs, and the cells between them are not sent. A run is
- * one contiguous byte range of the parent's Data.db; the slice is those ranges concatenated, in order.
+ * The sections a stream asks for become RUNS: maximal groups whose cell intervals are contiguous. Two sections a
+ * whole cell or more apart belong to different runs and the cells between them are not sent. A run is one
+ * contiguous byte range of the parent's Data.db; the slice is those ranges concatenated in order.
  * <p>
- * Concatenation is sound because cell ordinals stay consecutive across the join: every run but the last
- * contributes whole cells, so the child's cell {@code k} still covers child bytes {@code [k*G, (k+1)*G)} and the
- * grid is intact. What changes per run is only the rebase: a record at parent position {@code p} in run {@code r}
- * is written at {@code p - shift(r)}, where {@code shift(r) = (firstCell(r) - childCellBase(r)) * G} collapses to
- * the single-run {@code firstCell * G} when there is one run.
+ * Concatenation is sound because cell ordinals stay consecutive across the join: every run but the last contributes
+ * whole cells, so the child's cell {@code k} still covers child bytes {@code [k*G, (k+1)*G)}. Only the rebase
+ * changes per run -- a record at parent position {@code p} in run {@code r} is written at {@code p - shift(r)},
+ * where {@code shift(r) = (firstCell(r) - childCellBase(r)) * G}.
  * <p>
- * What the slice carries that nobody asked for is DEAD SPACE:
- * <ul>
- *   <li>a DEAD PREFIX of {@code lo mod G} bytes -- the head of the first cell, holding the tail of a partition
- *       that starts before the range;</li>
- *   <li>INTERIOR gaps: where two sections are less than a cell apart they stay in one run, and the partitions
- *       between them come along inside it.</li>
- * </ul>
- * Neither is indexed, so no read can reach either: every read path enters Data.db at a position taken from
- * Index.db. They are transferred and stored for nothing until the sstable is compacted, which is what
- * {@code zero_copy_partial_stream_max_dead_space_ratio} bounds. There is deliberately no dead SUFFIX: the last
- * run stops at the last live byte, which for a compressed slice means a final cell whose declared uncompressed
- * length is short of what it decompresses to (exactly what a split child's last chunk does), and for an
- * uncompressed one means a final cell whose CRC is recomputed over the bytes actually kept.
+ * DEAD SPACE is what the slice carries that nobody asked for: a DEAD PREFIX of {@code lo mod G} bytes (the head of
+ * the first cell, holding the tail of a partition that starts before the range) and INTERIOR gaps (sections less
+ * than a cell apart stay in one run, and the partitions between them come along). Neither is indexed, so no read
+ * can reach them -- every read path enters Data.db at a position from Index.db -- but they are transferred and
+ * stored for nothing until the sstable is compacted, which is what
+ * {@code zero_copy_partial_stream_max_dead_space_ratio} bounds. There is deliberately no dead SUFFIX: the last run
+ * stops at the last live byte, meaning a final compressed cell whose declared uncompressed length is short of what
+ * it decompresses to, or a final uncompressed cell whose CRC is recomputed over the bytes kept.
  *
  * <h2>Correctness notes that are not in the splitter</h2>
  * <ul>
- *   <li>INTERIOR dead regions are new here; a split child only ever has the prefix. Nothing reads them, and
- *       {@code Verifier} walks Data.db by seeking to each next index position so it steps over them. The one
- *       consumer that walks LINEARLY is {@code Scrubber}, which is given the same seek.</li>
- *   <li>Statistics.db carries the splitter's accepted imprecision verbatim -- see
- *       {@link ZeroCopySSTableSplitter}'s class javadoc -- because it is written by the same code. The receiver
- *       mutates level and repair state afterwards, so only the inherited totals and bounds survive.</li>
- *   <li>Digest.crc32 is not synthesised here: it is a CRC over every byte of the child's Data.db, and those bytes
- *       reach the socket by {@code sendfile} without entering the process. The RECEIVER computes it instead, as it
- *       writes the component -- see {@code BigTableZeroCopyWriter} -- so the sstable that lands has one.</li>
- *   <li>The components are written with the same fsyncs the splitter uses. That is unnecessary here (they are read
- *       back immediately and deleted) and is kept rather than forked, because a handful of small fsyncs are
- *       cheaper than a second copy of {@code writeStatistics}.</li>
+ *   <li>INTERIOR dead regions are new here; a split child only has the prefix. {@code Verifier} walks Data.db by
+ *       seeking to each next index position so it steps over them; {@code Scrubber}, the one linear walker, was
+ *       given the same seek.</li>
+ *   <li>Statistics.db carries the splitter's accepted imprecision verbatim (see {@link ZeroCopySSTableSplitter}),
+ *       being written by the same code. The receiver mutates level and repair state afterwards, so only the
+ *       inherited totals and bounds survive.</li>
+ *   <li>Digest.crc32 is not synthesised: it covers every byte of the child's Data.db, and those bytes reach the
+ *       socket by {@code sendfile} without entering the process. The RECEIVER computes it as it writes the
+ *       component -- see {@code BigTableZeroCopyWriter}.</li>
+ *   <li>Components are written with the splitter's fsyncs. Unnecessary here (they are read back immediately and
+ *       deleted), but a handful of small fsyncs is cheaper than a second copy of {@code writeStatistics}.</li>
  * </ul>
  *
  * <h2>JBOD on the RECEIVER: not supported, and not refused</h2>
- * A slice arrives through the entire-sstable receiver, and that receiver chooses ONE data directory for the whole
- * sstable from the header's first key -- {@code CassandraEntireSSTableStreamReader} does
- * {@code getLocationForDisk(getCorrectDiskForKey(header.firstKey))} -- because a zero-copy receive writes
- * component files verbatim and has no partition-level place to make a per-disk decision. The row-by-row path this
- * replaces builds a {@code RangeAwareSSTableWriter}, which splits the incoming partitions across the receiver's
- * disk boundaries as it deserialises them. So on a receiver with more than one {@code data_file_directories}
- * entry, a slice whose key range crosses several boundaries lands entirely on the first key's disk, where
- * {@code DiskBoundaries.isInCorrectLocation} then reports it out of position until a compaction or
- * {@code nodetool relocatesstables} moves it. Nothing here checks the peer's layout -- the sender cannot see it --
- * so this is a constraint on the deployment: leave {@code zero_copy_partial_stream_enabled} off unless every node
- * that can RECEIVE a stream has a single data directory. Note the sender's own layout is irrelevant; it is the
- * receiver's that decides.
+ * The entire-sstable receiver picks ONE data directory for the whole sstable from the header's first key
+ * ({@code getLocationForDisk(getCorrectDiskForKey(header.firstKey))}), because a zero-copy receive writes component
+ * files verbatim and has no partition-level place to decide per disk. The row-by-row path this replaces builds a
+ * {@code RangeAwareSSTableWriter}, which splits incoming partitions across the receiver's disk boundaries as it
+ * deserialises them. So on a receiver with several {@code data_file_directories}, a slice whose key range crosses
+ * boundaries lands entirely on the first key's disk and {@code DiskBoundaries.isInCorrectLocation} reports it out of
+ * position until a compaction or {@code nodetool relocatesstables} moves it. The sender cannot see the peer's
+ * layout, so this is a deployment constraint: leave {@code zero_copy_partial_stream_enabled} off unless every node
+ * that can RECEIVE a stream has a single data directory.
  */
 public final class ZeroCopySSTableSlice
 {
@@ -181,9 +169,8 @@ public final class ZeroCopySSTableSlice
         ImmutableSet.<Component>builder().addAll(COMPRESSED_COMPONENTS).addAll(UNCOMPRESSED_COMPONENTS).build();
 
     /**
-     * Runaway guard, not a tuning knob. A run costs one more entry in the plan and one more {@code sendfile}
-     * range, and dead space already bounds how many runs a real range set can produce, so this only exists so a
-     * pathological section list cannot build an unbounded plan. Vnode-shaped requests produce hundreds.
+     * Runaway guard, not a tuning knob: a run costs one plan entry and one {@code sendfile} range, and dead space
+     * already bounds how many runs a real range set produces. Vnode-shaped requests produce hundreds.
      */
     @VisibleForTesting
     static final int MAX_RUNS = 16384;
@@ -497,10 +484,9 @@ public final class ZeroCopySSTableSlice
 
         if (parent.descriptor.formatType != SSTableFormat.Type.BIG)
             return Plan.ineligible(Reason.WRONG_FORMAT);
-        // The slice keeps the parent's version (write() asserts it), and CompressionInfo.db and Filter.db are
-        // written by version-blind serialisers, so a pre-'na' parent would produce components the peer cannot
-        // read back. Applies to the uncompressed path too: that one writes no CompressionInfo.db, but it does
-        // write a Filter.db.
+        // The slice keeps the parent's version (write() asserts it) and CompressionInfo.db and Filter.db are written
+        // by version-blind serialisers, so a pre-'na' parent would produce components the peer cannot read back.
+        // Applies to the uncompressed path too: it writes no CompressionInfo.db, but it does write a Filter.db.
         if (!ZeroCopySSTableSplitter.writesReadableComponents(parent.descriptor.version))
             return Plan.ineligible(Reason.LEGACY_VERSION);
         if (parent.getSSTableMetadata().hasLegacyCounterShards)
@@ -512,8 +498,8 @@ public final class ZeroCopySSTableSlice
         if (!parent.descriptor.fileFor(Component.STATS).exists())
             return Plan.ineligible(Reason.PARENT_UNSUITABLE);
 
-        // Every arithmetic helper below throws on input it considers impossible. Streaming is not the place to
-        // turn that into a failed session: a refusal costs the row-by-row path, which handles anything.
+        // Every arithmetic helper below throws on input it considers impossible. Streaming is not the place to turn
+        // that into a failed session: a refusal only costs the row-by-row path, which handles anything.
         try
         {
             return parent.compression ? planCompressed(parent, sections, maxDeadSpaceRatio)
@@ -667,12 +653,11 @@ public final class ZeroCopySSTableSlice
         if ((double) dead / dataLength > maxDeadSpaceRatio)
             return Plan.ineligible(Reason.DEAD_SPACE);
 
-        // Resolved HERE rather than in write(), and only once every cheap gate above has passed, because the index
-        // summary it reads through can be freed before the stream runs: SSTableLoader.openSSTables() calls
-        // sstable.releaseSummary() immediately after building the CassandraOutgoingFiles, which frees the summary's
-        // off-heap Memory without clearing the reader's own indexSummary field. Reading it at plan time -- inside
-        // the CassandraOutgoingFile constructor, before that release -- is what keeps the lookup pointed at live
-        // memory. It costs one chunk decompression plus a binary search, and it saves scanning Index.db from 0.
+        // Resolved HERE rather than in write(), because the index summary it reads through can be freed before the
+        // stream runs: SSTableLoader.openSSTables() calls releaseSummary() right after building the
+        // CassandraOutgoingFiles, freeing the summary's off-heap Memory without clearing the reader's indexSummary
+        // field. Plan time is inside the CassandraOutgoingFile constructor, before that release. Costs one chunk
+        // decompression plus a binary search, and saves scanning Index.db from 0.
         long indexScanStart = indexScanStart(parent, sections.get(0).lowerPosition);
 
         return new Plan(Reason.ELIGIBLE, ImmutableList.copyOf(runs), ImmutableList.copyOf(sections), cellLength,
@@ -698,10 +683,10 @@ public final class ZeroCopySSTableSlice
     /**
      * Write every component of the planned slice except Data.db into {@code target}.
      *
-     * <p>Two scoped passes over the parent's Index.db: one to count the partitions, so the filter and the summary
-     * are sized exactly rather than guessed, and one to write. Both start from the index summary's scan position
-     * for the first key of the first run and stop at the end of the last, so the cost is proportional to the slice
-     * and not to the parent -- a narrow range out of a large sstable does not read the large sstable's index.
+     * <p>Two scoped passes over the parent's Index.db: one to count the partitions, so the filter and summary are
+     * sized exactly rather than guessed, and one to write. Both start from the index summary's scan position for the
+     * first run's first key and stop at the end of the last, so the cost is proportional to the slice rather than to
+     * the parent.
      *
      * @param target a fresh descriptor whose component files do not exist; the caller owns deleting them, see
      *               {@link #delete}
@@ -762,10 +747,9 @@ public final class ZeroCopySSTableSlice
                         public void record(ByteBuffer key, long position, byte[] promoted, int promotedSize,
                                            boolean included, Run run) throws IOException
                         {
-                            // Sizes come from the NEXT record's offset, which is exact and is why they are
-                            // recorded one record late: rowSize_i == position_{i+1} - position_i identically.
-                            // Every record advances it, included or not, because an excluded partition still
-                            // ends where the following one starts.
+                            // Sizes come from the NEXT record's offset, which is exact, hence recorded one record
+                            // late: rowSize_i == position_{i+1} - position_i identically. Every record advances it,
+                            // included or not, since an excluded partition still ends where the next one starts.
                             if (pending != UNRESOLVED)
                             {
                                 partitionSizes.add(position - pending);
@@ -777,9 +761,9 @@ public final class ZeroCopySSTableSlice
 
                             long indexStart = out.position();
                             ByteBufferUtil.writeWithShortLength(key, out);
-                            // The ONLY rewritten field, as a canonical minimal vint: the slice's records are
-                            // shorter than the parent's, so its index offsets are not the parent's less a
-                            // constant, which is why Summary.db has to be rebuilt rather than sliced.
+                            // The ONLY rewritten field, as a canonical minimal vint: the slice's records are shorter
+                            // than the parent's, so its index offsets are not the parent's less a constant -- which
+                            // is why Summary.db has to be rebuilt rather than sliced.
                             out.writeUnsignedVInt(position - run.shift);
                             out.writeUnsignedVInt(promotedSize);
                             if (promoted != null)
@@ -856,10 +840,10 @@ public final class ZeroCopySSTableSlice
      * The slice's CompressionInfo.db: the parent's parameters, its chunks' offsets rebased onto the concatenation
      * of the runs, and the slice's own dataLength.
      * <p>
-     * {@code offsets[0]} is 0 -- unlike a split child there is no alignment pad, because nothing is being
-     * reflinked -- and the offsets are contiguous across a run boundary, which they have to be: a reader derives a
-     * chunk's compressed length as the difference between successive offsets, so a physical gap between runs would
-     * inflate the preceding chunk's length and hand compressed bytes back as row data.
+     * {@code offsets[0]} is 0 -- unlike a split child there is no alignment pad, since nothing is being reflinked --
+     * and the offsets must be contiguous across a run boundary: a reader derives a chunk's compressed length as the
+     * difference between successive offsets, so a physical gap would inflate the preceding chunk's length and hand
+     * compressed bytes back as row data.
      */
     private static void writeCompressionInfo(Descriptor target, CompressionMetadata meta, Plan plan)
     {
@@ -910,11 +894,10 @@ public final class ZeroCopySSTableSlice
      * in the slice's order.
      * <p>
      * {@code ChecksumValidator} addresses these as {@code 4 * (position / chunkSize) + 4}, so they only line up if
-     * the slice's cell {@code k} really does cover its bytes {@code [k*G, (k+1)*G)} -- which is what makes every
-     * run but the last contribute whole cells. The last run ends at the last live byte, so if that cut falls
-     * inside its final cell, that one CRC is recomputed over the bytes actually kept: one read of at most a cell,
-     * and the alternative would be a dead suffix that {@code Scrubber}'s linear walk would try to read as a
-     * partition.
+     * the slice's cell {@code k} really covers its bytes {@code [k*G, (k+1)*G)} -- which is why every run but the
+     * last contributes whole cells. The last run ends at the last live byte, so when that cut falls inside its final
+     * cell, that one CRC is recomputed over the bytes kept: one read of at most a cell, versus a dead suffix that
+     * {@code Scrubber}'s linear walk would try to read as a partition.
      */
     private static void writeCrc(Descriptor target, SSTableReader parent, Plan plan) throws IOException
     {
@@ -970,13 +953,12 @@ public final class ZeroCopySSTableSlice
     }
 
     /**
-     * A fresh descriptor in the parent's directory, version and format, for a slice's components to be written
-     * under.
+     * A fresh descriptor in the parent's directory, version and format for a slice's components.
      * <p>
-     * These files are named like an sstable's but there is no Data.db beside them, which is exactly the shape
-     * {@code ColumnFamilyStore.scrubDataDirectories} removes at startup ("missing the DATA file! all components
-     * are orphaned"), so a crash between {@link #write} and {@link #delete} cannot leave anything behind for
-     * long. Nothing tracks them in the meantime; the caller deletes them when the stream ends.
+     * These files are named like an sstable's but have no Data.db beside them, which is exactly the shape
+     * {@code ColumnFamilyStore.scrubDataDirectories} removes at startup ("missing the DATA file! all components are
+     * orphaned"), so a crash between {@link #write} and {@link #delete} cannot strand them for long. Nothing tracks
+     * them in the meantime; the caller deletes them when the stream ends.
      */
     public static Descriptor newDescriptor(SSTableReader parent)
     {
@@ -1043,14 +1025,13 @@ public final class ZeroCopySSTableSlice
     }
 
     /**
-     * The first key of the slice, read out of Data.db, resolved to an Index.db offset at or before its record.
+     * The slice's first key, read out of Data.db, resolved to an Index.db offset at or before its record. This is
+     * what keeps the passes proportional to the slice: {@code lo} is a partition start, so the bytes there are that
+     * partition's key, and the index summary maps it to a sampled index position within one
+     * {@code min_index_interval} of its record. One chunk is decompressed to learn that.
      * <p>
-     * This is what keeps the passes proportional to the slice: {@code lo} is a partition start, so the bytes there
-     * are that partition's key, and the index summary maps it to the sampled index position at or before its
-     * record -- within one {@code min_index_interval} of it. One chunk is decompressed to learn that.
-     * <p>
-     * Called from {@link #build} rather than from {@link #write}, because the summary it reads can be released
-     * between the two; see the comment at its call site.
+     * Called from {@link #build} rather than {@link #write} because the summary it reads can be released between the
+     * two; see the comment at its call site.
      */
     private static long indexScanStart(SSTableReader parent, long lo)
     {
@@ -1128,8 +1109,8 @@ public final class ZeroCopySSTableSlice
 
                 if (!started)
                 {
-                    // lo came from getPositionsForRanges, which takes it from a record of this very file, so the
-                    // first record at or past it must be exactly it. Anything else means the two disagree.
+                    // lo came from getPositionsForRanges, which takes it from a record of this very file, so the first
+                    // record at or past it must be exactly it.
                     if (position != lo)
                         throw new IllegalStateException("the slice starts at " + lo + " but the first Index.db " +
                                                         "record at or past it is at " + position + " in " + file);
@@ -1171,8 +1152,8 @@ public final class ZeroCopySSTableSlice
 
             if (!started)
                 throw new IllegalStateException("no Index.db record at or past " + lo + " in " + file);
-            // The slice reaches the end of the parent's data, so its last partition ends there, which is the same
-            // value the last section was given as its upper bound.
+            // The slice reaches the end of the parent's data, so its last partition ends there -- the same value the
+            // last section was given as its upper bound.
             visitor.end(hi);
         }
         catch (IOException e)

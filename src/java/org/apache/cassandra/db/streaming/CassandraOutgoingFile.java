@@ -67,10 +67,9 @@ public class CassandraOutgoingFile implements OutgoingStream
     private final ZeroCopySSTableSlice.Plan slicePlan;
     private final StreamOperation operation;
     /**
-     * The header for the two paths that send this file as-is: entire-sstable and legacy row-by-row. A slice does
-     * NOT use it -- it builds its own from the manifest it measured, in {@link #writeSlice} -- and this one must
-     * not be built as if it were a slice, because {@link #writeSlice} may give up before writing a byte and
-     * {@link #write} then sends a legacy body under this header.
+     * The header for the two paths that send this file as-is: entire-sstable and legacy row-by-row. A slice builds its
+     * own from the manifest it measured, in {@link #writeSlice}, and this one must NOT be built as if it were a slice:
+     * {@link #writeSlice} may give up before writing a byte, and {@link #write} then sends a legacy body under it.
      */
     private final CassandraStreamHeader header;
     /**
@@ -96,8 +95,8 @@ public class CassandraOutgoingFile implements OutgoingStream
         this.shouldStreamEntireSSTable = computeShouldStreamEntireSSTables();
         this.slicePlan = shouldStreamEntireSSTable ? null : computeSlicePlan();
 
-        // isEntireSSTable is the only thing the receiver dispatches on (CassandraIncomingFile), so this header --
-        // the one the fallback in write() puts on the wire -- describes the sections, not the slice.
+        // isEntireSSTable is the only thing the receiver dispatches on (CassandraIncomingFile), so this header -- the one
+        // the fallback in write() puts on the wire -- describes the sections, not the slice.
         this.header = makeHeader(sstable, operation, sections, estimatedKeys, shouldStreamEntireSSTable,
                                  shouldStreamEntireSSTable ? ComponentManifest.create(sstable.descriptor) : null,
                                  sstable.first);
@@ -155,8 +154,8 @@ public class CassandraOutgoingFile implements OutgoingStream
     @Override
     public long getEstimatedSize()
     {
-        // A slice sends its manifest's components rather than the sections, so the sections' size would describe
-        // the wrong transfer. Both are estimates; see estimateSliceManifest.
+        // A slice sends its manifest's components rather than the sections, so the sections' size would describe the
+        // wrong transfer. Both are estimates; see estimateSliceManifest.
         return sliceManifest != null ? sliceManifest.totalSize() : header.size();
     }
 
@@ -208,10 +207,10 @@ public class CassandraOutgoingFile implements OutgoingStream
                 writer.write(out);
             }
         }
-        // A slice goes through the entire-sstable protocol too, under a header of its own. writeSlice returns false
-        // only if it gave up before writing anything, in which case this falls through to the row-by-row path
-        // below, which sends `header` -- whose isEntireSSTable is false, so the receiver parses the body it is
-        // actually given rather than trying to split it into components.
+        // A slice goes through the entire-sstable protocol too, under a header of its own. writeSlice returns false only
+        // if it gave up before writing anything, falling through to the row-by-row path below, which sends `header` --
+        // whose isEntireSSTable is false, so the receiver parses the body it is given rather than splitting it into
+        // components.
         else if (!isSliced() || !writeSlice(sstable, session, out, version))
         {
             // legacy streaming is not affected by stats metadata mutation and index sumary redistribution
@@ -226,13 +225,13 @@ public class CassandraOutgoingFile implements OutgoingStream
     }
 
     /**
-     * Send the planned slice: synthesise every component but Data.db for the chunk run covering the requested
-     * sections, then stream those plus the run itself as if they were a whole sstable.
+     * Send the planned slice: synthesise every component but Data.db for the chunk run covering the requested sections,
+     * then stream those plus the run itself as if they were a whole sstable.
      * <p>
-     * All of the work that can fail happens BEFORE the first byte reaches {@code out}, so a failure here is
-     * recoverable: nothing has been written, and the caller can fall back to the row-by-row path, which has no
-     * preconditions to fail. That is deliberately true even of failures that look like corruption -- a stream is
-     * not the place to refuse service over one -- but they are logged at WARN because that is what they are.
+     * All the work that can fail happens BEFORE the first byte reaches {@code out}, so a failure is recoverable: the
+     * caller falls back to the row-by-row path, which has no preconditions to fail. Deliberately true even of failures
+     * that look like corruption -- a stream is not the place to refuse service over one -- but they are logged at WARN
+     * because that is what they are.
      *
      * @return false if nothing was written and the caller must fall back
      */
@@ -248,8 +247,8 @@ public class CassandraOutgoingFile implements OutgoingStream
         {
             target = ZeroCopySSTableSlice.newDescriptor(sstable);
             Descriptor sliceDescriptor = target;
-            // The slice inherits the parent's Statistics.db, which a stats mutation or an index summary
-            // redistribution can rewrite underneath it; this is the lock those take.
+            // The slice inherits the parent's Statistics.db, which a stats mutation or index summary redistribution can
+            // rewrite underneath it; this is the lock those take.
             slice = sstable.runWithLock(ignored -> ZeroCopySSTableSlice.write(sstable, slicePlan, sliceDescriptor));
 
             Map<Component, Long> sizes = new HashMap<>(slice.components.size() + 1);
@@ -266,8 +265,8 @@ public class CassandraOutgoingFile implements OutgoingStream
         }
         catch (Throwable t)
         {
-            // Everything that can throw is in here, so this is the only place a synthesised file can be orphaned
-            // before the ComponentContext below takes over deleting them.
+            // Everything that can throw is in here, so this is the only place a synthesised file can be orphaned before
+            // the ComponentContext below takes over deleting them.
             if (target != null)
                 ZeroCopySSTableSlice.delete(target, ZeroCopySSTableSlice.ALL_SYNTHESISED);
             logger.warn("[Stream #{}] Failed slicing {} for {}, falling back to partition-by-partition streaming",
@@ -278,9 +277,9 @@ public class CassandraOutgoingFile implements OutgoingStream
 
         try (ComponentContext context = ComponentContext.slice(synthesised, dataRanges, manifest))
         {
-            // The receiver picks a data directory from the first key and takes the sstable's identity from the
-            // manifest, so both have to describe the SLICE rather than the parent it was cut from. The partition
-            // count is exact here, unlike the estimate the plan was assembled with.
+            // The receiver picks a data directory from the first key and takes the sstable's identity from the manifest,
+            // so both have to describe the SLICE, not the parent it was cut from. The partition count is exact here,
+            // unlike the estimate the plan was assembled with.
             CassandraStreamHeader current = makeHeader(sstable, operation, sections, slice.partitionCount, true,
                                                        context.manifest(), slice.first);
             CassandraStreamHeader.serializer.serialize(current, out, version);
@@ -308,9 +307,9 @@ public class CassandraOutgoingFile implements OutgoingStream
     }
 
     /**
-     * Whether the sections that do NOT cover the whole sstable can still go through the entire-sstable protocol,
-     * as a verbatim compression chunk run with synthesised components. Pure arithmetic over the compression
-     * metadata; the index is not read until the stream is actually written.
+     * Whether sections that do NOT cover the whole sstable can still go through the entire-sstable protocol, as a
+     * verbatim compression chunk run with synthesised components. Pure arithmetic over the compression metadata; the
+     * index is not read until the stream is written.
      */
     @VisibleForTesting
     ZeroCopySSTableSlice.Plan computeSlicePlan()
@@ -345,16 +344,15 @@ public class CassandraOutgoingFile implements OutgoingStream
     /**
      * The component sizes a slice is expected to have, for the progress totals a stream plan is assembled from.
      * <p>
-     * Data.db is exact. The others are the parent's scaled by the fraction of it being sent, because measuring
-     * them means an Index.db pass and this runs once per sstable in the plan, before the peer has even been asked
-     * whether it wants them. The manifest that goes on the wire is the measured one, built in {@link #writeSlice}.
+     * Data.db is exact. The others are the parent's scaled by the fraction being sent, because measuring them means an
+     * Index.db pass and this runs once per sstable in the plan, before the peer has even been asked whether it wants
+     * them. The manifest that goes on the wire is the measured one, built in {@link #writeSlice}.
      * <p>
-     * So {@code bytes_to_send} for a slice is an approximation of {@code bytes_sent}, off by the error in the
-     * index, filter and summary estimates -- a few percent of a few percent of the transfer. Nothing depends on
-     * the two agreeing: the receiver sizes everything from the manifest it is sent, and
-     * {@code StreamingState.progress} clamps at 0.99 until the session ends, so this cannot report more than
-     * 100%. Which components are named IS exact, since {@code files_to_send} is a count and cheap to get right --
-     * hence conditioning FILTER on the same thing the writer conditions it on rather than on the parent's files.
+     * So {@code bytes_to_send} approximates {@code bytes_sent}, off by the error in the index, filter and summary
+     * estimates. Nothing depends on the two agreeing: the receiver sizes everything from the manifest it is sent, and
+     * {@code StreamingState.progress} clamps at 0.99 until the session ends. Which components are named IS exact,
+     * since {@code files_to_send} is a count -- hence conditioning FILTER on the same thing the writer does rather
+     * than on the parent's files.
      */
     private static ComponentManifest estimateSliceManifest(SSTableReader sstable, ZeroCopySSTableSlice.Plan plan)
     {
@@ -366,8 +364,8 @@ public class CassandraOutgoingFile implements OutgoingStream
         sizes.put(Component.DATA, plan.physicalBytes);
         for (Component component : plan.components())
         {
-            // A filter is written for the slice exactly when one can be: fp chance 1.0 means AlwaysPresentFilter,
-            // which has nothing to serialise.
+            // A filter is written exactly when one can be: fp chance 1.0 means AlwaysPresentFilter, which has nothing
+            // to serialise.
             if (component == Component.FILTER && sstable.metadata().params.bloomFilterFpChance >= 1.0)
                 continue;
 
@@ -392,14 +390,12 @@ public class CassandraOutgoingFile implements OutgoingStream
         if (sections == null || sections.isEmpty())
             return false;
 
-        // Entire-SSTable streaming copies every component file verbatim, so it is eligible whenever the
-        // requested sections cover all of the sstable's live data - not only when the byte span equals the
-        // physical data length. A zero-copy split child can carry a "dead prefix": bytes before its first
-        // indexed partition (the head of a boundary compression chunk copied verbatim) that no read path
-        // ever enters. getPositionsForRanges() starts the first section at the first partition's data
-        // position, so the eligible span runs from there to the end of the file. Comparing against
-        // (uncompressedLength - firstPosition) accounts for that prefix; for an ordinary sstable
-        // firstPosition == 0 and this reduces to the original transferLength == uncompressedLength check.
+        // Entire-sstable streaming copies component files verbatim, so it is eligible whenever the sections cover all
+        // of the sstable's LIVE data, not only when their span equals the physical data length. A zero-copy split
+        // child can carry a dead prefix -- bytes before its first indexed partition that no read path enters -- and
+        // getPositionsForRanges() starts the first section at the first partition, so the eligible span runs from
+        // there to the end of the file. For an ordinary sstable firstPosition == 0 and this reduces to the original
+        // transferLength == uncompressedLength check.
         long firstPosition = sstable.getPosition(sstable.first.getToken().minKeyBound(), SSTableReader.Operator.GT).position;
         long transferLength = sections.stream().mapToLong(p -> p.upperPosition - p.lowerPosition).sum();
         return transferLength == sstable.uncompressedLength() - firstPosition;

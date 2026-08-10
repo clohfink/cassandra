@@ -212,10 +212,9 @@ public class TableMetrics
     /** number of bytes where the whole sstable was contained in a repairing range so that we only mutated the repair status */
     public final TableMeter bytesMutatedAnticompaction;
     /**
-     * number of Data.db bytes copied verbatim by the zero-copy anticompaction split. This is a SUBSET of
-     * {@link #bytesAnticompacted}, which is charged up front over every unrepaired sstable in the transaction
-     * before the split path gets a chance to claim any of them, so {@link #mutatedAnticompactionGauge} keeps
-     * its existing meaning.
+     * number of Data.db bytes copied verbatim by the zero-copy anticompaction split. A SUBSET of
+     * {@link #bytesAnticompacted}, which is charged up front over every unrepaired sstable in the transaction before
+     * the split path can claim any of them, so {@link #mutatedAnticompactionGauge} keeps its existing meaning.
      */
     public final TableMeter bytesZeroCopyAnticompaction;
     /** number of bytes that were scanned during preview repair */

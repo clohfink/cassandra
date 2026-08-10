@@ -37,14 +37,12 @@ import java.util.Set;
 /**
  * Where each component of an entire-sstable stream is read from, and for how long the sender owns it.
  * <p>
- * For a whole sstable that is the sstable's own files, with hardlinks standing in for the mutable ones so that a
- * concurrent stats update or index summary redistribution cannot change a file's size after it has been named in
- * the manifest.
+ * For a whole sstable that is the sstable's own files, with hardlinks standing in for the mutable ones so a concurrent
+ * stats update or index summary redistribution cannot change a file's size after it has been named in the manifest.
  * <p>
- * For a PARTIAL stream ({@link #slice}) the components other than Data.db are not the sstable's at all: they are
- * synthesised files describing byte ranges of it, and Data.db is those ranges -- sent in order, from the parent's
- * own file, with everything between them skipped. Both kinds of file the sender created are deleted on close; the
- * parent's own are not.
+ * For a PARTIAL stream ({@link #slice}) the components other than Data.db are not the sstable's at all but synthesised
+ * files describing byte ranges of it, and Data.db is those ranges, sent in order with everything between them skipped.
+ * Files the sender created are deleted on close; the parent's own are not.
  */
 import org.apache.cassandra.io.util.File;
 
@@ -76,8 +74,8 @@ public class ComponentContext implements AutoCloseable
     /** Files this context created and must remove; anything not named here is read from the descriptor. */
     private final Map<Component, File> sources;
     /**
-     * The stretches of the parent's Data.db a partial stream is made of, in order. Null for a whole sstable, whose
-     * every component is its file from beginning to end.
+     * The stretches of the parent's Data.db a partial stream is made of, in order. Null for a whole sstable, every
+     * component of which is its file from beginning to end.
      */
     private final List<ByteRange> dataRanges;
     private final ComponentManifest manifest;
@@ -126,12 +124,11 @@ public class ComponentContext implements AutoCloseable
     }
 
     /**
-     * The stretches of {@link #channel} that make up this component, in the order they are to be sent. A whole
-     * sstable's component is one stretch covering its whole file; a partial stream's Data.db is one per byte range
-     * of the parent it was sliced from.
+     * The stretches of {@link #channel} that make up this component, in send order: one covering the whole file for a
+     * whole sstable's component, one per byte range of the parent for a partial stream's Data.db.
      * <p>
-     * This is also where the manifest is checked against what is on disk, which for a whole sstable is the
-     * assertion that catches a component mutated after it was named in the manifest.
+     * Also where the manifest is checked against what is on disk -- for a whole sstable, the assertion that catches a
+     * component mutated after it was named in the manifest.
      */
     public List<ByteRange> ranges(Descriptor descriptor, Component component, long size) throws IOException
     {

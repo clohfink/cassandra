@@ -80,45 +80,42 @@ import static org.junit.Assert.assertTrue;
  * <h2>The oracle</h2>
  * Whichever path ran:
  * <ol>
- *     <li>every parent partition appears <b>exactly once</b> across the resulting sstables, and its content is
- *         byte-for-byte the same (compared as the fully-detailed rendering of the partition-level deletion, the
- *         static row and every unfiltered); and</li>
- *     <li>each partition's {@code pendingRepair} / {@code isTransient} is exactly what its token implies from
- *         the range set -- FULL to {@code (sessionID, false)}, TRANSIENT to {@code (sessionID, true)},
- *         everything else to {@code (null, false)} -- and nothing is ever marked repaired.</li>
+ *     <li>every parent partition appears <b>exactly once</b> across the resulting sstables, with byte-for-byte the
+ *         same content (compared as the fully-detailed rendering of the partition-level deletion, the static row
+ *         and every unfiltered); and</li>
+ *     <li>each partition's {@code pendingRepair} / {@code isTransient} is exactly what its token implies from the
+ *         range set -- FULL to {@code (sessionID, false)}, TRANSIENT to {@code (sessionID, true)}, everything else
+ *         to {@code (null, false)} -- and nothing is ever marked repaired.</li>
  * </ol>
- * That oracle is path-agnostic on purpose, so the test stays valid no matter which side of the gate an
- * iteration lands on. On top of it the test cross-checks the gate itself: the labels, the run count, the
- * boundaries and the per-child repair state are all recomputed here from {@code Range.contains} alone, and the
- * planner's verdict must agree; the {@code BytesZeroCopyAnticompaction} meter must move if and only if
- * the verdict was "eligible"; and the number of output sstables must be the run count when the split ran and
- * the number of distinct labels present when the rewrite ran. The recomputation deliberately uses the naive
- * {@code Range.contains} scan rather than the {@code OrderedRangeContainmentChecker} that both production paths
- * share, so agreement means something.
+ * That is path-agnostic on purpose, so the test stays valid whichever side of the gate an iteration lands on. On
+ * top of it the gate itself is cross-checked: labels, run count, boundaries and per-child repair state are all
+ * recomputed here from {@code Range.contains} alone and the planner's verdict must agree; the
+ * {@code BytesZeroCopyAnticompaction} meter must move iff the verdict was "eligible"; and the output sstable count
+ * must be the run count when the split ran and the number of distinct labels when the rewrite ran. The
+ * recomputation deliberately uses the naive scan rather than the {@code OrderedRangeContainmentChecker} both
+ * production paths share, so agreement means something.
  *
  * <h2>Why the generator writes no tombstones and never overwrites</h2>
- * The fallback path pushes every partition through a {@link CompactionController}, so it legitimately drops
- * data shadowed by a deletion, whereas the zero-copy path copies compression chunks verbatim and retains it.
- * A single content oracle can only hold for both paths if the data contains nothing either path is allowed to
- * change: hence one INSERT per {@code (pk, ck)}, no DELETEs, no null values, no TTLs, and an explicit
- * {@code gc_grace_seconds}. Tombstone-retention behaviour is the splitter's own fuzz test's job
- * ({@code ZeroCopySSTableSplitterFuzzTest}); the subject here is routing and completeness.
+ * The fallback path pushes every partition through a {@link CompactionController} and so legitimately drops data
+ * shadowed by a deletion, where the zero-copy path copies chunks verbatim and retains it. One content oracle can
+ * only hold for both if the data contains nothing either path may change: hence one INSERT per {@code (pk, ck)},
+ * no DELETEs, no nulls, no TTLs, and an explicit {@code gc_grace_seconds}. Tombstone retention is
+ * {@code ZeroCopySSTableSplitterFuzzTest}'s job; the subject here is routing and completeness.
  *
  * <h2>What is randomised</h2>
- * The compressor and {@code chunk_length_in_kb}, {@code column_index_size} (so wide partitions really do carry
- * a promoted index that the planner's Index.db walk has to skip), the partition count, and wide versus narrow
- * partitions. The range set is randomised by <em>shape</em>: covering the whole sstable, a prefix, a suffix, a
- * middle span, exactly one partition, a range whose endpoint lands exactly on the first or last partition's
- * token, ranges that cover no partition at all (inside a token gap, or entirely below or above the sstable's
- * span), a full range abutting a transient one, a transient range nested inside a full one (full wins) and vice
- * versa, several disjoint full ranges, and a vnode-like alternating layout with more runs than the planner
- * retains detail for. Shapes are guaranteed to be exercised: iteration {@code i} always gets shape
+ * The compressor and {@code chunk_length_in_kb}, {@code column_index_size} (so wide partitions really do carry a
+ * promoted index the planner's Index.db walk has to skip), the partition count, and wide versus narrow partitions.
+ * The range set is randomised by <em>shape</em>: the whole sstable, a prefix, a suffix, a middle span, exactly one
+ * partition, an endpoint landing exactly on the first or last partition's token, ranges covering no partition at
+ * all (in a token gap, or entirely below or above the sstable's span), a full range abutting a transient one, a
+ * transient range nested in a full one and vice versa, several disjoint full ranges, and a vnode-like alternating
+ * layout with more runs than the planner retains detail for. Iteration {@code i} always gets shape
  * {@code i % shapes}, encoded in the low digits of that iteration's seed so a seed alone still replays it.
  *
  * <h2>Reproducing a failure</h2>
- * Every assertion message carries the whole configuration -- range set included -- plus the iteration's seed.
- * A bare {@code -Dfoo=bar} on the ant command line does <b>not</b> reach the forked test JVM, so the properties
- * below must be passed through {@code -Dtest.jvm.args}:
+ * Every assertion message carries the whole configuration, range set included, plus the iteration's seed. A bare
+ * {@code -Dfoo=bar} on the ant command line does <b>not</b> reach the forked test JVM, so these must go through
+ * {@code -Dtest.jvm.args}:
  * <pre>
  *   ant testsome -Duse.jdk11=true \
  *       -Dtest.name=org.apache.cassandra.db.compaction.ZeroCopyAntiCompactionFuzzTest \

@@ -2115,7 +2115,9 @@ drop_compact_storage_enabled: false
 # Use the zero-copy sstable splitter during anticompaction when an sstable's full / transient / unrepaired
 # partitions form contiguous token runs. Such an sstable is split by copying its compression chunks verbatim
 # instead of rewriting every row; anything else (interleaved ranges, i.e. what vnodes produce) falls back to
-# the normal rewrite. Defaults to true; set to false to disable the optimisation entirely.
+# the normal rewrite. The copy participates in the compaction framework: bounded by compaction_throughput,
+# visible in nodetool compactionstats as an ANTICOMPACTION, and stopped by nodetool stop ANTICOMPACTION,
+# nodetool stop --id, TRUNCATE and DROP.
 #
 # NOTE: when this is enabled, anticompaction NO LONGER PURGES TOMBSTONES for the sstables it handles. The
 # copy-based split retains droppable tombstones and shadowed data that the rewrite path would drop. That is
@@ -2126,28 +2128,22 @@ drop_compact_storage_enabled: false
 # Data.db, which costs them entire-SSTable zero-copy streaming eligibility (they fall back to partial
 # streaming) until they are recompacted.
 #
-# NOTE: the children's sstable statistics are deliberately imprecise, because recomputing them would mean
+# NOTE: the children's sstable statistics are deliberately imprecise, since recomputing them would mean
 # deserializing every row - the exact cost this path avoids. Each child inherits the parent's whole-sstable
 # cell count, row count and tombstone-drop histogram, while its partition count and partition size histogram
-# are exact. So after a zero-copy anticompaction, expect per-table aggregates (nodetool tablestats mean row
-# count, estimated column count, droppable tombstone ratio) to over-report by roughly the number of children,
-# and expect single-sstable tombstone compaction to fire less readily than tombstone_threshold suggests -
-# meaning the retained tombstones above are purged later than they otherwise would be. Tables that are
-# sensitive to this can set unchecked_tombstone_compaction or lower tombstone_threshold. All of these errors
-# are in the conservative direction and none of them can lose or resurrect data.
+# are exact. So expect per-table aggregates (nodetool tablestats mean row count, estimated column count,
+# droppable tombstone ratio) to over-report by roughly the number of children, and single-sstable tombstone
+# compaction to fire less readily than tombstone_threshold suggests - so the retained tombstones above are
+# purged later than they otherwise would be. Sensitive tables can set unchecked_tombstone_compaction or lower
+# tombstone_threshold. All these errors are conservative and none can lose or resurrect data.
 #
-# The copy participates in the compaction framework: it is bounded by compaction_throughput, appears in
-# nodetool compactionstats as an ANTICOMPACTION, and is stopped by nodetool stop ANTICOMPACTION, nodetool
-# stop --id, TRUNCATE and DROP.
-#
-# NOT SUPPORTED WITH SECONDARY INDEXES. Any table with a secondary index is refused and anticompacts the old
-# way instead, so no configuration is needed - such tables simply keep today's behaviour. The rewrite path
-# rebuilds an index's per-sstable component (SASI's SI_*.db) as it writes each output; a split cannot produce
-# one without reading the rows it exists to avoid reading, and a child missing it would drop out of the index
-# silently rather than fail, so the check refuses on any index at all.
+# NOT SUPPORTED WITH SECONDARY INDEXES. Any table with one is refused and anticompacts the old way, so no
+# configuration is needed. The rewrite path rebuilds an index's per-sstable component (SASI's SI_*.db) as it
+# writes each output; a split cannot produce one without reading the rows it exists to avoid reading, and a
+# child missing it would drop out of the index silently rather than fail, so any index at all is refused.
 #
 # NOT SUPPORTED ON JBOD, and NOT refused - this one is on the operator. Children are always written into the
-# parent sstable's own directory, and no free-space check is made, where the rewrite this replaces picks a data
+# parent sstable's own directory with no free-space check, where the rewrite this replaces picks a data
 # directory with room. With more than one data_file_directories entry that means children can never move to a
 # disk that has space, min_free_space_per_drive_in_mb is not reserved for them, and splitting a parent larger
 # than the free space on its own disk will fill that disk and fail the flushes and compactions already headed
@@ -2155,9 +2151,9 @@ drop_compact_storage_enabled: false
 # zero_copy_anticompaction_enabled: true
 
 # Let the zero-copy splitter SHARE each child's Data.db extents with the parent instead of copying them, using
-# the Linux FICLONERANGE ioctl ("reflink"). Where it works, a split writes no data blocks at all and needs no
-# additional disk space: the parent's extents become the children's when the parent is unlinked, so an
-# anticompaction of a 1 TiB sstable stops needing 1 TiB of headroom and stops doing 1 TiB of writes.
+# the Linux FICLONERANGE ioctl ("reflink"). Where it works, a split writes no data blocks and needs no extra
+# disk space: the parent's extents become the children's when the parent is unlinked, so anticompacting a 1 TiB
+# sstable stops needing 1 TiB of headroom and stops doing 1 TiB of writes.
 #
 # Requires a filesystem that can share extents - xfs formatted with `-m reflink=1` (the mkfs default since
 # xfsprogs 5.1), or btrfs. Support is discovered by trying: on ext4 and everything else the first attempt per
@@ -2185,7 +2181,7 @@ drop_compact_storage_enabled: false
 # CRC32 that this path preserves verbatim and that every read verifies. The digest's only unique coverage is
 # bytes no read ever touches: the child's dead prefix and its alignment padding.
 #
-# NOTE: what it does cost is verification SPEED, not strength. `nodetool verify` and
+# NOTE: what it costs is verification SPEED, not strength. `nodetool verify` and
 # `nodetool import --verify-sstables` treat a missing digest as a reason to run a full extended verification -
 # a row-by-row scan instead of a whole-file CRC. `nodetool verify -q` and an import without
 # --verify-sstables never look at it. Restore-then-import is a normal workflow here and a child's file set
@@ -2196,14 +2192,14 @@ drop_compact_storage_enabled: false
 # a verbatim run of the parent's compression chunks and synthesising the other components for it the way a
 # zero-copy split synthesises them for a child. The sender already sends whole compression chunks when it
 # streams sections of a compressed sstable; what this removes is the RECEIVER decompressing, deserialising,
-# re-serialising and recompressing every row it is sent, and rebuilding the index, filter and summary it could
+# re-serialising and recompressing every row it is sent, then rebuilding the index, filter and summary it could
 # have been handed instead.
 #
 # The requested ranges become byte ranges aligned to the sstable's grid - the compression chunk length, or
 # CRC.db's chunk size for an uncompressed sstable - and are sent in order with the cells between them skipped.
-# Legacy counter shards and non-BIG formats fall back to the row-by-row path unchanged, as does anything the
-# arithmetic cannot express. stream_entire_sstables gates this too, since it is that protocol and that rate
-# limiter (stream_entire_sstable_throughput_outbound) being used.
+# Legacy counter shards, non-BIG formats and anything the arithmetic cannot express fall back to the row-by-row
+# path unchanged. stream_entire_sstables gates this too, since it is that protocol and that rate limiter
+# (stream_entire_sstable_throughput_outbound) being used.
 #
 # NOTE: the received sstable carries the same statistics imprecision a split child does - parent-wide cell and
 # row totals, inherited min/max timestamp and clustering bounds - and no tombstones are purged in transit.
@@ -2214,14 +2210,14 @@ drop_compact_storage_enabled: false
 # verify` and `nodetool scrub` only tolerate on a build that has the zero-copy splitter's seeks. Leave this off
 # until every node that can RECEIVE a stream is on such a build.
 #
-# NOTE: Digest.crc32 is not sent - the sender cannot produce one without a second full read of the data, since
-# the bytes reach the socket by sendfile and are never in process - so the RECEIVER computes it while writing the
+# NOTE: Digest.crc32 is not sent - the sender cannot produce one without a second full read, since the bytes
+# reach the socket by sendfile and are never in process - so the RECEIVER computes it while writing the
 # component. The sstable that lands has one, and `nodetool verify` on it is a whole-file CRC like any other.
 #
 # NOT SUPPORTED WHERE THE RECEIVER IS JBOD, and not refused - the sender cannot see the peer's layout. A slice
 # is received through the entire-sstable path, which chooses a single data directory for the whole sstable from
-# its first key; the row-by-row path it replaces spreads the incoming partitions across the receiver's disk
-# boundaries as it deserialises them. So a slice whose range crosses several boundaries lands entirely on one
+# its first key, where the row-by-row path it replaces spread the incoming partitions across the receiver's disk
+# boundaries as it deserialised them. So a slice whose range crosses several boundaries lands entirely on one
 # disk and stays out of position until a compaction or `nodetool relocatesstables` moves it. Leave this off
 # unless every node that can RECEIVE a stream has a single data_file_directories entry. The sending node's own
 # layout is irrelevant.
@@ -2230,9 +2226,9 @@ drop_compact_storage_enabled: false
 # The most dead space a partial zero-copy stream may carry before it gives up and falls back to the row-by-row
 # path, as a fraction of the transferred sstable's uncompressed length. A grid cell - a compression chunk, or a
 # CRC.db chunk when the sstable is uncompressed - cannot be treated as an origin, so the whole cells covering the
-# requested ranges also carry the head of the first cell and any partitions sitting between sections less than a
-# cell apart. Those bytes are not indexed, so no read can reach them - they are transferred and stored for
-# nothing until the sstable is compacted. Dead space is bounded by roughly a cell per section boundary, so it is
+# requested ranges also carry the head of the first cell and any partitions between sections less than a cell
+# apart. Those bytes are not indexed, so no read can reach them - they are transferred and stored for nothing
+# until the sstable is compacted. Dead space is bounded by roughly a cell per section boundary, so it is
 # immaterial for a wide range and can dominate a narrow one (a 4 KiB range inside one 16 KiB chunk is 75% dead).
 # At the 0.25 default a transfer may be up to a third larger than the data it is for. 0.0 permits only ranges
 # that fall exactly on cell boundaries; 1.0 disables the check.

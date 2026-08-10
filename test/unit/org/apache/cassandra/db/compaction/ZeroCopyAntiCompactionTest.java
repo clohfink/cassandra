@@ -75,24 +75,21 @@ import static org.junit.Assert.assertTrue;
  * the accounting guard -- is exercised.
  *
  * <h2>How "which path ran" is observed</h2>
- * {@code cfs.metric.bytesZeroCopyAnticompaction} is marked <em>only</em> after a successful zero-copy commit
- * (CompactionManager.zeroCopySplitOne), and CQLTester makes a fresh table (hence a fresh {@code TableMetrics})
- * per test, so its per-table count is an exact, non-flaky witness: {@code > 0} means the split ran, {@code 0}
- * means the three-writer rewrite ran. The number of output sstables is a second, independent witness, because
- * the two paths produce structurally different results for the same input: the rewrite produces at most one
- * sstable per repair bucket (full / transient / unrepaired), while the split produces one child per contiguous
- * label <em>run</em> -- so a {@code U F U} layout is 2 sstables rewritten but 3 children split, and
- * {@code U F U T U} is 3 rewritten but 5 split. Both are asserted in every test, in both directions, so this
- * file fails if the gate silently stops engaging <em>or</em> silently starts engaging.
+ * {@code cfs.metric.bytesZeroCopyAnticompaction} is marked <em>only</em> after a successful zero-copy commit, and
+ * CQLTester makes a fresh table (hence fresh {@code TableMetrics}) per test, so its per-table count is an exact,
+ * non-flaky witness: {@code > 0} means the split ran, {@code 0} the rewrite. The output sstable count is a second,
+ * independent witness, since the paths differ structurally for the same input: the rewrite produces at most one
+ * sstable per repair bucket (full / transient / unrepaired) where the split produces one child per contiguous label
+ * <em>run</em>, so {@code U F U} is 2 rewritten but 3 split and {@code U F U T U} is 3 versus 5. Both are asserted
+ * in every test, in both directions, so this fails if the gate silently stops <em>or</em> starts engaging.
  *
  * <h2>Correctness assertions, applied identically to every case</h2>
- * {@link #assertOutcome} snapshots every partition of the parent before the run (key -&gt; a full textual
- * rendering including partition deletions, row liveness info, row deletions, every cell value and every cell
- * timestamp) and compares it against the union of the outputs afterwards, failing on a missing key, an extra
- * key, a key present in two outputs at once, or any content difference. It also checks the repair state
- * <em>per partition key</em> rather than per sstable, since a partition routed into the wrong bucket is the
- * critical failure mode, and finishes with {@link Util#assertOnDiskState} which proves the parent's files are
- * really gone.
+ * {@link #assertOutcome} snapshots every partition of the parent before the run (key -&gt; a full textual rendering
+ * including partition deletions, row liveness info, row deletions, every cell value and timestamp) and compares it
+ * against the union of the outputs afterwards, failing on a missing key, an extra key, a key in two outputs at
+ * once, or any content difference. Repair state is checked <em>per partition key</em> rather than per sstable,
+ * since a partition routed into the wrong bucket is the critical failure mode, and {@link Util#assertOnDiskState}
+ * proves the parent's files are really gone.
  */
 public class ZeroCopyAntiCompactionTest extends CQLTester
 {
@@ -314,18 +311,15 @@ public class ZeroCopyAntiCompactionTest extends CQLTester
     // ----------------------------------------------------------------------------------------------------
 
     /**
-     * Pins DECISION 2 ("accept losing tombstone purge, unconditionally"): the zero-copy path copies compression
-     * chunks verbatim and therefore RETAINS droppable tombstones and shadowed data that the rewriting
-     * anticompaction would have purged. That is retention, never loss -- nothing can be resurrected -- and it
-     * is deliberately not gated on the droppable-tombstone ratio.
+     * Pins the accepted behaviour change: the zero-copy path copies compression chunks verbatim and therefore
+     * RETAINS droppable tombstones and shadowed data the rewriting anticompaction would have purged. Retention,
+     * never loss -- nothing can be resurrected -- and deliberately not gated on the droppable-tombstone ratio.
      * <p>
-     * The parent here carries a partition-level tombstone and a row-level tombstone that are genuinely
-     * droppable at the moment the anticompaction runs ({@code gc_grace_seconds = 0}, and the run happens more
-     * than a second after the deletes, so {@code localDeletionTime < gcBefore}) -- asserted via
-     * {@link SSTableReader#getDroppableTombstonesBefore} so this test cannot pass vacuously. Both tombstones
-     * must still be there afterwards.
-     * <p>
-     * If someone later "fixes" this by purging, this test is the record that the retention was intentional.
+     * The parent carries a partition-level and a row-level tombstone that are genuinely droppable when the
+     * anticompaction runs ({@code gc_grace_seconds = 0}, and the run is more than a second after the deletes, so
+     * {@code localDeletionTime < gcBefore}), asserted via {@link SSTableReader#getDroppableTombstonesBefore} so this
+     * cannot pass vacuously. Both must still be there afterwards. If someone later "fixes" this by purging, this
+     * test is the record that the retention was intentional.
      */
     @Test
     public void purgeableTombstonesSurviveTheZeroCopySplit() throws Throwable
@@ -573,12 +567,11 @@ public class ZeroCopyAntiCompactionTest extends CQLTester
     }
 
     /**
-     * A canonical rendering of one partition. {@code toString(metadata, true)} is the full-detail form: it
-     * prints the primary key liveness info (timestamp, ttl, local expiration), the row deletion when there is
-     * one, and every cell via {@code AbstractCell.toString()}, which includes the cell timestamp and marks
-     * tombstones. Comparing these strings therefore compares rows, cells, timestamps and deletions, not just
-     * keys. Strings are used deliberately: they can be retained safely after the scanner (and the parent's
-     * files) are gone.
+     * A canonical rendering of one partition. {@code toString(metadata, true)} is the full-detail form: primary key
+     * liveness info (timestamp, ttl, local expiration), the row deletion if any, and every cell via
+     * {@code AbstractCell.toString()}, which includes the cell timestamp and marks tombstones. So comparing these
+     * strings compares rows, cells, timestamps and deletions, not just keys -- and unlike the iterators they can be
+     * retained safely after the scanner and the parent's files are gone.
      */
     private static String describe(UnfilteredRowIterator partition, TableMetadata metadata)
     {

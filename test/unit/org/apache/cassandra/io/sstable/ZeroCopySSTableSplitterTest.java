@@ -91,8 +91,8 @@ import static org.junit.Assert.fail;
  *   <li>{@link #assertConcatenatedContentEquals} -- every partition, row, cell, timestamp and deletion of the
  *       children concatenated in token order equals the parent, exactly;</li>
  *   <li>{@link #assertPointReads} -- every parent key is found in exactly one child and reads back identically;</li>
- *   <li>{@link #assertStructure} -- the chunk arithmetic of FACT 9 recomputed independently from the parent's
- *       Index.db and CompressionInfo.db, including "no trailing slack" and "offsets[0] == 0";</li>
+ *   <li>{@link #assertStructure} -- the chunk arithmetic recomputed independently from the parent's Index.db and
+ *       CompressionInfo.db, including "no trailing slack" and "offsets[0] == 0";</li>
  *   <li>{@link #assertComponents} -- Filter/Summary/Digest/TOC are the ones on disk and are self-consistent.</li>
  * </ul>
  */
@@ -177,36 +177,31 @@ public class ZeroCopySSTableSplitterTest extends CQLTester
     /**
      * REGRESSION: the parent here is built by a COMPACTION, not by a flush, and is reopened from disk.
      *
-     * <p>Those two properties together are what every other test in this class lacks, and they are the normal
-     * state of an anticompaction target. A compaction-produced sstable carries one more chunk offset than its
-     * {@code dataLength} needs: {@code SSTableRewriter.doPrepare} syncs the data file twice --
-     * {@code switchWriter(null)} -> {@code openFinalEarly()} -> {@code dataFile.sync()}, then
-     * {@code prepareToCommit()} -> {@code syncInternal()} -- and {@code CompressedSequentialWriter.flushData}
-     * appends a chunk unconditionally, even on an empty buffer. So the physical file ends a few bytes past the
-     * last chunk holding data and {@code chunkCount == ceil(dataLength / chunkLength) + 1}. A flush calls
-     * {@code flushData} exactly once and has neither property.
+     * <p>Those two properties together are what every other test here lacks and what every anticompaction target
+     * has. A compaction-produced sstable carries one more chunk offset than its {@code dataLength} needs:
+     * {@code SSTableRewriter.doPrepare} syncs the data file twice and {@code CompressedSequentialWriter.flushData}
+     * appends a chunk unconditionally, even on an empty buffer, so the physical file ends a few bytes past the last
+     * chunk holding data and {@code chunkCount == ceil(dataLength / chunkLength) + 1}. A flush calls
+     * {@code flushData} once and has neither property.
      *
-     * <p>This test has to switch preemptive open on by hand, and that is the deeper reason the regression could
-     * not be caught by anything already here: {@code Config.sstable_preemptive_open_interval} defaults to
-     * {@code null}, i.e. disabled ({@code DatabaseDescriptor.getSSTablePreemptiveOpenIntervalInMiB} returns -1,
-     * so {@code SSTableRewriter.calculateOpenInterval} yields {@code Long.MAX_VALUE} and
-     * {@code switchWriter(null)} never calls {@code openFinalEarly()}). {@code test/conf/cassandra.yaml} leaves
-     * it unset, while the shipped {@code conf/cassandra.yaml} sets {@code 50MiB} -- so the double sync, and
-     * therefore the trailing chunk, happens on every real node and on no test.
+     * <p>Preemptive open has to be switched on by hand here, which is the deeper reason nothing already present
+     * caught the regression: {@code sstable_preemptive_open_interval} defaults to disabled, so
+     * {@code switchWriter(null)} never calls {@code openFinalEarly()} and the second sync never happens.
+     * {@code test/conf/cassandra.yaml} leaves it unset where the shipped {@code conf/cassandra.yaml} sets 50MiB --
+     * so the trailing chunk happens on every real node and on no test.
      *
-     * <p>The reopen matters just as much: {@code CompressionMetadata.Writer.open} trims the offsets table to
-     * {@code ceil(dataLength / chunkLength)} and resets {@code compressedLength} to {@code offsets[thatCount]},
-     * so the reader a compaction hands back hides the trailing chunk completely. Only a reader built by
-     * {@code CompressionMetadata.create} -- startup, {@code nodetool refresh}, streaming receive, i.e. anything
-     * that has been through a restart -- sees the physical file length.
+     * <p>The reopen matters as much: {@code CompressionMetadata.Writer.open} trims the offsets table to
+     * {@code ceil(dataLength / chunkLength)} and resets {@code compressedLength}, so the reader a compaction hands
+     * back hides the trailing chunk entirely. Only a reader built by {@code CompressionMetadata.create} -- startup,
+     * {@code nodetool refresh}, streaming receive -- sees the physical file length.
      *
      * <p>The bug: the splitter took the end of a child's last chunk to be {@code compressedFileLength} whenever
      * {@code lastChunk + 1} reached {@code ceil(dataLength / chunkLength)}, so the LAST child copied the trailing
-     * chunk's bytes as slack. A reader derives a chunk's length from the following offset, so the child's final
-     * chunk then claimed to be longer than it was, and every read of it failed its inline CRC32 -- or, once the
-     * inflated length crossed {@code maxCompressedLength}, took the raw-chunk branch and returned compressed
-     * bytes as row data. Digest.crc32 could not catch it, being computed over whatever bytes were written, and
-     * the parent had already been obsoleted by then.
+     * chunk as slack. A reader derives a chunk's length from the following offset, so the child's final chunk then
+     * claimed to be longer than it was and every read of it failed its inline CRC32 -- or, once the inflated length
+     * crossed {@code maxCompressedLength}, took the raw-chunk branch and returned compressed bytes as row data.
+     * Digest.crc32 could not catch it, being computed over whatever was written, and the parent was already
+     * obsoleted by then.
      */
     @Test
     public void splitOfCompactionProducedParentDoesNotAbsorbTheTrailingChunk() throws Throwable
@@ -294,14 +289,13 @@ public class ZeroCopySSTableSplitterTest extends CQLTester
      * A stop request aborts the copy and leaves nothing behind, and the {@link ZeroCopySSTableSplitter.Progress}
      * holder carries what the callers of {@link CompactionInfo.Holder#stop()} need in order to find it.
      *
-     * <p>This is the wiring that makes {@code nodetool stop ANTICOMPACTION}, {@code nodetool stop --id},
-     * TRUNCATE, DROP and {@code runWithCompactionsDisabled} work. Every one of them walks
-     * {@code CompactionManager.active.getCompactions()} and decides whether to stop a holder from its
-     * {@link CompactionInfo}: {@code stopCompaction} matches on {@code getTaskType()},
-     * {@code stopCompactionById} on {@code getTaskId()}, and {@code interruptCompactionFor} on
-     * {@code getTableMetadata()} plus the sstables in {@code shouldStop}. Before this existed the split
-     * registered nothing, so all of them silently found no work to stop -- and truncate reported success while
-     * the copy carried on.
+     * <p>This is the wiring behind {@code nodetool stop ANTICOMPACTION}, {@code nodetool stop --id}, TRUNCATE, DROP
+     * and {@code runWithCompactionsDisabled}. All of them walk {@code CompactionManager.active.getCompactions()} and
+     * decide from the {@link CompactionInfo}: {@code stopCompaction} matches on {@code getTaskType()},
+     * {@code stopCompactionById} on {@code getTaskId()}, {@code interruptCompactionFor} on
+     * {@code getTableMetadata()} plus the sstables in {@code shouldStop}. Before this existed the split registered
+     * nothing, so all of them silently found no work to stop -- and truncate reported success while the copy
+     * carried on.
      */
     /**
      * The crash-recovery contract: every child is covered by an ADD record in the transaction log, so a start that
@@ -874,19 +868,17 @@ public class ZeroCopySSTableSplitterTest extends CQLTester
      * parent's previous compression chunk, so its {@code offsets[0]} is that pad instead of 0 and every physical
      * offset in it is shifted.
      *
-     * <p>This forces the layout on rather than requiring a filesystem that can share extents -- no developer
-     * laptop and no CI box can, and this must not be a test that only ever runs on xfs. The layout is a
-     * property of {@code copyPlan}, not of the mechanism: a padded range that gets copied instead of cloned
-     * produces a byte-identical child, so copying it here exercises exactly the file a reflink would have
-     * produced. What is NOT covered by forcing it is the ioctl itself, which either shares the range or reports
-     * that it cannot.
+     * <p>The layout is forced on rather than requiring a filesystem that can share extents -- no laptop and no CI
+     * box can, and this must not be a test that only runs on xfs. The layout belongs to {@code copyPlan}, not to
+     * the mechanism: a padded range that gets copied produces a byte-identical child, so copying here exercises
+     * exactly the file a reflink would have produced. What forcing it does NOT cover is the ioctl itself.
      *
-     * <p>Everything is asserted through the ordinary readers, because the point is that nothing downstream
-     * notices. The one consumer that did notice, and had to be fixed, is {@code MmappedRegions}: it placed
-     * segments at a cumulative sum of chunk lengths seeded at physical 0, so a padded file's last chunk ran off
-     * the end of the last mapped region. {@code test/conf/cassandra.yaml} sets {@code disk_access_mode: mmap},
-     * so every read below goes through that path -- which is why the content assertions here are the regression
-     * test for it, and why a child of more than one chunk is not enough: it has to be read to the last byte.
+     * <p>Everything is asserted through the ordinary readers, because the point is that nothing downstream notices.
+     * The one consumer that did, and had to be fixed, is {@code MmappedRegions}: it placed segments at a cumulative
+     * sum of chunk lengths seeded at physical 0, so a padded file's last chunk ran off the end of the last mapped
+     * region. {@code test/conf/cassandra.yaml} sets {@code disk_access_mode: mmap}, so every read below goes through
+     * that path -- which is why these content assertions are the regression test for it, and why a child of more
+     * than one chunk is not enough: it has to be read to the last byte.
      */
     @Test
     public void alignedChildrenAreReadableEverywhere() throws Throwable

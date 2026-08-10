@@ -1722,9 +1722,9 @@ public class CompactionManager implements CompactionManagerMBean
                     antiCompactedSSTableCount += zeroCopyAntiCompact(cfs, ranges, groupTxn, pendingRepair,
                                                                      isCancelled, handledByZeroCopy);
 
-                // Every sstable of the group must be handled by exactly one path. An sstable that fell through
-                // both would silently stay unrepaired while the repair session believes its data is pending, so
-                // this is a correctness guard and not a sanity check: fail the anticompaction rather than lie.
+                // Every sstable of the group must be handled by exactly one path. One that fell through both would
+                // silently stay unrepaired while the repair session believes its data is pending, so fail the
+                // anticompaction rather than lie.
                 Set<SSTableReader> remaining = new HashSet<>(groupTxn.originals());
                 if (!Sets.intersection(handledByZeroCopy, remaining).isEmpty()
                     || handledByZeroCopy.size() + remaining.size() != groupOriginals.size()
@@ -1747,40 +1747,35 @@ public class CompactionManager implements CompactionManagerMBean
     }
 
     /**
-     * Anticompact every sstable of {@code groupTxn} that the {@link AntiCompactionRunPlanner} finds eligible by
-     * splitting it with {@link ZeroCopySSTableSplitter} instead of rewriting it, and carve those sstables out of
-     * {@code groupTxn} so the caller's rewrite does not see them again. Ineligible sstables are left in
-     * {@code groupTxn} untouched.
+     * Anticompact every sstable of {@code groupTxn} that {@link AntiCompactionRunPlanner} finds eligible by splitting
+     * it with {@link ZeroCopySSTableSplitter} instead of rewriting it, carving those sstables out of {@code groupTxn}
+     * so the caller's rewrite does not see them again. Ineligible sstables are left untouched.
      *
      * <h2>This path does not purge tombstones</h2>
-     * The rewrite path runs every partition through a {@link CompactionController}, so it drops droppable
-     * tombstones and data shadowed by them. A verbatim chunk copy cannot: the children RETAIN everything the
-     * parent held. That is retention, never loss -- no row can be resurrected, because nothing that was dropped
-     * before is re-added -- but the children can be larger than the rewrite would have produced, until they are
-     * compacted normally. This is a deliberate, documented trade and is logged at INFO on every use.
+     * The rewrite path runs every partition through a {@link CompactionController} and so drops droppable tombstones
+     * and data shadowed by them. A verbatim chunk copy cannot: the children RETAIN everything the parent held --
+     * retention, never loss, since nothing already dropped is re-added -- so they can be larger than a rewrite would
+     * have produced until they are compacted normally. Deliberate, and logged at INFO on every use.
      *
      * <h2>Failure handling</h2>
-     * Planning is decided from the parent's Index.db before anything is carved out, so an ineligible or
-     * unreadable sstable simply stays in {@code groupTxn}. Once an sstable has been carved into its own
-     * transaction, a failed split falls back to running the ordinary three-rewriter
-     * {@link #antiCompactGroup} on that same (still unused) transaction, which is the race-free way to keep the
-     * sstable anticompacted -- {@code abort()} would unmark it as compacting and let a normal compaction take
-     * it. Only a failure after the first {@code update()} is unrecoverable; that aborts and rethrows rather
-     * than silently leaving data unrepaired.
+     * Planning is decided from the parent's Index.db before anything is carved out, so an ineligible or unreadable
+     * sstable simply stays in {@code groupTxn}. Once carved into its own transaction, a failed split falls back to
+     * running {@link #antiCompactGroup} on that same (still unused) transaction, which is the race-free way to keep the
+     * sstable anticompacted -- {@code abort()} would unmark it as compacting and let a normal compaction take it. Only
+     * a failure after the first {@code update()} is unrecoverable; that aborts and rethrows rather than silently
+     * leaving data unrepaired.
      * <p>
-     * A {@link CompactionInterruptedException} is the one failure NOT retried on the rewrite path: it means an
-     * operator, a truncate or a drop asked the work to stop, and answering that with a full rewrite would do
-     * strictly more I/O than the copy that was just cancelled.
+     * {@link CompactionInterruptedException} is the one failure NOT retried on the rewrite path: an operator, truncate
+     * or drop asked the work to stop, and a full rewrite is strictly more I/O than the copy just cancelled.
      *
      * <h2>Throttling and visibility</h2>
      * Each split registers a {@link CompactionInfo.Holder} with {@code active} for its duration and pushes every
-     * transferred slice through {@link #getRateLimiter()}, so the copy is bounded by
-     * {@code compaction_throughput}, appears in {@code nodetool compactionstats}, and is stoppable by
-     * {@code nodetool stop ANTICOMPACTION}, {@code nodetool stop --id}, TRUNCATE, DROP and anything else that
-     * goes through {@code runWithCompactionsDisabled}.
+     * transferred slice through {@link #getRateLimiter()}, so the copy is bounded by {@code compaction_throughput},
+     * appears in {@code nodetool compactionstats} and is stoppable by {@code nodetool stop ANTICOMPACTION},
+     * {@code nodetool stop --id}, TRUNCATE, DROP and {@code runWithCompactionsDisabled}.
      *
-     * @param handledByZeroCopy out-param: every parent removed from {@code groupTxn} by this method, all of
-     *                          which have been fully anticompacted by the time it returns
+     * @param handledByZeroCopy out-param: every parent this method removed from {@code groupTxn}, all of which are
+     *                          fully anticompacted by the time it returns
      * @return the number of output sstables produced
      */
     @VisibleForTesting
@@ -1795,10 +1790,10 @@ public class CompactionManager implements CompactionManagerMBean
         // groupTxn.originals() is a live view that split() mutates, so iterate over a copy
         for (SSTableReader parent : new ArrayList<>(groupTxn.originals()))
         {
-            // Two independent cancellation channels. This one is the repair session's own predicate, checked
-            // between sstables: whatever is left stays in groupTxn and antiCompactGroup raises the interruption.
-            // The other is the CompactionInfo.Holder registered in zeroCopySplitOne, which is what nodetool stop,
-            // truncate and drop use, and which aborts mid-copy.
+            // Two independent cancellation channels. This is the repair session's own predicate, checked between
+            // sstables: whatever is left stays in groupTxn and antiCompactGroup raises the interruption. The other is
+            // the CompactionInfo.Holder registered in zeroCopySplitOne, used by nodetool stop / truncate / drop, which
+            // aborts mid-copy.
             if (isCancelled.getAsBoolean())
             {
                 logger.info("Zero-copy anticompaction cancelled for {}, leaving the rest to the rewrite path",
@@ -1834,17 +1829,16 @@ public class CompactionManager implements CompactionManagerMBean
     /**
      * Carve one eligible sstable out of {@code groupTxn} and replace it with its zero-copy split children.
      * <p>
-     * The transaction sequence is the one {@code SSTableRewriter.doPrepare} uses for a 1-to-N replacement:
-     * {@code split} / {@code trackNew} (done by the splitter) / {@code update} per child /
-     * {@code obsoleteOriginals} / {@code prepareToCommit} / {@code commit}. {@code doPrepare} checkpoints, so
-     * the parent leaves the live set and the children enter it in a single {@code tracker.apply}, i.e. there is
-     * no window where the key range is served by neither. The parent is obsoleted rather than cancelled: the
-     * children replace it, and a plain {@code finish()} would remove it from its compaction strategy while
-     * leaving it in the live view.
+     * The transaction sequence is {@code SSTableRewriter.doPrepare}'s for a 1-to-N replacement: {@code split} /
+     * {@code trackNew} (done by the splitter) / {@code update} per child / {@code obsoleteOriginals} /
+     * {@code prepareToCommit} / {@code commit}. {@code doPrepare} checkpoints, so the parent leaves the live set and the
+     * children enter it in one {@code tracker.apply} -- no window where the key range is served by neither. The parent
+     * is obsoleted rather than cancelled: the children replace it, and a plain {@code finish()} would remove it from
+     * its compaction strategy while leaving it in the live view.
      * <p>
-     * The parent's reference in {@code validatedForRepair} is deliberately NOT released here. Commit only drops
-     * the Tracker's live-set reference; the repair session's reference is what defers the actual unlink to the
-     * end of {@code performAnticompaction}, exactly as the rewrite path behaves today.
+     * The parent's reference in {@code validatedForRepair} is deliberately NOT released here. Commit only drops the
+     * Tracker's live-set reference; the repair session's reference is what defers the unlink to the end of
+     * {@code performAnticompaction}, exactly as the rewrite path behaves.
      */
     private int zeroCopySplitOne(ColumnFamilyStore cfs,
                                  RangesAtEndpoint ranges,
@@ -1854,10 +1848,10 @@ public class CompactionManager implements CompactionManagerMBean
                                  TimeUUID pendingRepair,
                                  BooleanSupplier isCancelled)
     {
-        // split() asserts the transaction it is called on has never been used, so all of these carve-outs must
-        // happen before groupTxn is updated or obsoleted. The new transaction shares the Tracker and the
-        // ANTICOMPACTION operation type but owns a brand new txn log file, which is what makes the children
-        // crash-safe: the splitter trackNew's them on it, so an abort or a crash deletes them.
+        // split() asserts the transaction it is called on has never been used, so every carve-out must happen before
+        // groupTxn is updated or obsoleted. The new transaction shares the Tracker and the ANTICOMPACTION operation
+        // type but owns its own txn log file, which is what makes the children crash-safe: the splitter trackNew's
+        // them on it, so an abort or a crash deletes them.
         LifecycleTransaction zcTxn = groupTxn.split(singleton(parent));
         List<ZeroCopySSTableSplitter.Child> children = Collections.emptyList();
         int published = 0;
@@ -1867,12 +1861,11 @@ public class CompactionManager implements CompactionManagerMBean
             ZeroCopySSTableSplitter.Result result;
             try
             {
-                // Registering the split with `active` for the duration is what makes the copy an ordinary
-                // compaction-family operation: it shows up in nodetool compactionstats, getRateLimiter() bounds
-                // it to compaction_throughput, and nodetool stop / truncate / drop /
-                // runWithCompactionsDisabled can stop it, because all of those work by walking
-                // active.getCompactions() and calling Holder.stop(). The CompactionInfo carries the parent, so
-                // CompactionInfo.shouldStop matches it against the sstable predicate they pass.
+                // Registering with `active` is what makes the copy an ordinary compaction-family operation: it shows up
+                // in nodetool compactionstats, getRateLimiter() bounds it to compaction_throughput, and nodetool stop /
+                // truncate / drop / runWithCompactionsDisabled can stop it, all of them by walking
+                // active.getCompactions() and calling Holder.stop(). The CompactionInfo carries the parent so
+                // shouldStop can match it against the sstable predicate they pass.
                 ZeroCopySSTableSplitter.Progress progress =
                     ZeroCopySSTableSplitter.progressFor(parent, getRateLimiter());
                 active.beginCompaction(progress);
@@ -1885,9 +1878,9 @@ public class CompactionManager implements CompactionManagerMBean
                     active.finishCompaction(progress);
                 }
                 children = result.children;
-                // Every planned run holds at least one partition, so the splitter cannot have dropped one; if it
-                // somehow did, the per-child repair state would be mis-paired and children would be stamped with
-                // the wrong session. Refuse rather than publish that.
+                // Every planned run holds at least one partition, so the splitter cannot have dropped one. If it
+                // somehow did, the per-child repair state would be mis-paired and children stamped with the wrong
+                // session; refuse rather than publish that.
                 if (children.size() != plan.perChild.size())
                     throw new IllegalStateException("zero-copy split of " + parent.descriptor + " produced " +
                                                     children.size() + " children for " + plan.perChild.size() +
@@ -1895,18 +1888,18 @@ public class CompactionManager implements CompactionManagerMBean
             }
             catch (CompactionInterruptedException e)
             {
-                // Somebody asked for this to STOP -- nodetool stop, a truncate, a drop, a global pause. Falling
-                // back to the rewrite would answer "stop" with strictly more work than the copy they just
-                // cancelled, so propagate instead and let the finally below abort zcTxn and delete the children.
-                // This matches what the rewrite path does when its CompactionIterator is interrupted.
+                // Somebody asked for this to STOP -- nodetool stop, a truncate, a drop, a global pause. Falling back to
+                // the rewrite would answer "stop" with strictly more work than the copy just cancelled, so propagate
+                // and let the finally below abort zcTxn and delete the children, as the rewrite path does when its
+                // CompactionIterator is interrupted.
                 logger.info("Zero-copy anticompaction of {} was stopped", parent.descriptor);
                 throw e;
             }
             catch (Throwable t)
             {
-                // Nothing has been update()d yet, so zcTxn is still unused and the ordinary three-rewriter path
-                // can run on it verbatim. Skipping the sstable instead would leave data unrepaired that the
-                // repair session believes is pending.
+                // Nothing has been update()d yet, so zcTxn is still unused and the ordinary rewrite can run on it
+                // verbatim. Skipping the sstable would leave data unrepaired that the repair session believes is
+                // pending.
                 JVMStabilityInspector.inspectThrowable(t);
                 logger.warn("Zero-copy anticompaction of {} failed, falling back to the rewrite path",
                             parent.descriptor, t);
@@ -1927,9 +1920,9 @@ public class CompactionManager implements CompactionManagerMBean
             zcTxn.commit();
             settled = true;
 
-            // The METRIC stays the data volume that went through this path, not the I/O it cost: it is
-            // documented as a subset of bytesAnticompacted, and sharing extents does not make less data get
-            // anticompacted. The LOG line below reports both, because the difference is the whole point.
+            // The METRIC is the data volume that went through this path, not the I/O it cost: it is documented as a
+            // subset of bytesAnticompacted, and sharing extents does not make less data get anticompacted. The log line
+            // reports both, because the difference is the whole point.
             cfs.metric.bytesZeroCopyAnticompaction.mark(result.totalPhysicalBytesCopied);
             logger.info("Zero-copy anticompacted {} in {}.{} into {} children for {}: {} bytes handled, " +
                         "{} of them shared with the parent as copy-on-write extents and {} actually written, " +
@@ -1947,8 +1940,8 @@ public class CompactionManager implements CompactionManagerMBean
         {
             if (!settled)
             {
-                // Children that never reached update() are still ours; those that did belong to the transaction
-                // and are released by abort(). Releasing one twice throws "BAD RELEASE".
+                // Children that never reached update() are still ours; those that did belong to the transaction and are
+                // released by abort(). Releasing one twice throws "BAD RELEASE".
                 discardUnpublishedChildren(zcTxn, children, published);
                 try
                 {
@@ -1971,9 +1964,9 @@ public class CompactionManager implements CompactionManagerMBean
     }
 
     /**
-     * Release and delete the children from {@code from} onwards, i.e. the ones that were written and trackNew'd
-     * but never handed to {@code update()}. Never call this for a child that reached {@code update()}: the
-     * transaction owns that reference and releases it itself.
+     * Release and delete the children from {@code from} onwards: the ones written and trackNew'd but never handed to
+     * {@code update()}. Never call this for a child that reached {@code update()} -- the transaction owns that
+     * reference and releases it itself.
      */
     private static void discardUnpublishedChildren(LifecycleTransaction zcTxn,
                                                    List<ZeroCopySSTableSplitter.Child> children,

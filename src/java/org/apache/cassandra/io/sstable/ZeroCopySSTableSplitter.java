@@ -91,162 +91,116 @@ import org.apache.cassandra.utils.TimeUUID;
  * Splits one BIG-format SSTable into K children by copying verbatim compression-chunk runs of Data.db and
  * rebuilding every other component from an Index.db-only pass. No decompression, no row deserialization.
  *
- * <h2>Why a chunk run, and not an exact byte cut</h2>
- * Uncompressed chunk boundaries are pinned to exact multiples of {@code chunkLength}:
- * {@link CompressionMetadata#chunkFor(long)} indexes the offsets array with
- * {@code 8 * (position / chunkLength)} and there is no per-chunk uncompressed length on disk. Therefore only
- * the <em>last</em> chunk of a file may be uncompressed-short, and a child can only ever be a verbatim run of
- * whole chunks {@code [i, j]}.
- *
- * <h2>Consequences of the general (suffix) form</h2>
- * A child whose first partition does not sit on a chunk boundary carries a <em>dead prefix</em> of
- * {@code lo mod chunkLength} bytes at the head of its Data.db. Index positions are rebased by
- * {@code shift = i * chunkLength} rather than by {@code lo}, so the child's first partition lands at
- * uncompressed offset {@code lo mod chunkLength}. That is tolerated by the read, compaction, cleanup and
- * repair-validation paths, all of which enter Data.db only at positions read from Index.db. It is
- * <em>not</em> tolerated by:
+ * <h2>Chunk runs, not exact byte cuts</h2>
+ * Uncompressed chunk boundaries are pinned to multiples of {@code chunkLength} --
+ * {@link CompressionMetadata#chunkFor(long)} indexes the offsets array by {@code position / chunkLength} and
+ * there is no per-chunk uncompressed length on disk -- so a child can only ever be a verbatim run of whole
+ * chunks {@code [i, j]}.
+ * <p>
+ * A child whose first partition does not sit on a chunk boundary therefore carries a <em>dead prefix</em> of
+ * {@code lo mod chunkLength} bytes: index positions are rebased by {@code shift = i * chunkLength} rather than
+ * by {@code lo}. The read, compaction, cleanup and repair-validation paths all enter Data.db only at positions
+ * read from Index.db, so they tolerate it. Two things do not:
  * <ul>
- *   <li>entire-sstable zero-copy streaming, which requires
- *       {@code transferLength == sstable.uncompressedLength()}; such a child falls back to partial streaming;</li>
- *   <li>{@code Scrubber}/{@code Verifier}, which walk Data.db linearly from 0. Both have been given a
- *       three-line change to seek to the first index position instead of requiring it to be zero.</li>
+ *   <li>entire-sstable zero-copy streaming requires {@code transferLength == uncompressedLength()}; such a
+ *       child falls back to partial streaming;</li>
+ *   <li>{@code Scrubber}/{@code Verifier} walk Data.db linearly from 0, and were changed to seek to the first
+ *       index position instead of requiring it to be zero.</li>
  * </ul>
  *
- * <h2>The bytes are shared, not copied, where the filesystem can do it</h2>
- * A child's Data.db is a verbatim byte range of the parent's, which is exactly the shape the
- * {@code FICLONERANGE} ioctl exists for: on xfs formatted with {@code -m reflink=1} (or btrfs) the range is
- * made to point at the parent's physical extents and their reference count is bumped, so the split writes no
- * data blocks at all and consumes no additional disk space. When the parent is unlinked at commit its extents
- * are not freed, they simply belong to the children -- which turns "a split needs room for a second copy of the
- * sstable" into "a split needs room for the index and the metadata". See {@link Reflink}.
+ * <h2>Extents are shared, not copied, where the filesystem allows</h2>
+ * A child's Data.db is a verbatim byte range of the parent's, which is what the {@code FICLONERANGE} ioctl
+ * exists for: on xfs formatted with {@code -m reflink=1} (or btrfs) the range points at the parent's physical
+ * extents instead, so the split writes no data blocks and consumes no extra space, and when the parent is
+ * unlinked at commit its extents simply belong to the children. See {@link Reflink}.
  * <p>
- * The one thing sharing costs is a <em>head pad</em>. The ioctl requires block-aligned offsets and lengths, and
- * a compression chunk boundary is aligned to nothing, so the copied range is extended backwards to the previous
- * 64 KiB boundary and the child's chunk offsets are rebased by that boundary instead of by {@code O(i)}. The
- * child's Data.db therefore begins with up to 64 KiB of the parent's previous chunk, and its
- * {@code offsets[0]} is that pad rather than 0. Those bytes belong to no chunk and are never read -- every
- * reader enters Data.db at an offset taken from the offsets array -- but they are a second, physical dead
- * prefix, independent of the uncompressed one above, and they are covered by Digest.crc32 because
- * {@code Verifier} checksums the whole file. {@link CopyPlan} is the arithmetic; the only consumer that had to
- * change for it is {@code MmappedRegions}, which used to seed its segment placement at physical 0 and so left
- * the tail of a front-padded file unmapped.
+ * Sharing costs a <em>head pad</em>. The ioctl needs block-aligned offsets and lengths and a chunk boundary is
+ * aligned to nothing, so the copied range is extended backwards to the previous 64 KiB boundary and the child's
+ * offsets are rebased by that boundary rather than by {@code O(i)}. The child's Data.db thus begins with up to
+ * 64 KiB of the parent's previous chunk and its {@code offsets[0]} is that pad. Those bytes belong to no chunk
+ * and are never read, but they are a second, physical dead prefix independent of the uncompressed one above, and
+ * they are covered by Digest.crc32 because {@code Verifier} checksums the whole file. {@link CopyPlan} is the
+ * arithmetic; the only consumer that had to change is {@code MmappedRegions}, which seeded segment placement at
+ * physical 0 and so left the tail of a front-padded file unmapped.
  * <p>
- * All of it is conditional and self-demoting: the pad is only planned for when {@code Reflink.isPossibleIn}
- * has not already learned that this directory's filesystem cannot share extents, a refusal costs one failing
- * ioctl and falls through to the ordinary transfer loop, and a padded range that ends up being copied produces
- * a child byte-for-byte identical to the one a clone would have produced. {@code Result.totalBytesCloned}
- * reports what actually happened. Set {@code zero_copy_split_reflink_enabled: false} to never try.
+ * All of it is conditional and self-demoting: the pad is only planned when {@link Reflink#isPossibleIn} has not
+ * already learned this filesystem cannot share extents, a refusal costs one failing ioctl and falls through to
+ * the ordinary transfer loop, and a padded range that ends up copied produces a byte-for-byte identical child.
+ * {@code Result.totalBytesCloned} reports what actually happened; {@code zero_copy_split_reflink_enabled: false}
+ * never tries.
  * <p>
- * Two consequences worth knowing. Shared extents are cheap on disk but not in page cache, which is per inode,
- * so bytes read through both parent and child are cached twice -- transient here, since the parent is unlinked
- * as the children are published. And {@code du} counts shared blocks once per file while {@code df} counts them
- * once in total, so per-directory usage over-reports until the parent goes away.
+ * Two side effects. Page cache is per inode, so bytes read through both parent and child are cached twice
+ * (transient, since the parent is unlinked as the children are published). And {@code du} counts shared blocks
+ * once per file while {@code df} counts them once in total, so per-directory usage over-reports until the parent
+ * goes away.
  * <p>
- * Once the copy is gone, {@link #writeDigest} is the only thing left that touches the data at all, and it
- * therefore becomes the entire cost of a split. It can be turned off with
- * {@code zero_copy_split_digest_enabled: false}, which takes a split down to its Index.db pass; nothing requires
- * the component, but {@code Verifier} answers its absence by upgrading to a full extended verification, so
- * {@code nodetool verify} and {@code nodetool import --verify-sstables} get slower for those children. The
- * component audit behind that claim is on {@link org.apache.cassandra.config.Config#zero_copy_split_digest_enabled}.
+ * With the copy gone, {@link #writeDigest} is the only thing left that touches the data and therefore becomes
+ * the entire cost of a split. {@code zero_copy_split_digest_enabled: false} takes a split down to its Index.db
+ * pass; nothing requires the component, but {@code Verifier} answers its absence by upgrading to a full extended
+ * verification, so {@code nodetool verify} and {@code nodetool import --verify-sstables} get slower. The
+ * component audit is on {@link org.apache.cassandra.config.Config#zero_copy_split_digest_enabled}.
  *
  * <h2>Trailing slack is forbidden</h2>
- * {@code CompressionMetadata.compressedFileLength} is taken from the physical file length, and the last
- * chunk's length is derived as {@code compressedFileLength - offsets[C-1] - 4}. A single trailing byte
- * inflates that length and can flip the reader's {@code length < maxCompressedLength} test, causing
- * compressed bytes to be handed back as raw data. The child's Data.db is therefore truncated to exactly
- * {@code headPad + O(j+1) - O(i)} and asserted -- the pad is at the head, so it does not interfere with this:
- * it shifts {@code offsets[C-1]} and {@code compressedFileLength} by the same amount.
+ * {@code compressedFileLength} comes from the physical file length and the last chunk's length is derived as
+ * {@code compressedFileLength - offsets[C-1] - 4}, so a single trailing byte inflates that length and can flip
+ * the reader's {@code length < maxCompressedLength} test, handing compressed bytes back as raw data. The child's
+ * Data.db is truncated to exactly {@code headPad + O(j+1) - O(i)} and asserted; the pad shifts both terms
+ * equally and so does not interfere.
  *
- * <h2>Uncompressed SSTables</h2>
- * Not supported; {@link #split(SSTableReader, int, LifecycleTransaction)} throws
- * {@link UnsupportedOperationException} whose message starts with {@link #UNCOMPRESSED_UNSUPPORTED_MESSAGE}.
- * An uncompressed split is a different algorithm, not a degenerate case of this one: the cut is exact (no
- * chunk grid, no dead prefix, {@code shift == lo}) and CRC.db must be regenerated wholesale because its
- * 64 KiB grid is addressed from origin 0 and a suffix cut is misaligned against it. Producing a child with a
- * stale or sliced CRC.db would corrupt outbound partial streaming silently, so this refuses instead.
+ * <h2>Not supported</h2>
+ * <ul>
+ *   <li><b>Uncompressed sstables</b> -- refused with {@link UnsupportedOperationException}
+ *       ({@link #UNCOMPRESSED_UNSUPPORTED_MESSAGE}). That is a different algorithm, not a degenerate case: the
+ *       cut is exact ({@code shift == lo}, no chunk grid, no dead prefix) and CRC.db has to be regenerated
+ *       wholesale because its 64 KiB grid is addressed from origin 0 and a suffix cut is misaligned against it.
+ *       A stale or sliced CRC.db would corrupt outbound partial streaming silently.</li>
+ *   <li><b>Secondary indexes</b> -- refused; see {@link #hasNoPerSSTableIndex}. An index with per-sstable state
+ *       (SASI's {@code SI_*.db}) cannot be rebuilt without reading the rows, and omitting it fails silently.</li>
+ *   <li><b>JBOD</b> -- unsupported but NOT refused; it is a deployment constraint.
+ *       {@link #descriptorAllocator} allocates every child in the PARENT's directory and never consults
+ *       {@code Directories} for a writeable location, where the anticompaction rewrite this replaces calls
+ *       {@code getWriteableLocationAsFile} and so lands on a disk with room. With several
+ *       {@code data_file_directories} that means children cannot spill to a sibling disk,
+ *       {@code min_free_space_per_drive_in_mb} is not reserved for them, and a parent larger than the free space
+ *       on its own disk fills that disk, failing every concurrent flush and compaction that had chosen it.
+ *       Reflink cannot span filesystems either. Run this on single-data-directory nodes.</li>
+ * </ul>
  * Use {@link #isSupported(SSTableReader)} to test up front.
  *
- * <h2>Secondary indexes: not supported, and refused</h2>
- * A table carrying any secondary index is rejected by {@link #isSupported(SSTableReader)} and falls back to the
- * rewrite. The rewrite hands {@code cfs.indexManager.listIndexes()} to {@code SSTableWriter.create}, so an index
- * that keeps per-sstable state -- SASI's {@code SI_*.db}, the only one in this tree -- gets an
- * {@code SSTableFlushObserver} and is rebuilt as each output is written. A split cannot produce that component
- * without deserialising the rows it exists to avoid deserialising. Omitting it would fail SILENTLY rather than
- * loudly: {@code ColumnIndex.update} discards the un-indexed set {@code DataTracker.update} returns and
- * {@code DataTracker.getBuiltIndexes} skips any sstable whose index file is missing, so queries would simply
- * stop matching the child's partitions until a restart or {@code nodetool rebuild_index}. The gate is therefore
- * deliberately conservative and refuses on ANY index, including a plain {@code CassandraIndex} whose data lives
- * in a separate table and which a split would in fact survive untouched. See {@link #hasNoPerSSTableIndex}.
- *
- * <h2>JBOD: not supported, and NOT refused</h2>
- * Unlike everything above, this one is not enforced -- it is a deployment constraint, and the only thing that
- * makes it visible is this paragraph. {@link #descriptorAllocator} allocates every child in the PARENT's
- * directory and nothing here ever consults {@code Directories} for a writeable location, where the
- * anticompaction rewrite this replaces calls
- * {@code getWriteableLocationAsFile(cfs.getExpectedCompactedFileSize(...))} and so lands on a disk with room.
- * On a node with more than one {@code data_file_directories} entry that means the children cannot go anywhere
- * but the parent's disk, {@code min_free_space_per_drive_in_mb} is not reserved on their behalf, and a parent
- * larger than the free space on its own disk fills that disk -- failing every concurrent flush and compaction
- * that had already chosen it -- rather than spilling to a sibling disk that had room. Reflink cannot span
- * filesystems either, so on JBOD the sharing that makes a split nearly free is only ever available within the
- * one directory. Run this on single-data-directory nodes.
- *
  * <h2>Accepted imprecision in the children's Statistics.db</h2>
- * Four of the {@code StatsMetadata} fields are absolute per-sstable <em>totals</em> rather than min/max bounds,
- * and cannot be recomputed without deserialising rows -- which is the entire cost this class exists to avoid.
- * Each of the K children therefore inherits the PARENT-WIDE value of
- * {@code estimatedCellPerPartitionCount}, {@code totalRows}, {@code totalColumnsSet} and
- * {@code estimatedTombstoneDropTime}, while {@code estimatedPartitionSize} (and hence
- * {@code SSTableReader.estimatedKeys()}) is re-derived exactly per child. That mix is deliberate and its
- * consequences are ACCEPTED, not overlooked:
+ * Four {@code StatsMetadata} fields are absolute per-sstable <em>totals</em> rather than min/max bounds and
+ * cannot be recomputed without deserialising rows, which is the entire cost this class exists to avoid. Every
+ * child therefore inherits the PARENT-WIDE {@code estimatedCellPerPartitionCount}, {@code totalRows},
+ * {@code totalColumnsSet} and {@code estimatedTombstoneDropTime}, while {@code estimatedPartitionSize} (and so
+ * {@code SSTableReader.estimatedKeys()}) is re-derived exactly. The consequences are accepted:
  * <ul>
- *   <li>Per-table aggregates that sum these across sstables -- {@code getMeanRowCount},
- *       {@code estimatedColumnCountHistogram}, the table-level droppable-tombstone ratio -- over-report by
- *       roughly K for as long as the children survive.</li>
- *   <li>{@code AbstractCompactionStrategy.worthDroppingTombstones} divides the child's exact key count by the
- *       parent-wide cell count, so its {@code remainingColumnsRatio} collapses to about 1/K and the effective
- *       {@code tombstone_threshold} for a child is about K times the configured one. Combined with this path not
- *       purging tombstones at all, a child both retains more droppable tombstones than a rewrite would have left
- *       and is less likely to be picked for the single-sstable tombstone compaction that would drop them. Set
- *       {@code unchecked_tombstone_compaction} or lower {@code tombstone_threshold} on tables where that
- *       matters.</li>
- *   <li>Inherited {@code maxLocalDeletionTime}/{@code maxTimestamp} similarly keep a fully-expired child from
- *       being dropped whole by {@code getFullyExpiredSSTables}, and put every child in the parent's TWCS
- *       window.</li>
+ *   <li>per-table aggregates that sum these across sstables ({@code getMeanRowCount},
+ *       {@code estimatedColumnCountHistogram}, the table-level droppable-tombstone ratio) over-report by roughly
+ *       K for as long as the children survive;</li>
+ *   <li>{@code worthDroppingTombstones} divides the child's exact key count by the parent-wide cell count, so
+ *       the effective {@code tombstone_threshold} for a child is about K times the configured one -- and this
+ *       path does not purge tombstones either. Set {@code unchecked_tombstone_compaction} or lower
+ *       {@code tombstone_threshold} where that matters;</li>
+ *   <li>inherited {@code maxLocalDeletionTime}/{@code maxTimestamp} keep a fully-expired child from being
+ *       dropped whole by {@code getFullyExpiredSSTables}, and put every child in the parent's TWCS window.</li>
  * </ul>
- * None of this can lose or resurrect data: every inherited value is at least as wide or as large as the truth,
- * so the errors are all in the conservative direction. They are a metrics and compaction-scheduling cost, paid
- * until the children are compacted normally, in exchange for not reading a single row.
+ * Every inherited value is at least as wide as the truth, so nothing can lose or resurrect data; the cost is
+ * metrics and compaction scheduling until the children are compacted normally.
  *
  * <h2>Durability: every component is fsynced before the child is published</h2>
- * The transaction's COMMIT record is itself fsynced, and committing is what unlinks the parent. So any child
- * component that is merely in page cache at that moment can be lost by a power failure while the parent's
- * removal survives -- and the key range it held is then gone from this replica, with the child failing to open.
- * Three of the eight components used to be in exactly that state, because the convenience helpers they went
- * through do not fsync: {@code MetadataSerializer.rewriteSSTableMetadata} (Statistics.db) only flushes and
- * renames, and {@code SSTableReader.saveBloomFilter} / {@code saveSummary} (Filter.db, Summary.db) only flush --
- * and both of the latter swallow the IOException and delete the half-written file. Statistics.db was the fatal
- * one: it is the only copy of the child's {@code SerializationHeader} and repair state, and unlike the filter and
- * the summary it cannot be rebuilt from anything.
+ * Committing the transaction unlinks the parent and its COMMIT record is itself fsynced, so a child component
+ * left in page cache at that moment can be lost while the parent's removal survives -- and that key range is
+ * then gone from this replica. Everything is therefore fsynced before {@code SSTableReader.open}: Data.db via
+ * {@code FileChannel.force(true)} in {@link #copyData}, CompressionInfo.db in
+ * {@code CompressionMetadata.Writer.doPrepare}, Index.db and Statistics.db via {@code SequentialWriter.finish()},
+ * Filter.db/Summary.db/Digest.crc32 via {@code FileOutputStreamPlus.sync()}, TOC.txt in
+ * {@code SSTable.appendTOC}, and the directory entries via one {@link SyncUtil#trySyncDir} per child.
  * <p>
- * They are now all written the way {@code BigTableWriter} writes them -- Statistics.db through a
- * {@code SequentialWriter} plus {@code finish()}, Filter.db and Summary.db through an explicitly synced
- * {@code FileOutputStreamPlus} -- and {@link SyncUtil#trySyncDir} makes the directory entries durable too, since
- * a file whose data is on disk but whose name is not in a synced directory is lost just the same. The full
- * inventory, all of it before {@code SSTableReader.open}:
- * <table>
- *   <tr><td>Data.db</td><td>{@code FileChannel.force(true)} in {@link #copyData} -- a clone is a metadata
- *       change and needs it just as much as a write does</td></tr>
- *   <tr><td>CompressionInfo.db</td><td>{@code CompressionMetadata.Writer.doPrepare}</td></tr>
- *   <tr><td>Index.db</td><td>{@code SequentialWriter.finish() -> syncInternal()}</td></tr>
- *   <tr><td>Statistics.db</td><td>{@code SequentialWriter.finish() -> syncInternal()}</td></tr>
- *   <tr><td>Filter.db</td><td>{@code FileOutputStreamPlus.sync()}</td></tr>
- *   <tr><td>Summary.db</td><td>{@code FileOutputStreamPlus.sync()}</td></tr>
- *   <tr><td>Digest.crc32</td><td>{@code FileOutputStreamPlus.sync()}, when written at all -- see
- *       {@code zero_copy_split_digest_enabled}</td></tr>
- *   <tr><td>TOC.txt</td><td>{@code SSTable.appendTOC}</td></tr>
- *   <tr><td>the directory</td><td>{@code SyncUtil.trySyncDir}, once per child</td></tr>
- * </table>
+ * That is why three components are not written through the obvious helpers, none of which fsync:
+ * {@code MetadataSerializer.rewriteSSTableMetadata} (Statistics.db) only flushes and renames, and
+ * {@code SSTableReader.saveBloomFilter}/{@code saveSummary} only flush, then swallow the IOException and delete
+ * the half-written file. Statistics.db is the fatal one -- the only copy of the child's
+ * {@code SerializationHeader} and repair state, and unlike the filter and summary it cannot be rebuilt.
  *
  * <h2>This is a compaction, and behaves like one</h2>
  * When the caller supplies a {@link Progress} the copy is registered with the compaction framework: visible in
@@ -258,44 +212,34 @@ public final class ZeroCopySSTableSplitter
 {
     private static final Logger logger = LoggerFactory.getLogger(ZeroCopySSTableSplitter.class);
 
-    /**
-     * Prefix of the {@link UnsupportedOperationException} message raised for an uncompressed parent. Exposed so
-     * tests can assert the refusal without string-matching the whole sentence.
-     */
+    /** Prefix of the refusal for an uncompressed parent, so tests need not match the whole sentence. */
     public static final String UNCOMPRESSED_UNSUPPORTED_MESSAGE =
         "ZeroCopySSTableSplitter requires a compressed sstable";
 
     /**
-     * One {@code transferTo} slice. FileChannel.transferTo caps near 0x7ffff000 and may return short counts, so
-     * this only has to stay well under that -- but it is deliberately small, because it is also the granularity
-     * at which {@link Progress} throttles against {@code compaction_throughput} and notices a stop request. A
-     * multi-GiB slice would make the copy effectively unthrottled and uninterruptible.
+     * One {@code transferTo} slice. Deliberately small: it is the granularity at which {@link Progress}
+     * throttles against {@code compaction_throughput} and notices a stop request, so a multi-GiB slice would
+     * make the copy effectively unthrottled and uninterruptible.
      */
     private static final int TRANSFER_SLICE = 4 << 20;
 
     /** Same buffer size the digest/checksum writers use. */
     private static final int COPY_BUFFER_SIZE = 64 * 1024;
 
-    /**
-     * Alignment the head pad is computed against; see {@link Reflink#RANGE_ALIGNMENT} for why it is a constant
-     * 64 KiB and not the filesystem's actual block size.
-     */
+    /** Alignment the head pad is computed against; see {@link Reflink#RANGE_ALIGNMENT}. */
     private static final long CLONE_ALIGNMENT = Reflink.RANGE_ALIGNMENT;
 
     /**
-     * A child smaller than this is copied rather than shared. Sharing forces up to {@link #CLONE_ALIGNMENT}
-     * bytes of head pad, which cost disk space and a longer digest pass, so it only pays for itself when the
-     * range dwarfs the pad. 1 MiB is 16 times the pad: a 6% overhead ceiling at the very bottom of the range,
-     * and immaterial for anything a split is actually run on.
+     * A child smaller than this is copied rather than shared: the head pad costs disk space and a longer digest
+     * pass, so sharing only pays when the range dwarfs it. 1 MiB is 16 times the pad, a 6% overhead ceiling at
+     * the very bottom of the range.
      */
     private static final long MIN_CLONE_BYTES = 1L << 20;
 
     /**
-     * Test hook. Lay every child out as if extent sharing were available -- head pad and all -- so that the
-     * aligned layout is covered on filesystems that cannot share extents, which is every developer laptop and
-     * CI box. Also lifts {@link #MIN_CLONE_BYTES}, since test sstables are far smaller than that. The copy
-     * mechanism is unaffected: if the filesystem cannot clone, the padded range is transferred conventionally
-     * and the child is byte-for-byte what a clone would have produced.
+     * Test hook: lay every child out as if extent sharing were available -- head pad and all -- so the aligned
+     * layout is covered on filesystems that cannot share extents, i.e. every laptop and CI box. Also lifts
+     * {@link #MIN_CLONE_BYTES}, since test sstables are smaller than that. The copy mechanism is unaffected.
      */
     @VisibleForTesting
     static volatile boolean forceAlignedLayoutForTesting = false;
@@ -325,10 +269,7 @@ public final class ZeroCopySSTableSplitter
     // Arithmetic. Deliberately static and free of any sstable dependency so it can be unit tested alone.
     // ------------------------------------------------------------------------------------------------
 
-    /**
-     * Index of the compression chunk containing {@code uncompressedPosition}.
-     * Mirrors {@code CompressionMetadata.chunkFor}, which does {@code 8 * (position / chunkLength)}.
-     */
+    /** Index of the compression chunk containing {@code uncompressedPosition}, as {@code chunkFor} computes it. */
     public static long chunkIndexFor(long uncompressedPosition, int chunkLength)
     {
         checkChunkLength(chunkLength);
@@ -344,10 +285,9 @@ public final class ZeroCopySSTableSplitter
     }
 
     /**
-     * Last (inclusive) chunk of a child whose live bytes end at exclusive parent uncompressed offset
-     * {@code hi}. Note this is {@code (hi - 1) / L}, not {@code hi / L}: when {@code hi} lands exactly on a
-     * chunk boundary the final chunk is the one <em>before</em> it, and using {@code hi / L} would read one
-     * chunk too far (and throw {@code CorruptSSTableException(EOFException)} at the end of the file).
+     * Last (inclusive) chunk of a child whose live bytes end at exclusive parent uncompressed offset {@code hi}.
+     * {@code (hi - 1) / L}, not {@code hi / L}: when {@code hi} lands on a chunk boundary the final chunk is the
+     * one <em>before</em> it, and {@code hi / L} would read a chunk too far.
      */
     public static long lastChunk(long hi, int chunkLength)
     {
@@ -358,9 +298,8 @@ public final class ZeroCopySSTableSplitter
     }
 
     /**
-     * The child's {@code CompressionInfo.dataLength}: from the start of its first chunk up to the end of its
-     * last live partition. There is no trailing slack -- {@code getPositionsForRanges} uses
-     * {@code uncompressedLength()} as its right bound.
+     * The child's {@code CompressionInfo.dataLength}: from the start of its first chunk to the end of its last
+     * live partition. No trailing slack -- {@code getPositionsForRanges} bounds on {@code uncompressedLength()}.
      */
     public static long childDataLength(long hi, long firstChunk, int chunkLength)
     {
@@ -382,8 +321,7 @@ public final class ZeroCopySSTableSplitter
     }
 
     /**
-     * The whole chunk-range computation for one child, as an immutable value so a test can assert on it
-     * directly.
+     * The whole chunk-range computation for one child, as an immutable value.
      *
      * @param lo          first live byte, inclusive, in PARENT uncompressed space (a partition start)
      * @param hi          last live byte + 1, exclusive, in PARENT uncompressed space (a partition end)
@@ -424,27 +362,21 @@ public final class ZeroCopySSTableSplitter
     }
 
     /**
-     * Where the child's Data.db comes from and how it gets there: the second, physical half of the arithmetic,
-     * and the only part that knows about extent sharing.
+     * Where the child's Data.db comes from and how it gets there: the physical half of the arithmetic, and the
+     * only part that knows about extent sharing.
      * <p>
-     * {@code FICLONERANGE} needs its source offset, its destination offset and its length all aligned (see
-     * {@link Reflink}), and a chunk boundary in the parent is aligned to nothing -- offsets advance by
-     * {@code compressedLength + 4}, so they are effectively uniform modulo any block size. The destination
-     * offset and the length we control; the source offset we do not. So the copy is extended BACKWARDS to the
-     * previous alignment boundary and the child's chunk offsets are rebased by that boundary rather than by
-     * {@code O(i)}, which puts {@code pad = O(i) mod A} bytes of the parent's previous chunk at the head of the
-     * child's Data.db and makes the child's {@code offsets[0]} equal to {@code pad} instead of 0.
+     * {@code FICLONERANGE} needs source offset, destination offset and length all aligned (see {@link Reflink}),
+     * and a chunk boundary is aligned to nothing -- offsets advance by {@code compressedLength + 4}. We control
+     * the destination offset and the length but not the source, so the copy is extended BACKWARDS to the
+     * previous alignment boundary and the child's offsets are rebased by that boundary rather than by
+     * {@code O(i)}. That puts {@code pad = O(i) mod A} bytes of the parent's previous chunk at the head of the
+     * child and makes its {@code offsets[0]} equal to {@code pad} instead of 0. Those bytes belong to no chunk
+     * and are never read (the reader only enters Data.db at an offset from its own offsets array); they are a
+     * physical dead prefix distinct from {@link ChunkRange#deadPrefixBytes}, which lives in uncompressed space.
      * <p>
-     * Those pad bytes belong to no chunk of the child and are never read: the reader only ever enters Data.db
-     * at an offset taken from its own offsets array. They are a second, physical dead prefix, distinct from and
-     * independent of {@link ChunkRange#deadPrefixBytes}, which lives in uncompressed space. Everything else
-     * about the child is unchanged -- the last chunk's length is still derived as
-     * {@code compressedFileLength - offsets[C-1] - 4} and the pad shifts both terms equally.
-     * <p>
-     * The tail is what alignment cannot buy: {@code cloneLength} is the aligned part of the child's length, and
-     * the remaining {@code tailLength < A} bytes are copied conventionally. Rounding the clone UP instead and
-     * truncating would work on xfs, but it would depend on truncate unsharing a partially shared final block,
-     * and a sub-64-KiB copy is not worth that.
+     * {@code cloneLength} is the aligned part of the child's length; the remaining {@code tailLength < A} bytes
+     * are copied conventionally. Rounding the clone UP and truncating instead would work on xfs, but would
+     * depend on truncate unsharing a partially shared final block for the sake of a sub-64-KiB copy.
      *
      * @param copyFrom      {@code O(i)}, the parent offset of the child's first chunk
      * @param physicalBytes {@code O(j+1) - O(i)}, the child's live chunk bytes
@@ -461,8 +393,8 @@ public final class ZeroCopySSTableSplitter
 
         long pad = align ? copyFrom & (CLONE_ALIGNMENT - 1) : 0;
         long childLength = pad + physicalBytes;
-        // Aligned down, so the clone can never reach past the child's last live byte and into the parent's
-        // trailing slack -- which chunkEnd() exists to keep out of the child.
+        // Aligned down, so the clone can never reach past the child's last live byte into the parent's trailing
+        // slack -- which chunkEnd() exists to keep out of the child.
         long cloneLength = share ? childLength - (childLength & (CLONE_ALIGNMENT - 1)) : 0;
         return new CopyPlan(copyFrom - pad, pad, childLength, cloneLength);
     }
@@ -470,7 +402,7 @@ public final class ZeroCopySSTableSplitter
     /** Immutable result of {@link #copyPlan(long, long, boolean, boolean)}. */
     public static final class CopyPlan
     {
-        /** Parent offset the child's byte 0 is taken from: {@code O(i) - headPadBytes}, alignment aligned. */
+        /** Parent offset the child's byte 0 is taken from: {@code O(i) - headPadBytes}, alignment-aligned. */
         public final long srcStart;
         /** Bytes of the parent's previous chunk at the head of the child, and the child's {@code offsets[0]}. */
         public final long headPadBytes;
@@ -591,14 +523,14 @@ public final class ZeroCopySSTableSplitter
     // ------------------------------------------------------------------------------------------------
 
     /**
-     * Repair state to stamp into one child's Statistics.db, instead of inheriting the parent's. The triple is
-     * written by {@link #writeStatistics} <em>before</em> the child reader is opened, so the reader is born with
-     * the right state and no {@code mutateRepairedAndReload} is ever needed.
+     * Repair state to stamp into one child's Statistics.db instead of inheriting the parent's. Written by
+     * {@link #writeStatistics} <em>before</em> the child reader is opened, so the reader is born with the right
+     * state and no {@code mutateRepairedAndReload} is needed.
      * <p>
-     * The two invariants enforced here are the ones {@code CompactionStrategyHolder.managesRepairedGroup} and
+     * The invariants checked here are the ones {@code CompactionStrategyHolder.managesRepairedGroup} and
      * {@code PendingRepairHolder.managesRepairedGroup} assert when the Tracker routes a newly visible sstable to
-     * a compaction strategy holder; violating them turns into an {@code IllegalArgumentException} thrown from
-     * inside a Tracker notification, which is a far worse place to find out.
+     * a strategy holder -- failing there means an {@code IllegalArgumentException} from inside a Tracker
+     * notification, a far worse place to find out.
      */
     public static final class RepairState
     {
@@ -630,9 +562,8 @@ public final class ZeroCopySSTableSplitter
         }
 
         /**
-         * The state every child gets from the overloads that do not take an explicit one: the parent's, copied
-         * verbatim and deliberately unvalidated, so those overloads behave exactly as they did before per-child
-         * repair state existed.
+         * The state the overloads without an explicit one give every child: the parent's, verbatim and
+         * deliberately unvalidated, so they behave as they did before per-child repair state existed.
          */
         public static RepairState inherit(StatsMetadata parentStats)
         {
@@ -688,9 +619,9 @@ public final class ZeroCopySSTableSplitter
         /** Bytes at the head of the child Data.db owned by no partition, {@code lo mod L}. */
         public final long deadPrefixBytes;
         /**
-         * Bytes of the parent's PREVIOUS chunk physically present at the head of this child's Data.db so that
-         * its first chunk lands on an alignment boundary, i.e. the child's {@code offsets[0]}. Zero unless the
-         * child's extents were (or were meant to be) shared with the parent. See {@link CopyPlan}.
+         * Bytes of the parent's PREVIOUS chunk at the head of this child's Data.db, there so its first chunk
+         * lands on an alignment boundary; also the child's {@code offsets[0]}. Zero unless the child's extents
+         * were (or were meant to be) shared with the parent. See {@link CopyPlan}.
          */
         public final long headPadBytes;
         /** Bytes of {@link #physicalBytes} that were shared with the parent instead of copied. */
@@ -700,9 +631,9 @@ public final class ZeroCopySSTableSplitter
         /** Components written for the child; the exact set passed to {@code SSTableReader.open}. */
         public final Set<Component> components;
         /**
-         * The repair state actually stamped into this child's Statistics.db. This is the state of the boundary
-         * range the child came from, carried through rather than positionally re-derived, so an empty boundary
-         * range that produced no child cannot shift the pairing.
+         * The repair state actually stamped into this child's Statistics.db: the state of the boundary range it
+         * came from, carried through rather than positionally re-derived, so an empty range that produced no
+         * child cannot shift the pairing.
          */
         public final RepairState repairState;
         /** The opened, validated child reader. The caller owns this reference and must release it. */
@@ -751,8 +682,8 @@ public final class ZeroCopySSTableSplitter
         /** The children, in token order. */
         public final List<Child> children;
         /**
-         * Sum of every child's live chunk bytes, {@code O(j+1) - O(i)}. This is the size of the data the split
-         * had to account for, NOT the number of bytes it moved: subtract {@link #totalBytesCloned} for that.
+         * Sum of every child's live chunk bytes, {@code O(j+1) - O(i)}: the data the split had to account for,
+         * NOT what it moved -- subtract {@link #totalBytesCloned} for that.
          */
         public final long totalPhysicalBytesCopied;
         /** Sum of every child's dead prefix. */
@@ -760,15 +691,15 @@ public final class ZeroCopySSTableSplitter
         /** Sum of every child's head pad, i.e. the disk space alignment cost. */
         public final long totalHeadPadBytes;
         /**
-         * Bytes that were shared with the parent as copy-on-write extents rather than copied. Zero on a
-         * filesystem that cannot share extents; otherwise within one alignment unit per child of
-         * {@code totalPhysicalBytesCopied + totalHeadPadBytes}, and those bytes cost neither I/O nor disk space.
+         * Bytes shared with the parent as copy-on-write extents rather than copied, costing neither I/O nor disk
+         * space. Zero where the filesystem cannot share extents; otherwise within one alignment unit per child
+         * of {@code totalPhysicalBytesCopied + totalHeadPadBytes}.
          */
         public final long totalBytesCloned;
         /**
          * Compressed bytes physically present in two children because a split boundary fell inside a chunk.
-         * Bounded by one chunk per interior boundary -- and free, not merely bounded, when the children's
-         * extents are shared: both point at the same physical chunk.
+         * Bounded by one chunk per interior boundary, and free rather than merely bounded when the extents are
+         * shared: both children point at the same physical chunk.
          */
         public final long duplicatedChunkBytes;
         /** Wall clock of the whole split. */
@@ -808,35 +739,27 @@ public final class ZeroCopySSTableSplitter
     // ------------------------------------------------------------------------------------------------
 
     /**
-     * Makes one split a first-class member of the compaction framework for its whole duration, so a verbatim
-     * byte copy behaves like every other compaction-family operation instead of being an invisible, unbounded
-     * burst of I/O:
-     * <ul>
-     *   <li>it appears in {@code nodetool compactionstats}, because the caller registers this holder with
-     *       {@code CompactionManager.active};</li>
-     *   <li>it is bounded by {@code compaction_throughput}, because every slice is acquired from the compaction
-     *       {@link RateLimiter} before it moves;</li>
-     *   <li>it stops when asked -- {@code nodetool stop ANTICOMPACTION}, {@code nodetool stop --id <id>},
-     *       TRUNCATE, DROP, and anything else routed through {@code runWithCompactionsDisabled}, all of which
-     *       work by walking {@code active.getCompactions()} and calling {@link CompactionInfo.Holder#stop()}.
-     *       The {@link CompactionInfo} carries the parent sstable so {@code CompactionInfo.shouldStop} can match
-     *       it.</li>
-     * </ul>
+     * Makes one split a first-class member of the compaction framework, so a verbatim byte copy behaves like
+     * every other compaction-family operation instead of being an invisible, unbounded burst of I/O: it appears
+     * in {@code nodetool compactionstats} (the caller registers this holder with {@code CompactionManager.active}),
+     * it is bounded by {@code compaction_throughput} (every slice is acquired from the compaction
+     * {@link RateLimiter} before it moves), and it stops when asked -- {@code nodetool stop ANTICOMPACTION},
+     * {@code nodetool stop --id}, TRUNCATE, DROP and {@code runWithCompactionsDisabled} all walk
+     * {@code active.getCompactions()} and call {@link CompactionInfo.Holder#stop()}. The {@link CompactionInfo}
+     * carries the parent sstable so {@code CompactionInfo.shouldStop} can match it.
+     * <p>
      * A verbatim chunk copy has no partition boundary to stop cleanly at, so the stop check lives inside the
      * transfer loop and aborts the split outright: {@link CompactionInterruptedException} propagates out of
      * {@link #split}, the transaction is aborted and every child is deleted. A caller must NOT treat that as a
-     * reason to fall back to the rewrite path -- the operator asked for the work to stop, not to be done a
-     * different and more expensive way.
+     * reason to fall back to the rewrite -- the operator asked for the work to stop, not to be done a more
+     * expensive way.
      * <p>
-     * {@code total} is an estimate, and deliberately so: the copy pass accounts for the parent's physical bytes
-     * once, and {@link #writeDigest} -- when it runs at all -- reads every child back for a second pass. A
-     * boundary chunk lands in two children, and an aligned child carries a head pad, so a split with many
-     * interior boundaries can report marginally over 100%. The digest pass is counted only when
-     * {@code zero_copy_split_digest_enabled} says it will happen; otherwise a split would peg at 50% and finish.
-     * <p>
-     * Bytes that were SHARED rather than copied still count towards {@code total} -- otherwise a reflink split
-     * would stall at 50% -- but they are not charged to the rate limiter, because throttling work that generates
-     * no disk traffic would make sharing exactly as slow as copying. See {@link #cloned}.
+     * {@code total} is deliberately an estimate: the copy accounts for the parent's physical bytes once and
+     * {@link #writeDigest} reads every child back for a second pass, but a boundary chunk lands in two children
+     * and an aligned child carries a head pad, so a split with many interior boundaries can report marginally
+     * over 100%. The digest pass is only counted when {@code zero_copy_split_digest_enabled} says it will happen,
+     * otherwise a split would peg at 50% and finish. Shared bytes count towards {@code total} for the same reason
+     * but are not charged to the rate limiter -- see {@link #cloned}.
      */
     public static final class Progress extends CompactionInfo.Holder
     {
@@ -871,10 +794,9 @@ public final class ZeroCopySSTableSplitter
         }
 
         /**
-         * Called immediately BEFORE {@code bytes} move: throws if a stop has been requested, then blocks until
-         * the compaction rate limiter lets the slice through. Permits are acquired for the whole slice even
-         * though {@code transferTo} may move fewer, which over-throttles by at most one slice per short count
-         * -- the conservative direction.
+         * Called immediately BEFORE {@code bytes} move: throws if a stop was requested, then blocks until the
+         * rate limiter lets the slice through. Permits cover the whole slice even though {@code transferTo} may
+         * move fewer, which over-throttles by at most one slice per short count.
          */
         void beforeSlice(int bytes)
         {
@@ -896,10 +818,10 @@ public final class ZeroCopySSTableSplitter
         }
 
         /**
-         * Bytes accounted for by sharing extents rather than by moving them. Deliberately NOT pushed through
-         * the rate limiter: {@code compaction_throughput} exists to bound disk traffic, and a clone generates
-         * none, so charging it would make a reflink split take exactly as long as the copy it replaced. They
-         * still count towards {@code total} so that {@code nodetool compactionstats} reaches 100%.
+         * Bytes accounted for by sharing extents rather than moving them. Deliberately NOT rate limited:
+         * {@code compaction_throughput} bounds disk traffic and a clone generates none, so charging it would make
+         * a reflink split as slow as the copy it replaced. Still counted towards {@code total} so
+         * {@code compactionstats} reaches 100%.
          */
         void cloned(long bytes)
         {
@@ -939,19 +861,17 @@ public final class ZeroCopySSTableSplitter
     /**
      * Whether the components this class writes can be read back at {@code version}.
      * <p>
-     * A child keeps the PARENT's version -- {@link #descriptorAllocator} stamps it from the parent's descriptor,
-     * because the child's Data.db is the parent's bytes verbatim and nothing in them is re-encoded. Two of the
-     * component writers, though, are version-blind: {@link CompressionMetadata.Writer} always emits the
-     * {@code maxCompressedLength} field that only {@code na}+ reads back, and {@link BloomFilterSerializer} always
-     * writes the 4.0 bit order that only {@code na}+ expects (CASSANDRA-9067). Stamped with a 3.x version those
-     * two are read back wrong rather than rejected: CompressionInfo.db is parsed four bytes out of phase, which
-     * makes {@code chunkCount} the low half of {@code dataLength} and turns {@code SSTableReader.open} into a
-     * multi-gigabyte {@code Memory.allocate} followed by {@code CorruptSSTableException}.
+     * A child keeps the PARENT's version, since its Data.db is the parent's bytes verbatim. Two of the component
+     * writers are version-blind though: {@link CompressionMetadata.Writer} always emits the
+     * {@code maxCompressedLength} field only {@code na}+ reads back, and {@link BloomFilterSerializer} always
+     * writes the 4.0 bit order only {@code na}+ expects (CASSANDRA-9067). Stamped with a 3.x version those are
+     * read back wrong rather than rejected -- CompressionInfo.db is parsed four bytes out of phase, making
+     * {@code chunkCount} the low half of {@code dataLength} and turning {@code open} into a multi-gigabyte
+     * {@code Memory.allocate} then {@code CorruptSSTableException}.
      * <p>
-     * Rather than teach those writers to downgrade, refuse: a 3.x-format sstable is one {@code upgradesstables}
-     * away, and every caller's fallback is a normal rewrite, which produces a current-version sstable anyway.
-     * Statistics.db is not at issue -- {@link #writeStatistics} passes {@code child.version} through to the
-     * metadata serializer.
+     * Rather than teach those writers to downgrade, refuse: a 3.x sstable is one {@code upgradesstables} away and
+     * every caller's fallback is a rewrite, which produces a current-version sstable anyway. Statistics.db is not
+     * at issue -- {@link #writeStatistics} passes {@code child.version} to the metadata serializer.
      */
     static boolean writesReadableComponents(Version version)
     {
@@ -961,19 +881,18 @@ public final class ZeroCopySSTableSplitter
     /**
      * Whether the parent's table is free of secondary indexes, which a split cannot carry across.
      * <p>
-     * The rewrite path this replaces hands {@code cfs.indexManager.listIndexes()} to {@code SSTableWriter.create},
-     * so an index that keeps per-sstable state gets a {@code SSTableFlushObserver} and its component is written
-     * alongside each output. SASI is the one such index in this tree, and its {@code SI_*.db} would have to be
-     * rebuilt from the rows -- which is the entire cost this class exists to avoid. Emitting children without it
-     * fails silently rather than loudly: {@code ColumnIndex.update} drops the un-indexed set that
-     * {@code DataTracker.update} returns, and {@code DataTracker.getBuiltIndexes} skips any sstable whose index
-     * file is absent, so queries just stop matching those partitions until a restart or {@code rebuild_index}.
+     * The rewrite this replaces hands {@code cfs.indexManager.listIndexes()} to {@code SSTableWriter.create}, so an
+     * index with per-sstable state gets an {@code SSTableFlushObserver} and its component is written alongside each
+     * output. SASI is the one such index in this tree, and rebuilding its {@code SI_*.db} means reading the rows --
+     * the entire cost this class exists to avoid. Emitting children without it fails silently rather than loudly:
+     * {@code ColumnIndex.update} drops the un-indexed set {@code DataTracker.update} returns and
+     * {@code getBuiltIndexes} skips any sstable whose index file is absent, so queries just stop matching those
+     * partitions until a restart or {@code rebuild_index}.
      * <p>
-     * This refuses on ANY index rather than only on the ones with per-sstable components. A plain
-     * {@code CassandraIndex} keeps its data in a separate table and would in fact survive a split untouched, so
-     * that is stricter than it has to be; it is also the cheap, obviously-correct test -- it needs no
-     * {@code ColumnFamilyStore}, so it holds for offline callers too -- and the cost of being wrong in this
-     * direction is only that such a table falls back to the rewrite it would have done before this existed.
+     * This refuses on ANY index, not only those with per-sstable components. A plain {@code CassandraIndex} keeps
+     * its data in a separate table and would survive a split untouched, so that is stricter than necessary -- but
+     * it is the cheap, obviously-correct test, it needs no {@code ColumnFamilyStore} so it holds offline too, and
+     * being wrong this way only costs such a table the rewrite it did before this existed.
      */
     static boolean hasNoPerSSTableIndex(SSTableReader parent)
     {
@@ -982,13 +901,11 @@ public final class ZeroCopySSTableSplitter
 
     /**
      * The least {@link SSTable} that can carry a child's identity into the transaction log before any of its files
-     * exist, so that a crash mid-split is cleaned up rather than half-adopted. See the call site in
-     * {@link #buildChild}.
+     * exist, so a crash mid-split is cleaned up rather than half-adopted. See the call site in {@link #buildChild}.
      * <p>
-     * {@code LogRecord.make(ADD, table)} reads only {@code descriptor.baseFilename()} and
-     * {@code getAllFilePaths().size()}, and the record's file list is rebuilt by listing the directory when it is
-     * replayed, so the component set here only has to be non-empty -- it is not a claim about what the child will
-     * have. {@code SSTable} is abstract solely to stop it being used as a reader; it declares no abstract methods.
+     * {@code LogRecord.make(ADD, table)} reads only {@code baseFilename()} and {@code getAllFilePaths().size()},
+     * and the record's file list is rebuilt by listing the directory at replay, so the component set here only has
+     * to be non-empty -- it is not a claim about what the child will have.
      */
     private static final class PendingChild extends SSTable
     {
@@ -1025,11 +942,10 @@ public final class ZeroCopySSTableSplitter
         requireSupported(parent);
 
         long start = Clock.Global.nanoTime();
-        // Three sequential passes over Index.db, none of which retains anything per partition: count, select,
-        // build. The count has to come first because the split-point selection needs the exact partition count
-        // up front for its tail-room clamp. Index.db is a couple of percent of Data.db, so the extra pass is
-        // cheap next to copying the chunk runs -- and it is what keeps this O(numChildren) in heap instead of
-        // O(partitions). See the note on RunSelector.
+        // Three sequential Index.db passes, none retaining anything per partition: count, select, build. The count
+        // comes first because split-point selection needs the exact partition count up front for its tail-room
+        // clamp. Index.db is a couple of percent of Data.db, so the extra pass is cheap next to copying the chunk
+        // runs -- and it is what keeps heap at O(numChildren) instead of O(partitions). See RunSelector.
         int partitionCount = countPartitions(parent);
         if (numChildren > partitionCount)
             throw new IllegalArgumentException("cannot split " + partitionCount + " partitions into " +
@@ -1056,17 +972,15 @@ public final class ZeroCopySSTableSplitter
     }
 
     /**
-     * Split at explicit boundaries, stamping a caller-supplied repair state into each child instead of
-     * inheriting the parent's. Boundary semantics are exactly those of
-     * {@link #split(SSTableReader, List, LifecycleTransaction)}: child {@code b} covers keys
-     * {@code [boundaries[b-1], boundaries[b])}, and {@code perChild.get(b)} is the state for that key range.
+     * Split at explicit boundaries, stamping a caller-supplied repair state into each child instead of inheriting
+     * the parent's. Boundary semantics are those of {@link #split(SSTableReader, List, LifecycleTransaction)}:
+     * child {@code b} covers keys {@code [boundaries[b-1], boundaries[b])} and {@code perChild.get(b)} is the
+     * state for that range.
      * <p>
-     * <b>Pairing.</b> A boundary range containing no partition still produces no child, so
-     * {@code result.children.size()} may be smaller than {@code perChild.size()}. The state is therefore
-     * <em>carried</em> with the range rather than re-derived from a child's index afterwards, and the state
-     * actually written is exposed on {@link Child#repairState}. Positional pairing of {@code children} against
-     * {@code perChild} is only valid when every range is known to be non-empty; use {@link Child#repairState}
-     * and do not assume it otherwise.
+     * <b>Pairing.</b> An empty boundary range still produces no child, so {@code result.children.size()} may be
+     * smaller than {@code perChild.size()}. The state is therefore carried with the range rather than re-derived
+     * afterwards, and what was written is exposed on {@link Child#repairState}. Pairing {@code children} against
+     * {@code perChild} positionally is only valid when every range is known to be non-empty.
      *
      * @param perChild one state per boundary range, so exactly {@code boundaries.size() + 1} entries, in the
      *                 same order as the ranges; may be null to inherit the parent's state for every child
@@ -1118,8 +1032,8 @@ public final class ZeroCopySSTableSplitter
         }
 
         long start = Clock.Global.nanoTime();
-        // Two passes, as before: the run starts fall out of the same walk that resolves the boundaries, so this
-        // form needs no counting pass.
+        // Two passes: the run starts fall out of the same walk that resolves the boundaries, so this form needs no
+        // counting pass.
         Runs runs = selectByBoundaries(parent, boundaries);
         return build(parent, runs, perChild, txn, progress, start);
     }
@@ -1170,13 +1084,11 @@ public final class ZeroCopySSTableSplitter
     /**
      * One sequential walk of the parent Index.db, retaining nothing.
      *
-     * <p>This deliberately does not hand back the positions. An earlier version collected every partition's
-     * uncompressed Data.db offset into a {@code long[]}, which is 8 bytes per partition steady state and 16-24
-     * at the peak of the doubling and the final trim. That is invisible on a 512 MiB parent and a hard ceiling
-     * on a real one: a terabyte of 1 KiB partitions is a billion records, i.e. tens of gigabytes of heap for an
-     * array whose every access turned out to be sequential. Everything downstream now takes what it needs from
-     * a stream -- {@link RunSelector} keeps O(numChildren), and {@link #buildChild} keeps one record of
-     * lookback.
+     * <p>Deliberately does not hand back the positions. Collecting every partition's offset into a {@code long[]}
+     * is 8 bytes per partition (16-24 at the peak of a doubling), which is invisible on a 512 MiB parent and tens
+     * of gigabytes of heap on a terabyte of 1 KiB partitions -- for an array whose every access is sequential
+     * anyway. Downstream takes what it needs from the stream: {@link RunSelector} keeps O(numChildren) and
+     * {@link #buildChild} keeps one record of lookback.
      *
      * @return the exact number of records
      */
@@ -1225,9 +1137,8 @@ public final class ZeroCopySSTableSplitter
 
     /**
      * Where each child's run of index records begins, and the parent Data.db offset of that first record.
-     * O(numChildren), which is the whole point of the shape: {@link #build} needs a run's {@code lo} before it
-     * can copy that child's chunks, so these offsets cannot be recovered during the build pass, but there are
-     * only ever {@code numChildren} of them.
+     * {@link #build} needs a run's {@code lo} before it can copy that child's chunks, so these cannot be recovered
+     * during the build pass -- but there are only ever {@code numChildren} of them.
      */
     @VisibleForTesting
     static final class Runs
@@ -1253,9 +1164,8 @@ public final class ZeroCopySSTableSplitter
     private static final long UNRESOLVED = -1;
 
     /**
-     * The explicit-boundary form. The run starts fall out of the same walk that compares keys against the
-     * boundaries, so this costs one pass and no extra reads -- and the keys still never have to be retained (a
-     * wide sstable would otherwise cost ~150 bytes of heap per partition).
+     * The explicit-boundary form: the run starts fall out of the same walk that compares keys against the
+     * boundaries, so this costs one pass, no extra reads, and no retained keys.
      */
     private static Runs selectByBoundaries(SSTableReader parent, List<DecoratedKey> boundaries)
     {
@@ -1303,18 +1213,18 @@ public final class ZeroCopySSTableSplitter
     }
 
     /**
-     * Streaming form of {@link #chooseByByteShare}: fed every partition's Data.db offset in order, it produces
-     * the same run starts, plus each run's first offset, in O(numChildren) heap rather than O(partitions).
+     * Streaming form of {@link #chooseByByteShare}: fed every partition's Data.db offset in order, it produces the
+     * same run starts plus each run's first offset in O(numChildren) heap rather than O(partitions).
      *
-     * <p>The selection is a forward scan with one record of lookback, so the only reason the array version
-     * needed random access was its two clamps, and both reach only a bounded distance:
+     * <p>The selection is a forward scan with one record of lookback; only its two clamps needed random access,
+     * and both reach a bounded distance:
      * <ul>
-     *   <li><b>Tail room</b> ({@code min(candidate, partitionCount - (numChildren - m))}) can only name one of
-     *       the last {@code numChildren} records, so those offsets are kept in {@link #tail}.</li>
-     *   <li><b>Non-empty</b> ({@code max(candidate, runStarts[m - 1] + 1)}) only binds when the natural
-     *       candidate has not advanced past the previous run's start, which means the record it names is at
-     *       most one past the cursor. When it is exactly one past, the offset is not readable yet and is filled
-     *       in by a later {@link #offer}; those deferrals are contiguous, so a single pointer tracks them.</li>
+     *   <li><b>Tail room</b> ({@code min(candidate, partitionCount - (numChildren - m))}) can only name one of the
+     *       last {@code numChildren} records, whose offsets are kept in {@link #tail}.</li>
+     *   <li><b>Non-empty</b> ({@code max(candidate, runStarts[m - 1] + 1)}) only binds when the natural candidate
+     *       has not advanced past the previous run's start, so the record it names is at most one past the cursor.
+     *       When it is exactly one past, the offset is filled in by a later {@link #offer}; those deferrals are
+     *       contiguous, so one pointer tracks them.</li>
      * </ul>
      * {@link #chooseByByteShare} is kept as the reference implementation this is differentially tested against.
      */
@@ -1372,8 +1282,7 @@ public final class ZeroCopySSTableSplitter
             if (firstUnresolved < nextRun && runStarts[firstUnresolved] == index)
                 runPositions[firstUnresolved++] = position;
 
-            // Several targets can fall inside one partition, so keep placing until this record is short of the
-            // next one.
+            // Several targets can fall inside one partition, so keep placing until this record is short of the next.
             while (nextRun < numChildren)
             {
                 long target = base + (total * nextRun) / numChildren;
@@ -1388,9 +1297,8 @@ public final class ZeroCopySSTableSplitter
 
         Runs finish()
         {
-            // Targets the scan never reached: the cursor is at partitionCount, which the tail clamp pulls back
-            // to a real record. position and target are unread in that case -- the snap-back is guarded on
-            // candidate < partitionCount.
+            // Targets the scan never reached: the cursor is at partitionCount, which the tail clamp pulls back to a
+            // real record. position and target go unread -- the snap-back is guarded on candidate < partitionCount.
             while (nextRun < numChildren)
                 place(partitionCount, UNRESOLVED, UNRESOLVED);
 
@@ -1427,9 +1335,9 @@ public final class ZeroCopySSTableSplitter
                 // one past the cursor: its offset arrives with the next record
                 candidatePosition = candidate == index ? position : UNRESOLVED;
             }
-            // ... and always leave room for the runs still to be placed. This can only pull the candidate back
-            // into the tail window, and never below the clamp above, because runStarts[m - 1] is itself bounded
-            // by partitionCount - (numChildren - (m - 1)).
+            // ... and always leave room for the runs still to be placed. This can only pull the candidate back into
+            // the tail window, never below the clamp above, since runStarts[m - 1] is itself bounded by
+            // partitionCount - (numChildren - (m - 1)).
             int room = partitionCount - (numChildren - m);
             if (candidate > room)
             {
@@ -1450,10 +1358,9 @@ public final class ZeroCopySSTableSplitter
     }
 
     /**
-     * The reference implementation of split-point selection, kept because it is far easier to read than
-     * {@link RunSelector} and because {@code RunSelector} is tested by asserting it agrees with this for
-     * randomised inputs. Not used in production: it needs every partition's offset at once, which is exactly
-     * the allocation this class no longer makes.
+     * Reference implementation of split-point selection, kept because it reads far more easily than
+     * {@link RunSelector}, which is tested by asserting it agrees with this on randomised inputs. Not used in
+     * production: it needs every partition's offset at once, the allocation this class exists to avoid.
      */
     @VisibleForTesting
     static int[] chooseByByteShare(long[] positions, long uncompressedLength, int numChildren)
@@ -1506,13 +1413,12 @@ public final class ZeroCopySSTableSplitter
             throw new IllegalStateException("uncompressedLength " + parent.uncompressedLength() +
                                             " != CompressionMetadata.dataLength " + parentDataLength);
 
-        // The offsets table must address every chunk the data needs. It is allowed to hold MORE: a
+        // The offsets table must address every chunk the data needs, and is allowed to hold MORE: a
         // compaction-produced sstable carries one extra zero-uncompressed-length chunk, because
-        // SSTableRewriter.doPrepare syncs the data file twice (switchWriter(null) -> openFinalEarly() ->
-        // dataFile.sync(), then prepareToCommit() -> syncInternal()) and CompressedSequentialWriter.flushData
-        // appends a chunk unconditionally, even on an empty buffer. Those bytes belong to no chunk this splitter
-        // may copy; keeping them out is chunkEnd()'s job. Fewer entries than the data needs, on the other hand,
-        // means the parent's CompressionInfo.db disagrees with its own dataLength and nothing here is safe.
+        // SSTableRewriter.doPrepare syncs the data file twice and CompressedSequentialWriter.flushData appends a
+        // chunk unconditionally, even on an empty buffer. Keeping those bytes out of the children is chunkEnd()'s
+        // job. Fewer entries than the data needs means the parent's CompressionInfo.db disagrees with its own
+        // dataLength and nothing here is safe.
         long addressableChunks = meta.offHeapSize() / 8;
         long neededChunks = (parentDataLength + chunkLength - 1) / chunkLength;
         if (neededChunks > addressableChunks)
@@ -1553,9 +1459,9 @@ public final class ZeroCopySSTableSplitter
                     continue;  // empty boundary range -> no child
 
                 long lo = runs.runPositions[b];
-                // The run after this one starts where this one's data ends; for the last run that is the end of
-                // the parent's data. An empty trailing run has runStarts == partitionCount, which is exactly
-                // the case that takes dataLength, so its UNRESOLVED offset is never read.
+                // The next run starts where this one's data ends; for the last run that is the end of the parent's
+                // data. An empty trailing run has runStarts == partitionCount, which is exactly the case that takes
+                // dataLength, so its UNRESOLVED offset is never read.
                 long hi = (to < partitionCount) ? runs.runPositions[b + 1] : parentDataLength;
                 if (lo == UNRESOLVED || hi == UNRESOLVED)
                     throw new IllegalStateException("run " + b + " has an unresolved Data.db offset");
@@ -1571,8 +1477,8 @@ public final class ZeroCopySSTableSplitter
                                                     parentCompressedLength + "-byte Data.db (copyTo=" + copyTo +
                                                     ") for " + range);
 
-                // Carried with the range, never re-derived positionally: an empty range above produced no child
-                // and must not shift the state of the ranges after it.
+                // Carried with the range, never re-derived positionally: an empty range above produced no child and
+                // must not shift the state of the ranges after it.
                 RepairState repairState = perRun == null ? inherited : perRun.get(b);
 
                 Descriptor child = descriptors.get();
@@ -1619,29 +1525,22 @@ public final class ZeroCopySSTableSplitter
     /**
      * The absolute Data.db offset one past the end of chunk {@code k}, INCLUDING its 4-byte inline CRC32.
      * <p>
-     * Derived from the chunk itself, and deliberately never from the physical file length.
+     * Derived from the chunk itself and deliberately never from the physical file length.
      * {@link CompressionMetadata.Chunk#length} excludes the checksum, so {@code offset + length + 4} is exactly
-     * where the next chunk starts -- and {@code chunkFor} has already resolved that from the offsets table when
-     * a further entry exists, and from {@code compressedFileLength} when it does not.
+     * where the next chunk starts, and {@code chunkFor} has already resolved that from the offsets table (or from
+     * {@code compressedFileLength} for the final entry).
      * <p>
-     * This is the fix for a silent-corruption bug worth spelling out, because the shape that triggers it is the
-     * common one. An earlier version computed the end of chunk {@code k} as the start of chunk {@code k + 1},
-     * with a chunk count taken to be {@code ceil(dataLength / chunkLength)} and {@code compressedFileLength}
-     * substituted when {@code k + 1} reached that count. For a child that assumption is exact -- the
-     * {@code (C-1)*L < Dp <= C*L} invariant in {@link #chunkRange} forces {@code ceil(Dp/L) == C}. For a
-     * <em>compaction-produced</em> parent it is one short: such an sstable carries an extra
-     * zero-uncompressed-length chunk (see the note in {@link #build}), so {@code compressedFileLength} is 9-ish
-     * bytes past the end of the last real chunk. The last child then copied that trailing slack, its own last
-     * chunk's length -- which the reader derives as {@code compressedFileLength - offsets[C-1] - 4} -- grew by
-     * exactly that much, and every read of the child's final chunk failed its CRC32 with
-     * {@code CorruptBlockException}, or, once the inflated length crossed {@code maxCompressedLength}, took the
-     * reader's raw-chunk branch and returned compressed bytes as row data. Nothing caught it on the way out:
-     * Digest.crc32 is computed over whatever bytes were actually written, so it stayed self-consistent, and the
-     * parent had already been obsoleted by the time anything read the child.
-     * <p>
-     * The reason no test saw it: every test parent is <em>flushed</em>, and the flush path calls
-     * {@code flushData} exactly once, at prepare, with the final partial buffer. Only the double-sync in
-     * {@code SSTableRewriter} produces the extra chunk.
+     * Not "the start of chunk {@code k + 1}, substituting {@code compressedFileLength} once {@code k + 1} reaches
+     * {@code ceil(dataLength / chunkLength)}", which is what this used to do. That is exact for a child -- the
+     * {@code (C-1)*L < Dp <= C*L} invariant in {@link #chunkRange} forces {@code ceil(Dp/L) == C} -- but one chunk
+     * short for a compaction-produced parent, which carries an extra zero-uncompressed-length chunk (see
+     * {@link #build}) putting {@code compressedFileLength} ~9 bytes past the last real chunk. The last child then
+     * copied that slack, inflating its own last chunk's derived length by the same amount, so every read of its
+     * final chunk failed CRC32 with {@code CorruptBlockException} -- or, once the length crossed
+     * {@code maxCompressedLength}, took the raw-chunk branch and returned compressed bytes as row data. Silently:
+     * Digest.crc32 covers whatever was written so it stayed self-consistent, and the parent was already obsoleted
+     * by the time anything read the child. No test saw it because test parents are flushed, and the flush path
+     * calls {@code flushData} exactly once; only {@code SSTableRewriter}'s double sync makes the extra chunk.
      */
     static long chunkEnd(CompressionMetadata meta, long k, int chunkLength)
     {
@@ -1685,30 +1584,27 @@ public final class ZeroCopySSTableSplitter
                                                               Component.SUMMARY);
 
         // ---------- The transaction's ADD record, BEFORE the first byte of the child exists ----------
-        // Upstream writers register in their constructor -- BigTableWriter's "must track before any files are
-        // created" -- and this has to do the same, for the same reason: the ADD record is the ONLY thing that
-        // makes the child's files visible to LogTransaction.removeUnfinishedLeftovers after a crash. Registering
-        // after the components are written (which is where the reader exists, and where this used to happen)
+        // Same as BigTableWriter registering in its constructor ("must track before any files are created"), and
+        // for the same reason: the ADD record is the ONLY thing that makes the child's files visible to
+        // LogTransaction.removeUnfinishedLeftovers after a crash. Registering once the components are written
         // leaves a multi-minute window in which a kill -9 strands files no boot path reclaims --
-        // removeUnfinishedLeftovers skips them for want of a record, and scrubDataDirectories' orphan sweep keeps
-        // any descriptor whose Data.db is non-empty. What the next start then does depends only on how far the
-        // child got: a complete one is opened as a live sstable ALONGSIDE the parent it was meant to replace, so
-        // the same partitions exist twice in two different repair states; one interrupted inside writeStatistics
-        // leaves a durable zero-length Statistics.db, which SSTableReader.open turns into a
-        // CorruptSSTableException that the startup failure policy escalates on every subsequent boot. And with
-        // extents shared, a stranded Data.db pins the parent's blocks -- the one cost this class exists to avoid.
+        // removeUnfinishedLeftovers skips them for want of a record and scrubDataDirectories' orphan sweep keeps
+        // any descriptor with a non-empty Data.db. A complete stranded child is then opened as a live sstable
+        // ALONGSIDE the parent it was meant to replace, so the same partitions exist twice in two repair states;
+        // one interrupted inside writeStatistics leaves a durable zero-length Statistics.db, which open() turns
+        // into a CorruptSSTableException the startup failure policy escalates on every boot. And with extents
+        // shared, a stranded Data.db pins the parent's blocks.
         //
-        // The record needs nothing but the descriptor: LogRecord.make reads the base filename and the component
-        // count, the files it later deletes are found by listing the directory at replay time rather than from
-        // what existed when it was written (nothing), and LogFile's numFiles strictness is REMOVE-only. That is
-        // exactly what BigTableWriter already relies on.
+        // The record needs nothing but the descriptor: LogRecord.make reads the base filename and component count,
+        // the files it deletes are found by listing the directory at replay, and LogFile's numFiles strictness is
+        // REMOVE-only.
         if (txn != null)
             txn.trackNew(new PendingChild(child, parent.metadata));
 
         // ---------- Data.db: verbatim compressed chunk run, shared with the parent where possible ----------
         // Sharing needs the head of the run aligned, which costs a pad, so it is only planned for when the
-        // filesystem has not already said no. An unpadded run cannot be shared at all -- O(i) is aligned to
-        // nothing -- so this decision has to be made before the copy, not after it fails.
+        // filesystem has not already said no. An unpadded run cannot be shared at all (O(i) is aligned to nothing),
+        // so the decision has to be made before the copy rather than after it fails.
         boolean canShare = DatabaseDescriptor.getZeroCopySplitReflinkEnabled()
                            && Reflink.isPossibleIn(child.directory);
         boolean align = forceAlignedLayoutForTesting || (canShare && physicalBytes >= MIN_CLONE_BYTES);
@@ -1754,10 +1650,10 @@ public final class ZeroCopySSTableSplitter
                         index.readFully(promoted);
                     }
 
-                    // The selection pass and this one have to land on the same records. Checking the run's
-                    // first offset against what selection recorded, and strict monotonicity from there on,
-                    // catches a desynchronised walk without keeping an offset per partition -- and rules out a
-                    // non-increasing parent index, which the old per-record equality check did not.
+                    // Selection and this pass have to land on the same records. Checking the run's first offset
+                    // against what selection recorded, plus strict monotonicity from there on, catches a
+                    // desynchronised walk without keeping an offset per partition, and rules out a non-increasing
+                    // parent index as well.
                     if (r == from)
                     {
                         if (position != range.lo)
@@ -1771,8 +1667,8 @@ public final class ZeroCopySSTableSplitter
                             throw new IllegalStateException("parent Index.db offsets are not strictly increasing" +
                                                             " at record " + r + ": " + previousPosition + " -> " +
                                                             position);
-                        // exact estimatedPartitionSize: rowSize_i == position_{i+1} - position_i identically,
-                        // so each partition is sized one record late, from the next record's offset
+                        // exact estimatedPartitionSize: rowSize_i == position_{i+1} - position_i identically, so
+                        // each partition is sized one record late, from the next record's offset
                         partitionSizes.add(position - previousPosition);
                     }
                     previousPosition = position;
@@ -1783,8 +1679,8 @@ public final class ZeroCopySSTableSplitter
 
                     long childIndexStart = out.position();
                     ByteBufferUtil.writeWithShortLength(key, out);
-                    // The ONLY rewritten field. Canonical minimal vint, never padded -- so the child's records
-                    // are shorter than the parent's and its index offsets are NOT the parent's minus a constant.
+                    // The ONLY rewritten field. Canonical minimal vint, never padded, so the child's records are
+                    // shorter than the parent's and its index offsets are NOT the parent's minus a constant.
                     out.writeUnsignedVInt(position - range.shift);
                     out.writeUnsignedVInt(promotedSize);
                     if (promoted != null)
@@ -1799,8 +1695,8 @@ public final class ZeroCopySSTableSplitter
                     cardinality.offerHashed(hashed);
                 }
 
-                // The run's last partition ends where the next run's first record starts, which for the last
-                // run is the end of the parent's data -- exactly what chunkRange() was handed as hi.
+                // The run's last partition ends where the next run's first record starts, which for the last run is
+                // the end of the parent's data -- exactly what chunkRange() was handed as hi.
                 if (range.hi <= previousPosition)
                     throw new IllegalStateException("run ends at " + range.hi + " but its last record is at " +
                                                     previousPosition);
@@ -1837,9 +1733,9 @@ public final class ZeroCopySSTableSplitter
                         plan.childLength, range.dataLength, repairState);
 
         // ---------- Digest.crc32: CRC32 over EVERY physical byte of the child Data.db ----------
-        // Optional, and the one component whose cost is proportional to the DATA rather than to the index: with
-        // the extents shared this read is the whole remaining cost of the split. Skipping it is a supported
-        // configuration, not a degraded one -- see writeDigest and Config.zero_copy_split_digest_enabled.
+        // Optional, and the one component whose cost scales with the DATA rather than the index: with extents
+        // shared this read is the whole remaining cost of the split. Skipping it is a supported configuration --
+        // see writeDigest and Config.zero_copy_split_digest_enabled.
         if (DatabaseDescriptor.getZeroCopySplitDigestEnabled())
         {
             writeDigest(child, progress);
@@ -1851,13 +1747,11 @@ public final class ZeroCopySSTableSplitter
         components.add(Component.TOC);
         SSTable.appendTOC(child, components);
 
-        // Every component's CONTENTS are now fsynced individually; this makes their DIRECTORY ENTRIES durable
-        // too. Without it a crash can leave a directory that does not list a file whose data is on disk, which is
-        // the same loss as an unsynced file. Only the components written through SequentialWriter (Index.db,
-        // Statistics.db) sync the directory themselves, on create (SequentialWriter.openChannel ->
-        // SyncUtil.trySyncDir); Data.db, Filter.db, Summary.db, Digest.crc32 and TOC.txt do not. One fsync per
-        // child, and it has to happen before the child is published, because zcTxn's COMMIT record -- which is
-        // itself fsynced and which unlinks the parent -- must never become durable first.
+        // Every component's CONTENTS are fsynced individually above; this makes their DIRECTORY ENTRIES durable
+        // too, since a directory that does not list a file whose data is on disk loses it just the same. Only the
+        // components written through SequentialWriter (Index.db, Statistics.db) sync the directory themselves, on
+        // create; Data.db, Filter.db, Summary.db, Digest.crc32 and TOC.txt do not. This has to happen before the
+        // child is published: the transaction's COMMIT record is itself fsynced and unlinks the parent.
         SyncUtil.trySyncDir(child.directory);
 
         SSTableReader reader = SSTableReader.open(child, components, parent.metadata);
@@ -1871,9 +1765,8 @@ public final class ZeroCopySSTableSplitter
             throw t;
         }
 
-        // Deliberately no trackNew(reader) here: the ADD record for this descriptor went in before the copy
-        // started, and LifecycleTransaction.trackNew does nothing but write that record -- it is keyed on the
-        // base filename, so tracking the reader as well would only add a duplicate.
+        // Deliberately no trackNew(reader): the ADD record for this descriptor went in before the copy started, and
+        // trackNew does nothing but write that record, keyed on the base filename.
 
         return new Child(child, first, last, range, physicalBytes, plan.headPadBytes, cloned, partitionCount,
                          ImmutableSet.copyOf(components), repairState, reader);
@@ -1882,34 +1775,28 @@ public final class ZeroCopySSTableSplitter
     // ------------------------------------------------------------------------------------------------
     // Component writers
     //
-    // Several of these are package-private rather than private because {@link ZeroCopySSTableSlice} synthesises
-    // the same components for the same reason -- verbatim byte ranges need an index rebased onto them, and
-    // everything else follows from that index -- and every remark below about what may and may not be inherited
-    // applies there identically. Sharing them is what keeps the two paths from drifting; a second copy of
-    // writeStatistics in particular would be a second place to get the SerializationHeader and the
-    // commitlog-interval/host-id pair wrong. writeCompressionInfo is NOT shared: a split child is one chunk run
-    // with an alignment pad, a slice is a concatenation of runs with none, and the two loops have nothing in
-    // common but the writer they call.
+    // Several are package-private rather than private because ZeroCopySSTableSlice synthesises the same components
+    // for the same reason -- verbatim byte ranges need an index rebased onto them, and everything else follows from
+    // that index -- and every remark below about what may be inherited applies there identically. Sharing them
+    // keeps the two paths from drifting; a second copy of writeStatistics in particular would be a second place to
+    // get the SerializationHeader and the commitlog-interval/host-id pair wrong. writeCompressionInfo is NOT
+    // shared: a split child is one chunk run with an alignment pad, a slice a concatenation of runs with none.
     // ------------------------------------------------------------------------------------------------
 
     /**
      * Materialise the child's Data.db as the verbatim parent byte range
-     * {@code [plan.srcStart, plan.srcStart + plan.childLength)}, sharing as much of it as the filesystem allows
-     * and copying the rest.
+     * {@code [plan.srcStart, plan.srcStart + plan.childLength)}, sharing as much as the filesystem allows and
+     * copying the rest.
      * <p>
-     * The clone comes first and is all-or-nothing: {@code FICLONERANGE} either shares every byte it was asked
-     * for or writes nothing at all, so a refusal costs one syscall and falls straight through to the transfer
-     * loop, which then copies the whole range exactly as it did before extent sharing existed. That is also why
-     * the head pad is harmless when the clone fails: the padded layout is a property of the plan, not of the
-     * mechanism, and a padded range that had to be copied produces a child byte-for-byte identical to the one a
-     * successful clone would have produced.
+     * The clone comes first and is all-or-nothing: {@code FICLONERANGE} either shares every byte asked for or
+     * writes nothing, so a refusal costs one syscall and falls through to the transfer loop, which copies the whole
+     * range as it did before extent sharing existed. That is also why the head pad is harmless when the clone
+     * fails: the padded layout belongs to the plan, not the mechanism, and a padded range that had to be copied
+     * produces a byte-for-byte identical child.
      * <p>
-     * transferTo returns short counts and caps near 0x7ffff000, so it MUST be looped; {@code n <= 0} means EOF,
-     * not "retry". The loop is also where this operation is throttled and cancelled: each
-     * {@link #TRANSFER_SLICE} is cleared with {@code progress} before it moves, so {@code compaction_throughput}
-     * bounds the copy and a stop request raises {@link CompactionInterruptedException} within one slice rather
-     * than at the end of a multi-GiB file. A clone moves no bytes, so it is checked for cancellation but not
-     * throttled.
+     * transferTo returns short counts and caps near 0x7ffff000, so it MUST be looped; {@code n <= 0} means EOF, not
+     * "retry". The loop is also where the operation is throttled and cancelled, one {@link #TRANSFER_SLICE} at a
+     * time. A clone moves no bytes, so it is checked for cancellation but not throttled.
      *
      * @return how many bytes were shared rather than copied; 0 means the whole range was transferred
      */
@@ -1932,9 +1819,9 @@ public final class ZeroCopySSTableSplitter
                 }
             }
 
-            // The ioctl does not move the destination's file position, and transferTo writes at wherever that
-            // is, so the tail has to be positioned explicitly. Without this the tail would overwrite the head
-            // of the range that was just shared -- which, being copy-on-write, would silently succeed.
+            // The ioctl does not move the destination's file position and transferTo writes at wherever that is, so
+            // the tail has to be positioned explicitly. Without this it would overwrite the head of the range just
+            // shared -- which, being copy-on-write, would silently succeed.
             outChannel.position(cloned);
 
             long position = plan.srcStart + cloned;
@@ -1960,13 +1847,12 @@ public final class ZeroCopySSTableSplitter
     }
 
     /**
-     * Child CompressionInfo.db via the same {@code Writer} every real sstable is written with, so the child
-     * cannot drift from the format. Only dataLength, chunkCount and the offsets differ from the parent.
+     * Child CompressionInfo.db via the same {@code Writer} every real sstable uses, so it cannot drift from the
+     * format. Only dataLength, chunkCount and the offsets differ from the parent.
      * <p>
-     * Offsets are rebased by {@link CopyPlan#srcStart}, not by {@code O(i)}, so the child's {@code offsets[0]}
-     * is its head pad rather than 0 whenever the run was aligned for sharing. Nothing else changes: the offsets
-     * remain absolute positions in the child's own Data.db, and the last chunk's derived length
-     * ({@code compressedFileLength - offsets[C-1] - 4}) is unaffected because the pad shifts both terms.
+     * Offsets are rebased by {@link CopyPlan#srcStart} rather than {@code O(i)}, so the child's {@code offsets[0]}
+     * is its head pad instead of 0 whenever the run was aligned for sharing. They remain absolute positions in the
+     * child's own Data.db, and the last chunk's derived length is unaffected because the pad shifts both terms.
      */
     private static void writeCompressionInfo(Descriptor child, CompressionMetadata meta, ChunkRange range,
                                              CopyPlan plan)
@@ -2004,33 +1890,31 @@ public final class ZeroCopySSTableSplitter
     }
 
     /**
-     * The child's Statistics.db: the parent's four components with exactly two derived replacements
+     * The child's Statistics.db: the parent's four components with two derived replacements
      * (estimatedPartitionSize and the COMPACTION cardinality) plus a recomputed compressionRatio.
      * <p>
-     * HEADER is passed through by reference and is MANDATORY to inherit byte-for-byte: rows in the copied
-     * Data.db encode timestamps/localDeletionTime/TTL as unsigned vint deltas off
-     * {@code stats.minTimestamp/minLocalDeletionTime/minTTL} and encode their columns as a bitmap subset of
-     * {@code header.columns()}. Tightening any of those silently corrupts every relocated row with all CRCs
-     * still passing.
+     * HEADER passes through by reference and is MANDATORY to inherit byte-for-byte: rows in the copied Data.db
+     * encode timestamps/localDeletionTime/TTL as unsigned vint deltas off
+     * {@code stats.minTimestamp/minLocalDeletionTime/minTTL} and their columns as a bitmap subset of
+     * {@code header.columns()}. Tightening any of those silently corrupts every relocated row with all CRCs still
+     * passing.
      * <p>
-     * {@code commitLogIntervals} and {@code originatingHostId} are inherited as an ATOMIC PAIR from the same
-     * parent StatsMetadata (see docs/splits-research.md 4.5). Copying the parent's interval set into all K
-     * children leaves the per-table union in CommitLogReplayer bit-identical because IntervalSet.Builder.add
-     * is normalising and idempotent. The bug this avoids is stamping the child with the LOCAL host id (which
-     * every MetadataCollector constructor does) while inheriting a foreign parent's intervals: the replayer
-     * gates on {@code originatingHostId.equals(localhostId)} and would then interpret foreign segment ids
-     * against the local commitlog, discarding acked-but-unflushed mutations.
+     * {@code commitLogIntervals} and {@code originatingHostId} are inherited as an ATOMIC PAIR (see
+     * docs/splits-research.md 4.5). Copying the parent's interval set into all K children leaves the per-table
+     * union in CommitLogReplayer bit-identical, since {@code IntervalSet.Builder.add} is normalising and
+     * idempotent. The bug this avoids is stamping the child with the LOCAL host id, as every MetadataCollector
+     * constructor does, while inheriting a foreign parent's intervals: the replayer gates on
+     * {@code originatingHostId.equals(localhostId)} and would interpret foreign segment ids against the local
+     * commitlog, discarding acked-but-unflushed mutations.
      * <p>
-     * {@code repairedAt}/{@code pendingRepair}/{@code isTransient} come from {@code repairState}, which
-     * defaults to the parent's triple. Writing them here rather than mutating afterwards means the reader
-     * opened a few lines later is already correct, so nothing ever publishes a child with the wrong repair
-     * state -- the Tracker routes a newly visible sstable to a compaction strategy holder by exactly this
-     * triple ({@code CompactionStrategyManager.handleListChangedNotification}).
+     * {@code repairedAt}/{@code pendingRepair}/{@code isTransient} come from {@code repairState}, defaulting to the
+     * parent's triple. Writing them here rather than mutating afterwards means the reader opened a few lines later
+     * is already correct, so nothing ever publishes a child with the wrong repair state -- the Tracker routes a
+     * newly visible sstable to a strategy holder by exactly this triple.
      * <p>
-     * {@code sstableLevel} is still inherited. That matches what {@code createWriterForAntiCompaction} does for
-     * a single-input anticompaction (it preserves the level when all inputs agree), and it is safe here: the
-     * children are disjoint contiguous key sub-ranges of the parent's range, so they cannot overlap each other,
-     * and they occupy exactly the slot the obsoleted parent vacated.
+     * {@code sstableLevel} is inherited, matching what {@code createWriterForAntiCompaction} does for a
+     * single-input anticompaction. Safe here: the children are disjoint contiguous key sub-ranges of the parent's
+     * range, so they cannot overlap each other, and they occupy the slot the obsoleted parent vacated.
      */
     static void writeStatistics(Descriptor child,
                                         Map<MetadataType, MetadataComponent> parentMetadata,
@@ -2041,11 +1925,10 @@ public final class ZeroCopySSTableSplitter
                                         long dataLength,
                                         RepairState repairState) throws IOException
     {
-        // The four inherited absolute TOTALS below (estimatedCellPerPartitionCount, estimatedTombstoneDropTime,
-        // totalColumnsSet, totalRows) are parent-wide in every child, so per-table aggregates over-report by
-        // ~K and worthDroppingTombstones under-fires by ~K. Accepted, conservative in direction, and documented
-        // on the class javadoc under "Accepted imprecision in the children's Statistics.db" -- recomputing them
-        // would require deserialising every row, which is the whole cost this class exists to avoid.
+        // The four absolute TOTALS below (estimatedCellPerPartitionCount, estimatedTombstoneDropTime,
+        // totalColumnsSet, totalRows) are parent-wide in every child, so per-table aggregates over-report by ~K and
+        // worthDroppingTombstones under-fires by ~K. Accepted and conservative; see "Accepted imprecision in the
+        // children's Statistics.db" on the class javadoc.
         StatsMetadata childStats = new StatsMetadata(partitionSizes,                              // DERIVED, exact
                                                      parentStats.estimatedCellPerPartitionCount,  // ACCEPTED: parent-wide
                                                      parentStats.commitLogIntervals,              // atomic pair, see javadoc
@@ -2074,14 +1957,12 @@ public final class ZeroCopySSTableSplitter
         // VALIDATION (partitioner + fp chance) and HEADER pass through by reference: no schema lookup,
         // nothing that can throw, byte-identical to the parent.
 
-        // Written the way a real sstable's Statistics.db is written -- BigTableWriter.writeMetadata, i.e. a
-        // SequentialWriter plus finish() -- and NOT through MetadataSerializer.rewriteSSTableMetadata. That
-        // helper only flush()es a FileOutputStreamPlus and renames, with no fsync of the file and no fsync of
-        // the directory. That is fine for its existing callers, which mutate the repair status of an sstable
-        // whose Statistics.db is ALREADY durable, and it is not fine here: this is the only copy of the child's
-        // SerializationHeader and repair state. finish() ends in syncInternal(), and SequentialWriter fsyncs the
-        // directory when it creates the file, so both the contents and the directory entry are durable before
-        // the transaction's COMMIT record unlinks the parent.
+        // Written the way BigTableWriter.writeMetadata does -- SequentialWriter plus finish() -- and NOT through
+        // MetadataSerializer.rewriteSSTableMetadata, which only flushes and renames, fsyncing neither the file nor
+        // the directory. That is fine for its existing callers, which mutate the repair status of an sstable whose
+        // Statistics.db is ALREADY durable, and not fine here: this is the only copy of the child's
+        // SerializationHeader and repair state. finish() ends in syncInternal() and SequentialWriter fsyncs the
+        // directory on create, so both are durable before the COMMIT record unlinks the parent.
         File file = child.fileFor(Component.STATS);
         try (SequentialWriter out = new SequentialWriter(file, writerOption()))
         {
@@ -2092,10 +1973,10 @@ public final class ZeroCopySSTableSplitter
     }
 
     /**
-     * Filter.db, fsynced. This is {@code BigTableWriter.IndexWriter.flushBf} rather than
-     * {@code SSTableReader.saveBloomFilter}: the latter neither fsyncs nor reports failure -- it logs at TRACE,
-     * deletes the half-written file and returns normally, so an online {@code open()} would quietly rebuild the
-     * filter and hide the error, and a crash could leave a torn one behind.
+     * Filter.db, fsynced. {@code BigTableWriter.IndexWriter.flushBf} rather than
+     * {@code SSTableReader.saveBloomFilter}, which neither fsyncs nor reports failure: it logs at TRACE, deletes
+     * the half-written file and returns normally, so {@code open()} would quietly rebuild the filter and hide the
+     * error, and a crash could leave a torn one behind.
      */
     static void writeFilter(Descriptor child, IFilter filter) throws IOException
     {
@@ -2108,10 +1989,9 @@ public final class ZeroCopySSTableSplitter
     }
 
     /**
-     * Summary.db, fsynced. {@code SSTableReader.saveSummary} writes the same three things but never fsyncs, and
+     * Summary.db, fsynced. {@code SSTableReader.saveSummary} writes the same three things but never fsyncs and
      * swallows the failure. A torn Summary.db is the most survivable of the three -- {@code SSTableReaderBuilder}
-     * rebuilds it from Index.db -- but "survivable" means a full Index.db pass per child at startup, so write it
-     * durably like the others.
+     * rebuilds it from Index.db -- but that means a full Index.db pass per child at startup.
      */
     static void writeSummary(Descriptor child, DecoratedKey first, DecoratedKey last, IndexSummary summary)
     throws IOException
@@ -2127,31 +2007,27 @@ public final class ZeroCopySSTableSplitter
     }
 
     /**
-     * Digest.crc32 is the plain decimal ASCII of a java.util.zip.CRC32 over EVERY physical byte of Data.db,
-     * with no newline and no prefix. That is correct for a compressed sstable too: the writer folds the inline
-     * per-chunk CRCs into the full checksum ({@code appendDirect(bb, checksumIncrementalResult=true)}).
+     * Digest.crc32 is the plain decimal ASCII of a java.util.zip.CRC32 over EVERY physical byte of Data.db, with no
+     * newline and no prefix. Correct for a compressed sstable too: the writer folds the inline per-chunk CRCs into
+     * the full checksum ({@code appendDirect(bb, checksumIncrementalResult=true)}).
      * <p>
-     * "Every physical byte" includes the head pad, and it must: {@code Verifier} validates this digest by
-     * CRC-ing the whole Data.db file with no reference to CompressionInfo.db, so a digest that skipped the pad
-     * would fail there -- and a digest mismatch trips {@code markAndThrow}, which stamps the sstable
-     * unrepaired and throws into the disk failure policy.
+     * "Every physical byte" must include the head pad, since {@code Verifier} validates this digest by CRC-ing the
+     * whole Data.db file with no reference to CompressionInfo.db -- and a mismatch trips {@code markAndThrow},
+     * which stamps the sstable unrepaired and throws into the disk failure policy.
      * <p>
-     * This pass is the dominant cost of a split whose extents were shared: the copy stops reading the parent,
-     * but this still reads every byte of every child. Two ways out, one of them implemented:
+     * This pass dominates the cost of a split whose extents were shared: the copy stops reading the parent, but
+     * this still reads every byte of every child. Two ways out, one implemented:
      * <ul>
      *   <li>SKIP IT, with {@code zero_copy_split_digest_enabled: false}. Nothing needs the component and a
      *       compressed sstable is self-checking without it (every chunk carries an inline CRC32 that this path
-     *       preserves and the read path verifies); the cost is that {@code Verifier} answers a missing digest by
-     *       upgrading to a full extended verification. See
-     *       {@link org.apache.cassandra.config.Config#zero_copy_split_digest_enabled} for the full consumer
-     *       audit.</li>
-     *   <li>DERIVE IT, not implemented. The child's digest is a CRC32 over a byte range that is verbatim parent,
-     *       and each of the parent's per-chunk CRC32s is already stored inline after its chunk with no offset or
-     *       chunk index mixed in, so the whole value could be assembled with {@code crc32_combine} from 4 bytes
-     *       per chunk plus the pad. That keeps the component with no downstream change at all, for a quarter of
-     *       the read at {@code chunk_length_in_kb: 16} and a sixteenth at 64 -- but it is a separate change with
-     *       its own correctness burden, and a wrong digest is silent until somebody runs {@code nodetool
-     *       verify}.</li>
+     *       preserves and the read path verifies); the cost is {@code Verifier} upgrading to a full extended
+     *       verification. See {@link org.apache.cassandra.config.Config#zero_copy_split_digest_enabled} for the
+     *       consumer audit.</li>
+     *   <li>DERIVE IT, not implemented. The digest covers a byte range that is verbatim parent, and each of the
+     *       parent's per-chunk CRC32s is stored inline after its chunk with no offset or chunk index mixed in, so
+     *       the value could be assembled with {@code crc32_combine} from 4 bytes per chunk plus the pad -- keeping
+     *       the component for a quarter of the read at {@code chunk_length_in_kb: 16}. Separate change with its own
+     *       correctness burden, and a wrong digest is silent until somebody runs {@code nodetool verify}.</li>
      * </ul>
      */
     private static void writeDigest(Descriptor child, Progress progress) throws IOException
@@ -2163,9 +2039,8 @@ public final class ZeroCopySSTableSplitter
             int n;
             while ((n = in.read(buffer)) > 0)
             {
-                // A second full pass over every byte just written, so it is throttled and cancellable on the
-                // same terms as the copy itself -- otherwise stopping the copy would still leave the node
-                // grinding through an unbounded read of every child.
+                // A second full pass over every byte just written, so throttled and cancellable on the same terms as
+                // the copy -- otherwise stopping would leave the node grinding through a read of every child.
                 if (progress != null)
                     progress.beforeSlice(n);
                 crc.update(buffer, 0, n);
@@ -2201,8 +2076,8 @@ public final class ZeroCopySSTableSplitter
                                             " != " + range.dataLength);
 
         CompressionMetadata childMeta = child.getCompressionMetadata();
-        // The head pad is the ONE place a child's physical layout differs from a writer's, so it is asserted
-        // both ways: the file cannot be short of it and the offsets table cannot disagree about it.
+        // The head pad is the ONE place a child's physical layout differs from a writer's, so it is asserted both
+        // ways: the file cannot be short of it and the offsets table cannot disagree about it.
         if (childMeta.chunkFor(0).offset != plan.headPadBytes)
             throw new IllegalStateException("child offsets[0] " + childMeta.chunkFor(0).offset + " != head pad "
                                             + plan.headPadBytes);
@@ -2228,13 +2103,12 @@ public final class ZeroCopySSTableSplitter
         if (lastEntry == null)
             throw new IllegalStateException("child cannot find its own last key " + child.last);
 
-        // Decompress the child's FINAL chunk. This is the one construct the whole design rests on and the one
-        // every other check here is blind to: the last chunk is physically a whole chunk while the child's
-        // dataLength says only part of it is live, so its length is derived rather than stored and a single byte
-        // of trailing slack changes it. Digest.crc32 cannot catch that -- it is computed over whatever bytes were
-        // actually written, so it stays self-consistent -- and the checks above only ever touch chunkFor(0) and
-        // child.first. Reading the last live byte forces the reader down CompressedChunkReader's normal path,
-        // where a wrong derived length fails the inline CRC32 (or LZ4's "Compressed lengths mismatch").
+        // Decompress the child's FINAL chunk -- the one construct every other check here is blind to. The last
+        // chunk is physically whole while the child's dataLength says only part of it is live, so its length is
+        // derived rather than stored and a single byte of trailing slack changes it. Digest.crc32 cannot catch that
+        // (it covers whatever was written, so it stays self-consistent) and the checks above only touch chunkFor(0)
+        // and child.first. Reading the last live byte forces CompressedChunkReader's normal path, where a wrong
+        // derived length fails the inline CRC32 (or LZ4's "Compressed lengths mismatch").
         try (RandomAccessReader in = child.openDataReader())
         {
             in.seek(child.uncompressedLength() - 1);
@@ -2269,9 +2143,9 @@ public final class ZeroCopySSTableSplitter
     }
 
     /**
-     * Fresh descriptors in the parent's directory, version and format. Prefers the live
-     * ColumnFamilyStore's id generator so we cannot collide with a concurrent flush or compaction; falls back
-     * to a directory-derived generator plus an existence loop for offline use.
+     * Fresh descriptors in the parent's directory, version and format. Prefers the live ColumnFamilyStore's id
+     * generator so we cannot collide with a concurrent flush or compaction; falls back to a directory-derived
+     * generator plus an existence loop for offline use.
      */
     static Supplier<Descriptor> descriptorAllocator(SSTableReader parent)
     {
@@ -2315,9 +2189,9 @@ public final class ZeroCopySSTableSplitter
     }
 
     /**
-     * Every component is now written by this class through a path that fsyncs and propagates IOException, so this
-     * is a cheap post-condition rather than the only error signal it once was -- the {@code SSTableReader.save*}
-     * helpers it used to guard against log at TRACE, delete the half-written file and return normally.
+     * A cheap post-condition. Every component here is written through a path that fsyncs and propagates
+     * IOException, unlike the {@code SSTableReader.save*} helpers, which log at TRACE, delete the half-written file
+     * and return normally.
      */
     static void requireNonEmpty(Descriptor descriptor, Component component)
     {
@@ -2346,8 +2220,8 @@ public final class ZeroCopySSTableSplitter
             {
                 deleteQuietly(descriptor.fileFor(component), descriptor);
             }
-            // Statistics.db is written in place now, not via rewriteSSTableMetadata's tmp file + rename, so this
-            // should never exist. Kept as belt and braces: a leftover tmp would be picked up as an orphan.
+            // Statistics.db is written in place, not via rewriteSSTableMetadata's tmp file + rename, so this should
+            // never exist. Belt and braces: a leftover tmp would be picked up as an orphan.
             deleteQuietly(new File(descriptor.tmpFilenameFor(Component.STATS)), descriptor);
         }
         children.clear();

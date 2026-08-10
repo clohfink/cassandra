@@ -50,40 +50,38 @@ import org.apache.cassandra.utils.TimeUUID;
  * and the per-child repair state.
  *
  * <h2>The gate</h2>
- * Every partition of the sstable is labelled {@link Label#FULL}, {@link Label#TRANSIENT} or
- * {@link Label#UNREPAIRED} by token, using the same {@code Range.OrderedRangeContainmentChecker} pair and the
- * same full-wins-over-transient precedence as {@code antiCompactGroup}. The label sequence is then run-length
- * encoded, and the sstable is eligible iff FULL occupies at most one run and TRANSIENT occupies at most one run
- * -- i.e. every output child is a single contiguous key range, which is the only thing the splitter can
- * produce. UNREPAIRED may legitimately appear as a leading and a trailing run, so {@code UNREPAIRED, FULL,
- * UNREPAIRED} (3 runs) is the common eligible shape. Interleaved / alternating ranges, which is what vnodes
+ * Every partition is labelled {@link Label#FULL}, {@link Label#TRANSIENT} or {@link Label#UNREPAIRED} by token,
+ * using the same {@code Range.OrderedRangeContainmentChecker} pair and the same full-wins-over-transient precedence
+ * as {@code antiCompactGroup}. The label sequence is run-length encoded, and the sstable is eligible iff FULL and
+ * TRANSIENT each occupy at most one run -- i.e. every output child is a single contiguous key range, the only thing
+ * the splitter can produce. UNREPAIRED may legitimately appear as both a leading and a trailing run, so
+ * {@code UNREPAIRED, FULL, UNREPAIRED} is the common eligible shape. Interleaved ranges, which is what vnodes
  * produce, are ineligible and fall back to the unchanged rewrite path.
  *
  * <h2>An eligible sstable loses tombstone purging</h2>
- * The rewrite path runs every partition through a {@code CompactionController} and therefore drops droppable
- * tombstones and shadowed data; a verbatim chunk copy cannot. Saying "eligible" here means accepting that the
- * children RETAIN everything the parent held. That is retention, never loss -- nothing can be resurrected --
- * but it is a deliberate behaviour change, gated by {@code zero_copy_anticompaction_enabled} and logged at INFO
- * on every use. It is not conditioned on the droppable-tombstone ratio.
+ * The rewrite path runs every partition through a {@code CompactionController} and so drops droppable tombstones and
+ * shadowed data; a verbatim chunk copy cannot. "Eligible" means accepting that the children RETAIN everything the
+ * parent held -- retention, never loss, nothing resurrected -- but it is a deliberate behaviour change, gated by
+ * {@code zero_copy_anticompaction_enabled}, logged at INFO on every use, and not conditioned on the
+ * droppable-tombstone ratio.
  *
  * <h2>Only Index.db is read</h2>
- * The labelling walk is a single sequential pass over Index.db -- the same buffered
- * {@code RandomAccessReader} pattern the splitter itself uses -- and never touches Data.db. Typically that is
- * 1-3% of the data size and page-cache warm by the time the splitter re-reads it.
+ * The labelling walk is a single sequential pass over Index.db, typically 1-3% of the data size and page-cache warm
+ * by the time the splitter re-reads it. Data.db is never touched.
  *
  * <h2>The FULL child's bounds can span a gap</h2>
- * The gate is per partition, so a FULL child's {@code [first, last]} may span a hole in the full ranges where
- * no partition happens to live. Nothing rejects that -- {@code validateSSTableBoundsForAnticompaction} runs
- * only on the parent set, before anticompaction -- and it is exactly what today's {@code fullWriter} produces
- * when it routes non-adjacent partitions into one output sstable.
+ * The gate is per partition, so a FULL child's {@code [first, last]} may span a hole in the full ranges where no
+ * partition happens to live. Nothing rejects that -- {@code validateSSTableBoundsForAnticompaction} runs only on the
+ * parent set, before anticompaction -- and it is what today's {@code fullWriter} produces when it routes
+ * non-adjacent partitions into one output.
  */
 public final class AntiCompactionRunPlanner
 {
     /**
      * The most runs worth remembering in detail. FULL and TRANSIENT are capped at one run each, so the largest
      * eligible shape is {@code UNREPAIRED, FULL, UNREPAIRED, TRANSIENT, UNREPAIRED} = 5 runs. Past this cap the
-     * sstable is certainly ineligible, so the walk stops retaining boundary keys and just keeps counting -- an
-     * alternating vnode layout would otherwise retain one key per partition.
+     * sstable is certainly ineligible, so the walk stops retaining boundary keys and just counts -- an alternating
+     * vnode layout would otherwise retain one key per partition.
      */
     private static final int MAX_RETAINED_RUNS = 8;
 
@@ -175,14 +173,12 @@ public final class AntiCompactionRunPlanner
     }
 
     /**
-     * The pure form of {@link #plan(SSTableReader, RangesAtEndpoint, TimeUUID)}: everything after the Index.db
-     * walk, over an already-labelled partition sequence. Exposed so the run logic can be unit tested with no
-     * sstable at all.
+     * The pure form of {@link #plan(SSTableReader, RangesAtEndpoint, TimeUUID)}: everything after the Index.db walk,
+     * over an already-labelled partition sequence, so the run logic can be unit tested with no sstable at all.
      *
      * @param labels one label per partition, in on-disk (token) order
-     * @param keys   the matching partition keys, same size as {@code labels}; only the first key of each run is
-     *               ever used, so a test that only cares about the verdict may pass any strictly increasing
-     *               sequence
+     * @param keys   the matching partition keys, same size as {@code labels}. Only the first key of each run is used,
+     *               so a test that only cares about the verdict may pass any strictly increasing sequence
      */
     @VisibleForTesting
     static Plan planFromLabels(List<Label> labels, List<DecoratedKey> keys, TimeUUID sessionID)
@@ -197,10 +193,9 @@ public final class AntiCompactionRunPlanner
     }
 
     /**
-     * Pure run-length encoding of a label sequence. Run {@code b} starts at partition
-     * {@code runFirstKeys.get(b)}; {@code runLabels} and {@code runFirstKeys} are only populated while the
-     * sstable can still turn out to be eligible (see {@link #MAX_RETAINED_RUNS}), but the counters are always
-     * exact.
+     * Run-length encoding of a label sequence. Run {@code b} starts at partition {@code runFirstKeys.get(b)};
+     * {@code runLabels} and {@code runFirstKeys} are only populated while the sstable can still turn out eligible
+     * (see {@link #MAX_RETAINED_RUNS}), but the counters are always exact.
      */
     @VisibleForTesting
     static final class RunEncoding
@@ -234,8 +229,8 @@ public final class AntiCompactionRunPlanner
 
             if (runCount > MAX_RETAINED_RUNS)
             {
-                // certainly ineligible from here on; stop retaining so a pathological interleaving cannot
-                // hold one key per partition on the heap
+                // certainly ineligible from here on; stop retaining so a pathological interleaving cannot hold one
+                // key per partition on the heap
                 runLabels.clear();
                 runFirstKeys.clear();
                 return;
@@ -295,10 +290,10 @@ public final class AntiCompactionRunPlanner
     }
 
     /**
-     * The exact triples {@code antiCompactGroup} hands to {@code createWriterForAntiCompaction}:
-     * FULL and TRANSIENT become pending-repair for this session (transient only for TRANSIENT), UNREPAIRED
-     * stays plain unrepaired. {@code repairedAt} is never set at anticompaction time -- the promotion to
-     * {@code repairedAt} happens later, in {@code PendingRepairManager.RepairFinishedCompactionTask}.
+     * The exact triples {@code antiCompactGroup} hands to {@code createWriterForAntiCompaction}: FULL and TRANSIENT
+     * become pending-repair for this session (transient only for TRANSIENT), UNREPAIRED stays plain unrepaired.
+     * {@code repairedAt} is never set at anticompaction time; that promotion happens later, in
+     * {@code PendingRepairManager.RepairFinishedCompactionTask}.
      */
     @VisibleForTesting
     static ZeroCopySSTableSplitter.RepairState stateFor(Label label, TimeUUID sessionID)
@@ -320,13 +315,12 @@ public final class AntiCompactionRunPlanner
     /**
      * One sequential pass over Index.db, labelling and run-length encoding as it goes.
      * <p>
-     * {@code OrderedRangeContainmentChecker} is stateful and forward-only: its cursor never rewinds, so the two
-     * checkers must be distinct instances, must be fresh per sstable, and must be fed tokens in non-decreasing
-     * order. An Index.db walk satisfies that by construction, since on-disk order is DecoratedKey order, which
-     * is token-major. The {@code isEmpty()} guards are mandatory -- the constructor asserts the normalized range
-     * list is non-empty. Calling {@code transChecker} only when {@code fullChecker} said no is safe: the cursor
-     * position needed for a token is a monotone function of that token alone, so skipping tokens is identical
-     * to seeing them.
+     * {@code OrderedRangeContainmentChecker} is stateful and forward-only, so the two checkers must be distinct
+     * instances, fresh per sstable, and fed tokens in non-decreasing order -- which an Index.db walk satisfies by
+     * construction, on-disk order being token-major DecoratedKey order. The {@code isEmpty()} guards are mandatory:
+     * the constructor asserts the normalized range list is non-empty. Calling {@code transChecker} only when
+     * {@code fullChecker} said no is safe, since the cursor position for a token is a monotone function of that token
+     * alone.
      */
     private static Plan walk(SSTableReader sstable, RangesAtEndpoint ranges, TimeUUID sessionID)
     {
@@ -341,8 +335,8 @@ public final class AntiCompactionRunPlanner
         RunEncoding runs = new RunEncoding();
         Label previous = null;
 
-        // Buffered rather than mmap'd, and opened straight off the descriptor so it starts at offset 0 with no
-        // index-summary lookup: the same choice ZeroCopySSTableSplitter.scan() makes.
+        // Buffered rather than mmap'd, and opened straight off the descriptor so it starts at 0 with no index-summary
+        // lookup, as the splitter's own walk does.
         try (RandomAccessReader in = RandomAccessReader.open(sstable.descriptor.fileFor(Component.PRIMARY_INDEX)))
         {
             long indexSize = in.length();

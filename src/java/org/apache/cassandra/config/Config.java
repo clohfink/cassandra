@@ -96,149 +96,92 @@ public class Config
     public volatile boolean alter_table_enabled = true;
 
     /**
-     * Use the zero-copy sstable splitter during anticompaction when an sstable's full / transient / unrepaired
-     * partitions form contiguous token runs, copying compression chunks verbatim instead of rewriting rows.
-     * Anything else (interleaved ranges, i.e. what vnodes produce) falls back to the normal rewrite.
+     * Use {@code ZeroCopySSTableSplitter} during anticompaction when an sstable's full / transient / unrepaired
+     * partitions form contiguous token runs, copying compression chunks verbatim instead of rewriting rows. Anything
+     * else -- interleaved ranges, i.e. what vnodes produce -- falls back to the normal rewrite.
      * <p>
-     * ENABLING THIS MEANS ANTICOMPACTION NO LONGER PURGES TOMBSTONES for the sstables it handles. The copy-based
-     * split retains droppable tombstones and shadowed data that the rewrite path would drop. That is retention,
-     * never data loss -- nothing can be resurrected -- but it is a behaviour change, and disk usage after
-     * anticompaction can be higher than before until the children are compacted normally.
-     * <p>
-     * Suffix children also carry a dead prefix at the head of their Data.db, which costs them entire-SSTable
-     * zero-copy streaming eligibility (they fall back to partial streaming) until they are recompacted.
-     * <p>
-     * ACCEPTED IMPRECISION IN SSTABLE STATISTICS. A child's per-sstable totals -- cell count, row count,
-     * tombstone-drop histogram -- cannot be recomputed without deserialising every row, which is the cost this
-     * path exists to avoid, so each child inherits the parent's whole-sstable values while its partition count
-     * and partition-size histogram are exact per child. Consequences, all accepted: per-table aggregates
-     * (nodetool tablestats mean row count, estimated column count, droppable-tombstone ratio) over-report by
-     * roughly the number of children; the droppable-tombstone check that triggers single-sstable tombstone
-     * compaction under-fires by roughly the same factor, so retained tombstones are cleaned up later than
-     * tombstone_threshold implies; and an all-expired child is not dropped whole. Every one of these errs in the
-     * conservative direction and none can lose or resurrect data. See ZeroCopySSTableSplitter's class javadoc.
-     * <p>
-     * NOT SUPPORTED WITH SECONDARY INDEXES. A table carrying any secondary index is refused outright by
-     * {@code ZeroCopySSTableSplitter.isSupported} and takes the rewrite instead. The rewrite hands
-     * {@code cfs.indexManager.listIndexes()} to the writer, so an index with per-sstable state (SASI's
-     * {@code SI_*.db}) is rebuilt as each output is written; a split cannot produce that without deserialising
-     * the rows it exists to avoid. Leaving it out would fail silently rather than loudly -- the child is simply
-     * absent from the index and queries stop matching its partitions until a restart or {@code nodetool
-     * rebuild_index} -- so the gate refuses on ANY index, including a plain {@code CassandraIndex} that a split
-     * would in fact survive. No configuration is needed: such tables just keep the behaviour they have today.
-     * <p>
-     * NOT SUPPORTED ON JBOD, and NOT refused. The splitter allocates every child in the PARENT's directory and
-     * never asks {@code Directories} for a writeable location, where the rewrite it replaces calls
-     * {@code getWriteableLocationAsFile(expected size)} and so picks a disk with room. On a node with more than
-     * one {@code data_file_directories} entry the children therefore cannot land anywhere but the parent's disk,
-     * {@code min_free_space_per_drive_in_mb} is not reserved for them, and a parent bigger than the free space
-     * on its own disk fills that disk -- failing concurrent flushes and compactions already bound for it --
-     * instead of spilling to a sibling that had room. Reflink cannot cross filesystems either, so the sharing
-     * that makes a split nearly free is confined to the one directory. Leave this off on JBOD nodes.
+     * Two things to know before enabling it: anticompaction NO LONGER PURGES TOMBSTONES for the sstables it handles
+     * (retention only, never data loss), and the children's per-sstable statistics are deliberately imprecise, which
+     * makes per-table aggregates over-report and single-sstable tombstone compaction under-fire by roughly the number
+     * of children. Not supported with secondary indexes (refused outright) or on JBOD (NOT refused -- children are
+     * always written into the parent's directory with no free-space check). The full account is in cassandra.yaml and
+     * in {@code ZeroCopySSTableSplitter}'s class javadoc.
      */
     public volatile boolean zero_copy_anticompaction_enabled = true;
 
     /**
-     * Let the zero-copy splitter share a child's Data.db extents with its parent instead of copying them, using
-     * the Linux {@code FICLONERANGE} ioctl ("reflink"). A split then writes no data blocks and consumes no
-     * additional disk space; the parent's extents become the children's when the parent is unlinked.
+     * Let the zero-copy splitter SHARE a child's Data.db extents with its parent instead of copying them, via the
+     * Linux {@code FICLONERANGE} ioctl ("reflink"): no data blocks written and no additional disk space used, since
+     * the parent's extents become the children's when it is unlinked.
      * <p>
-     * Requires a filesystem that can share extents -- xfs formatted with {@code -m reflink=1} (the mkfs default
-     * since xfsprogs 5.1), btrfs -- and is discovered by trying: on ext4 and everything else the first attempt
-     * per data directory fails, is logged once at INFO, and every split from then on copies as before. There is
-     * no correctness difference between the two paths, so this is a knob for turning off an unwanted behaviour
-     * (shared extents make {@code du} over-report until the parent is gone, and page cache is per inode so
-     * bytes read through both files are cached twice), not for turning on a risky one.
-     * <p>
-     * The cost of making sharing possible at all is up to 64 KiB of alignment padding at the head of each
-     * child's Data.db, which is why children below 1 MiB are copied regardless.
+     * Needs a filesystem that can share extents (xfs with {@code -m reflink=1}, btrfs) and discovers that by trying,
+     * so elsewhere the first attempt per data directory fails, is logged once, and every split from then on copies as
+     * before. Both paths produce identical children, so this only turns off the side effects -- up to 64 KiB of
+     * alignment padding per child, {@code du} over-reporting until the parent is gone, and double page-cache
+     * residency while both are live. See cassandra.yaml and {@code Reflink}.
      */
     public volatile boolean zero_copy_split_reflink_enabled = true;
 
     /**
-     * Write Digest.crc32 for the children of a zero-copy split. Producing it means a full sequential read of
-     * every child, which -- once {@link #zero_copy_split_reflink_enabled} has removed the copy -- is the ENTIRE
-     * remaining cost of a split: turning this off takes a split from "read the whole sstable" to "read its
-     * Index.db", i.e. about 0.05% of the bytes.
+     * Write Digest.crc32 for the children of a zero-copy split. Producing it means one full sequential read of every
+     * child, which -- once {@link #zero_copy_split_reflink_enabled} has removed the copy -- is the ENTIRE remaining
+     * cost of a split, so turning it off takes a split down to reading Index.db, about 0.05% of the bytes.
      * <p>
-     * Nothing requires the component. {@code SSTableReader.open} asserts only DATA, PRIMARY_INDEX and STATS;
-     * entire-SSTable streaming skips components whose file does not exist and the receiver never validates the
-     * digest; the Netflix backup manifest enumerates the component files that exist and its restore path does
-     * not list DIGEST among the components it downloads. A compressed sstable is also self-checking without it,
-     * because every chunk carries an inline CRC32 that this path preserves verbatim and that the read path
-     * verifies on every chunk it decompresses. The digest's only unique coverage is bytes that no read ever
-     * touches: the child's dead prefix and its alignment pad.
+     * Nothing requires the component: {@code SSTableReader.open} asserts only DATA, PRIMARY_INDEX and STATS,
+     * entire-sstable streaming skips absent components and never validates the digest, and the backup manifest
+     * enumerates the files that exist. A compressed sstable is self-checking without it too, since every chunk
+     * carries an inline CRC32 this path preserves and the read path verifies. Its only unique coverage is bytes no
+     * read touches: the child's dead prefix and alignment pad.
      * <p>
-     * WHAT IT DOES COST. {@code Verifier} is the only reader (via {@code DataIntegrityMetadata}), and a missing
-     * digest is not an error there -- it logs "Data digest missing, assuming extended verification of disk
-     * values" and falls through to the full row-by-row walk. So {@code nodetool verify} and {@code nodetool
-     * import --verify-sstables} on such a child get SLOWER (a deserializing scan instead of a whole-file CRC),
-     * not weaker. {@code nodetool verify -q} and an import without {@code --verify-sstables} return before the
-     * digest is looked at and are unaffected. Since restore-then-import is this fork's own workflow, and a
-     * child's file set travels through backup without a digest, this defaults to ON.
+     * The cost is verification SPEED, not strength. {@code Verifier} is the only reader, and it answers a missing
+     * digest with a full extended verification, so {@code nodetool verify} and
+     * {@code nodetool import --verify-sstables} get slower ({@code verify -q} and an import without
+     * {@code --verify-sstables} never look). Since restore-then-import is this fork's workflow and a child's file set
+     * travels through backup without a digest, this defaults to ON.
      */
     public volatile boolean zero_copy_split_digest_enabled = true;
 
     /**
-     * Stream a PARTIAL sstable through the entire-sstable (zero-copy) path instead of the row-by-row one, by
-     * sending a verbatim run of the parent's compression chunks and synthesising the other components for it the
-     * way {@code ZeroCopySSTableSplitter} synthesises them for a split child. The sender already sends whole
-     * compression chunks when it streams sections of a compressed sstable; what this removes is the RECEIVER
-     * decompressing, deserialising, re-serialising and recompressing every row it is sent, and rebuilding the
-     * index, filter and summary it could have been handed.
+     * Stream a PARTIAL sstable through the entire-sstable (zero-copy) path instead of the row-by-row one, by sending
+     * a verbatim run of the parent's compression chunks and synthesising the other components for it. The sender
+     * already sends whole chunks when it streams sections of a compressed sstable; what this removes is the RECEIVER
+     * decompressing, deserialising, re-serialising and recompressing every row, then rebuilding the index, filter and
+     * summary it could have been handed. See {@code ZeroCopySSTableSlice}.
      * <p>
-     * The requested sections become byte ranges aligned to the sstable's grid -- the compression chunk length, or
-     * CRC.db's chunk size for an uncompressed sstable -- and are sent in order with the cells between them
-     * skipped. A non-BIG format and legacy counter shards fall back to the row-by-row path unchanged, as does
-     * anything the arithmetic cannot express. {@code stream_entire_sstables} gates this too, since it is that
-     * protocol and that rate limiter ({@code stream_entire_sstable_throughput_outbound}) being used.
+     * The sections become byte ranges aligned to the sstable's grid -- the compression chunk length, or CRC.db's chunk
+     * size when uncompressed -- sent in order with the cells between them skipped. Non-BIG formats, legacy counter
+     * shards and anything the arithmetic cannot express fall back unchanged. {@code stream_entire_sstables} gates
+     * this too, since it is that protocol and that rate limiter being used.
      * <p>
-     * ACCEPTED IMPRECISION. The receiver gets a child with the same statistics imprecision a split child has --
-     * parent-wide cell/row totals and tombstone-drop histogram, inherited min/max timestamp and clustering
-     * bounds, no tombstone purging -- because none of it can be recomputed without deserialising rows, which is
-     * the cost this exists to avoid. See {@link #zero_copy_anticompaction_enabled} for the consequences; they are
-     * conservative in direction and last until the sstable is compacted normally. Entire-sstable streaming
-     * already copies statistics verbatim, so this is a difference in degree, not in kind.
+     * The receiver gets the same statistics imprecision a split child has (see
+     * {@link #zero_copy_anticompaction_enabled}), which is a difference of degree since entire-sstable streaming
+     * already copies statistics verbatim. Digest.crc32 is not sent -- the bytes reach the socket by {@code sendfile}
+     * and are never in process -- so the receiver computes it while writing the component.
      * <p>
-     * MIXED VERSIONS. A received sstable can carry a dead prefix (bytes before its first indexed partition, the
-     * head of a boundary chunk), which every read path tolerates -- they all enter Data.db at a position read
-     * from Index.db -- but which {@code Scrubber} and {@code Verifier} only tolerate with the seeks added
-     * alongside the splitter. A peer running a build without those will read and compact such an sstable
-     * correctly, but {@code nodetool verify} on it will fail and mark it unrepaired. Leave this off until every
-     * node that can RECEIVE a stream has them.
-     * <p>
-     * Digest.crc32 is not SENT -- it is a CRC over every byte of the sliced Data.db, and the sender cannot produce
-     * one without a full extra read, since the bytes go to the socket by {@code sendfile} and are never in process
-     * -- so the receiver computes it as it writes the component instead. The sstable that lands therefore has one,
-     * and {@code nodetool verify} on it is a whole-file CRC like any other.
-     * <p>
-     * NOT SUPPORTED WHERE THE RECEIVER IS JBOD, and not refused -- the sender cannot see the peer's layout. A
-     * slice arrives through the entire-sstable receiver, which picks ONE data directory for the whole sstable
-     * from the header's first key and writes it there; the row-by-row path it replaces builds a
-     * {@code RangeAwareSSTableWriter} that splits the incoming partitions across the receiver's disk boundaries.
-     * So on a receiver with several {@code data_file_directories}, a slice spanning several boundaries lands
-     * entirely on the first key's disk and stays out of position until a compaction or {@code nodetool
-     * relocatesstables} moves it. Leave this off unless every node that can RECEIVE a stream has a single data
-     * directory. The sender's own layout does not matter.
+     * Two deployment constraints, neither enforceable from the sender. A received sstable can carry a dead prefix,
+     * which every read path tolerates but which {@code Scrubber} and {@code Verifier} only tolerate with the seeks
+     * added alongside the splitter, so a peer without them will fail {@code nodetool verify} and mark the sstable
+     * unrepaired. And the entire-sstable receiver picks ONE data directory for the whole sstable from its first key,
+     * where the row-by-row path spread partitions across disk boundaries, so on a JBOD receiver a slice can land out
+     * of position until a compaction or {@code nodetool relocatesstables} moves it. Leave this off unless every node
+     * that can RECEIVE a stream has both the seeks and a single data directory.
      */
     public volatile boolean zero_copy_partial_stream_enabled = true;
 
     /**
-     * The most DEAD SPACE a partial zero-copy stream may carry before it gives up and falls back to the
-     * row-by-row path, as a fraction of the child's uncompressed length.
+     * The most DEAD SPACE a partial zero-copy stream may carry before giving up and falling back to the row-by-row
+     * path, as a fraction of the transferred sstable's uncompressed length.
      * <p>
-     * A grid cell -- a compression chunk, or a CRC.db chunk for an uncompressed sstable -- is pinned to a multiple
-     * of its length and cannot be treated as an origin, so the whole cells covering the requested sections also
-     * carry the head of the first cell (up to a cell of partitions before the range) and, where two sections are
-     * separated by less than a cell, the partitions in between. Those bytes are not indexed, so no read can reach
-     * them and nothing counts them -- they are simply transferred and stored for nothing, until the sstable is
-     * compacted. Sections further apart than a cell are sent as separate ranges, so the gap between them costs
-     * nothing.
+     * A grid cell -- a compression chunk, or a CRC.db chunk when uncompressed -- cannot be treated as an origin, so
+     * the whole cells covering the requested sections also carry the head of the first cell and the partitions
+     * between sections less than a cell apart. Those bytes are not indexed, so no read can reach them; they are
+     * transferred and stored for nothing until the sstable is compacted. Sections further apart than a cell are sent
+     * as separate ranges, so the gap between them costs nothing.
      * <p>
-     * The ratio is what matters rather than the byte count: dead space is bounded by roughly a cell per section
-     * boundary, so it is immaterial for anything large and can dominate a narrow range (a 4 KiB section inside
-     * one 16 KiB chunk is 75% dead). At the 0.25 default the transfer is allowed to be up to a third larger than
-     * the data it is for. 0.0 permits only ranges that fall exactly on cell boundaries; 1.0 disables the check.
+     * A ratio rather than a byte count because dead space is bounded by roughly a cell per section boundary: it is
+     * immaterial for a wide range and can dominate a narrow one (a 4 KiB section inside one 16 KiB chunk is 75%
+     * dead). At the 0.25 default a transfer may be up to a third larger than the data it is for. 0.0 permits only
+     * sections that fall exactly on cell boundaries; 1.0 disables the check.
      */
     public volatile double zero_copy_partial_stream_max_dead_space_ratio = 0.25;
 
