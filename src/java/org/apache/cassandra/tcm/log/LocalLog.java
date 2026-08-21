@@ -36,6 +36,7 @@ import java.util.function.Consumer;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
+import com.antithesis.sdk.Assert;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
@@ -49,13 +50,17 @@ import org.apache.cassandra.concurrent.ScheduledExecutors;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.config.DurationSpec;
 import org.apache.cassandra.exceptions.StartupException;
+import org.apache.cassandra.io.util.DataInputBuffer;
+import org.apache.cassandra.io.util.DataOutputBuffer;
 import org.apache.cassandra.locator.InetAddressAndPort;
 import org.apache.cassandra.service.accord.AccordService;
+import org.apache.cassandra.tcm.AntithesisDetails;
 import org.apache.cassandra.tcm.ClusterMetadata;
 import org.apache.cassandra.tcm.ClusterMetadataService;
 import org.apache.cassandra.tcm.Epoch;
 import org.apache.cassandra.tcm.Startup;
 import org.apache.cassandra.tcm.Transformation;
+import org.apache.cassandra.tcm.serialization.Version;
 import org.apache.cassandra.tcm.listeners.ChangeListener;
 import org.apache.cassandra.tcm.listeners.ClientNotificationListener;
 import org.apache.cassandra.tcm.listeners.LegacyStateListener;
@@ -529,12 +534,31 @@ public abstract class LocalLog implements Closeable
                     catch (Throwable t)
                     {
                         logger.error("Caught an exception while processing entry {}. This can mean that this node is configured differently from CMS.", prev, t);
+                        // Antithesis property a-log-processing-never-halts. A node that throws this
+                        // stops applying log entries permanently while staying up and serving stale
+                        // metadata. The log message blames configuration divergence, which is
+                        // impossible in a homogeneous deployment -- hence Unreachable.
+                        Assert.unreachable("TCM log processing halted because a transformation threw",
+                                           AntithesisDetails.of("previous_epoch", prev.epoch.getEpoch(),
+                                                                "entry_epoch", pendingEntry.epoch.getEpoch(),
+                                                                "kind", kind,
+                                                                "throwable", t.toString()));
                         throw new StopProcessingException(t);
                     }
 
                     if (!transformed.isSuccess())
                     {
                         logger.error("Error while processing entry {}. Transformation returned result of {}. This can mean that this node is configured differently from CMS.", prev, transformed.rejected());
+                        // Antithesis property a-log-processing-never-halts, second site. A distinct
+                        // message because the diagnosis differs: a transformation the CMS accepted as
+                        // a Success rejecting on replay means either the base state diverged (which is
+                        // a-log-prefix-agreement failing) or the transformation is not a pure function
+                        // of ClusterMetadata.
+                        Assert.unreachable("TCM log processing halted because a transformation was rejected on replay",
+                                           AntithesisDetails.of("previous_epoch", prev.epoch.getEpoch(),
+                                                                "entry_epoch", pendingEntry.epoch.getEpoch(),
+                                                                "kind", kind,
+                                                                "rejection", transformed.rejected()));
                         throw new StopProcessingException();
                     }
 
@@ -545,6 +569,36 @@ public abstract class LocalLog implements Closeable
                     String.format("Epoch %s for %s can either force snapshot, or immediately follow %s",
                                   next.epoch, pendingEntry.transform, prev.epoch);
 
+                    // Antithesis properties a-no-gapped-metadata-published and
+                    // r-snapshot-catchup-used. These restate the two asserts above so the invariants
+                    // are checked in deployments built without -ea, are reported as test properties
+                    // rather than as an AssertionError swallowed by the catch below, and give the
+                    // platform a search target. The asserts are deliberately left in place so
+                    // existing -ea behaviour in unit tests and dtests is unchanged.
+                    Assert.always(pendingEntry.epoch.is(next.epoch),
+                                  "TCM entry epoch matches resulting metadata epoch",
+                                  AntithesisDetails.of("entry_epoch", pendingEntry.epoch.getEpoch(),
+                                                       "metadata_epoch", next.epoch.getEpoch(),
+                                                       "kind", kind));
+                    Assert.always(next.epoch.isDirectlyAfter(prev.epoch) || isSnapshot || isPreInit,
+                                  "TCM enacted epoch directly follows previous or is a legal jump",
+                                  AntithesisDetails.of("previous_epoch", prev.epoch.getEpoch(),
+                                                       "enacted_epoch", next.epoch.getEpoch(),
+                                                       "kind", kind,
+                                                       "is_snapshot", isSnapshot,
+                                                       "is_pre_initialize", isPreInit));
+                    // The snapshot branch is the only code permitted to violate epoch
+                    // consecutiveness. The condition requires a snapshot that *actually* skipped an
+                    // epoch: entering the branch for a snapshot arriving at the next epoch proves
+                    // nothing about gap handling, which is the whole point of the property.
+                    Assert.sometimes(isSnapshot && next.epoch.isAfter(prev.epoch.nextEpoch()),
+                                     "a node caught up by applying a force snapshot",
+                                     AntithesisDetails.of("previous_epoch", prev.epoch.getEpoch(),
+                                                          "enacted_epoch", next.epoch.getEpoch(),
+                                                          "epochs_skipped",
+                                                          next.epoch.getEpoch() - prev.epoch.getEpoch() - 1,
+                                                          "is_snapshot", isSnapshot));
+
                     // If replay during initialisation has completed persist to local storage unless the entry is
                     // a synthetic ForceSnapshot which is not a replicated event but enables jumping over gaps
                     if (replayComplete.get() && pendingEntry.transform.kind() != Transformation.Kind.FORCE_SNAPSHOT)
@@ -554,6 +608,128 @@ public abstract class LocalLog implements Closeable
 
                     if (committed.compareAndSet(prev, next))
                     {
+                        // Antithesis property a-epoch-monotonic-per-node. The in-process half: a
+                        // regression fast enough to be invisible to the workload's polling is only
+                        // observable here, at the single point where metadata becomes visible.
+                        Assert.always(next.epoch.isEqualOrAfter(prev.epoch),
+                                      "TCM published epoch is non-decreasing",
+                                      AntithesisDetails.of("previous_epoch", prev.epoch.getEpoch(),
+                                                           "published_epoch", next.epoch.getEpoch(),
+                                                           "kind", kind));
+                        // Antithesis property r-concurrent-multistep-operations. Two or more
+                        // multi-step operations in flight at once (e.g. concurrent bootstraps on
+                        // disjoint token ranges) is a rare, timing-sensitive state the workload's
+                        // JMX polling misses -- the overlap can open and close between samples. This
+                        // is the single point where every metadata transition becomes visible, so
+                        // checking the count here catches the transient reliably regardless of poll
+                        // cadence and gives the platform a search target for the admission-control
+                        // path that permits disjoint concurrent operations.
+                        Assert.sometimes(next.inProgressSequences.size() >= 2,
+                                         "two or more multi-step operations were in flight at once",
+                                         AntithesisDetails.of("published_epoch", next.epoch.getEpoch(),
+                                                              "in_progress_sequences", next.inProgressSequences.size(),
+                                                              "kind", kind));
+                        // Antithesis property r-node-replaced. Node replacement (replace-address) is
+                        // its own multi-step operation with a distinct locked-range/streaming shape
+                        // that no other driver exercises; observing the terminal FINISH_REPLACE here
+                        // proves the replace path actually ran end-to-end (and so the safety
+                        // invariants above were evaluated over it), reliably regardless of what the
+                        // workload's JMX polling happened to catch.
+                        Assert.sometimes(kind == Transformation.Kind.FINISH_REPLACE,
+                                         "a node completed a replacement (FINISH_REPLACE enacted)",
+                                         AntithesisDetails.of("published_epoch", next.epoch.getEpoch(),
+                                                              "kind", kind));
+                        // Antithesis property a-metadata-serialization-round-trips. Cluster metadata
+                        // is serialized on every replication and snapshot; a serializer/deserializer
+                        // asymmetry silently corrupts what peers and restarts reconstruct (e.g.
+                        // 1913eab974 "Fix deserialization of column masks", 2bc24da841 "allow empty
+                        // placements on deserialize"). We round-trip the just-published metadata at the
+                        // cluster's current serialization version. Gated to the Antithesis image
+                        // because serializing full metadata per epoch is pure overhead in production.
+                        //
+                        // The condition is serialize/deserialize IDEMPOTENCE, which took several
+                        // Antithesis runs to arrive at because the object has two benign,
+                        // non-corrupting asymmetries that each sink a naive check:
+                        //   - equals() is stricter than the wire form (CMS-reconfiguration sequences
+                        //     carry a transient field not serialized -> byte-identical yet unequal);
+                        //   - serialization is order-stable per call (selfStable) but a join sequence's
+                        //     map deserializes in a different iteration order -> re-serialized bytes
+                        //     differ though the data is equal.
+                        // Under concurrent churn BOTH occur in one metadata (observed: PREPARE_JOIN
+                        // with equals=false AND bytes=false), so neither "equals", nor "byte-stable",
+                        // nor "fail only if both differ" works. But both asymmetries VANISH after one
+                        // full round-trip: the transient field is already gone and the order is already
+                        // canonical in the deserialized object. So the robust property is that a SECOND
+                        // round-trip reproduces the first's bytes: serialize.deserialize is idempotent
+                        // (b2 == b3). A real deserialize asymmetry (or a throw) breaks idempotence and
+                        // is caught; the benign asymmetries are fixed points and pass. See
+                        // antithesis/scratchbook/properties/a-metadata-serialization-round-trips.md.
+                        if (AntithesisDetails.SERIALIZATION_CHECK)
+                        {
+                            Version serializationVersion = Version.minCommonSerializationVersion();
+                            java.nio.ByteBuffer b1 = null;
+                            try (DataOutputBuffer out = new DataOutputBuffer())
+                            {
+                                ClusterMetadata.serializer.serialize(next, out, serializationVersion);
+                                b1 = out.asNewBuffer();
+                            }
+                            catch (Throwable t)
+                            {
+                                // A failure to *serialize* is not asserted: some transient early-boot
+                                // states are not intended to be serialized at the negotiated version.
+                                logger.warn("Antithesis serialization check: could not serialize metadata at epoch {} (version {}): {}",
+                                            next.epoch, serializationVersion, t.toString());
+                            }
+                            if (b1 != null)
+                            {
+                                boolean faithful;
+                                String error = null;
+                                try
+                                {
+                                    // First round-trip: transient fields drop, order canonicalises.
+                                    java.nio.ByteBuffer b2;
+                                    try (DataInputBuffer in1 = new DataInputBuffer(b1, true);
+                                         DataOutputBuffer o2 = new DataOutputBuffer())
+                                    {
+                                        ClusterMetadata.serializer.serialize(
+                                            ClusterMetadata.serializer.deserialize(in1, serializationVersion),
+                                            o2, serializationVersion);
+                                        b2 = o2.asNewBuffer();
+                                    }
+                                    // Second round-trip must reproduce b2 exactly (idempotence).
+                                    java.nio.ByteBuffer b3;
+                                    try (DataInputBuffer in2 = new DataInputBuffer(b2, true);
+                                         DataOutputBuffer o3 = new DataOutputBuffer())
+                                    {
+                                        ClusterMetadata.serializer.serialize(
+                                            ClusterMetadata.serializer.deserialize(in2, serializationVersion),
+                                            o3, serializationVersion);
+                                        b3 = o3.asNewBuffer();
+                                    }
+                                    faithful = b2.equals(b3);
+                                    if (!faithful)
+                                    {
+                                        error = "serialize/deserialize not idempotent (b2 != b3)";
+                                        logger.warn("Antithesis serialization NOT idempotent at epoch {} kind {} version {}: b1==b2={} (b2!=b3 => real deserialize asymmetry)",
+                                                    next.epoch, kind, serializationVersion, b1.equals(b2));
+                                    }
+                                    else if (!b1.equals(b2))
+                                        logger.debug("Antithesis serialization benign first-pass asymmetry at epoch {} kind {} (b1!=b2, b2==b3): tolerated transient/order difference",
+                                                     next.epoch, kind);
+                                }
+                                catch (Throwable t)
+                                {
+                                    faithful = false;
+                                    error = t.getClass().getSimpleName() + ": " + t.getMessage();
+                                }
+                                Assert.always(faithful,
+                                              "TCM cluster metadata survives a serialization round-trip",
+                                              AntithesisDetails.of("published_epoch", next.epoch.getEpoch(),
+                                                                   "kind", kind,
+                                                                   "serialization_version", serializationVersion.asInt(),
+                                                                   "error", error));
+                            }
+                        }
                         logger.info("Enacted {}. New tail is {}", pendingEntry.transform, next.epoch);
                         maybeNotifyListeners(pendingEntry, transformed);
                     }
@@ -562,6 +738,18 @@ public abstract class LocalLog implements Closeable
                         // Since we disallow concurrent calls to `processPendingInternal` (as declared in the interface),
                         // we might have made an erroneous extra initialization of keyspaces by now, and, unless we
                         // throw here, we may in addition call to `afterCommit`.
+
+                        // Antithesis property a-log-processing-never-concurrent. Reaching this branch
+                        // means the single-caller contract documented on this method was violated, and
+                        // notifyPreCommit has already run for metadata that will never be published.
+                        // Asserted before the throw because the IllegalStateException is caught by the
+                        // generic handler below, logged, and processing continues -- so today this
+                        // state produces no test failure anywhere.
+                        Assert.unreachable("concurrent TCM log processing detected via CAS conflict",
+                                           AntithesisDetails.of("attempted_epoch", next.epoch.getEpoch(),
+                                                                "expected_previous_epoch", prev.epoch.getEpoch(),
+                                                                "actual_current_epoch", metadata().epoch.getEpoch(),
+                                                                "kind", kind));
                         throw new IllegalStateException(String.format("CAS conflict while trying to commit entry with seq %s, old version tail: %s current version tail: %s",
                                                                       next.epoch, prev.epoch, metadata().epoch));
                     }

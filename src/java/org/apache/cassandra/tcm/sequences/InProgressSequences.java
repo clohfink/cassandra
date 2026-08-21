@@ -123,6 +123,16 @@ public class InProgressSequences implements MetadataValue<InProgressSequences>, 
         return state.isEmpty();
     }
 
+    /**
+     * Number of multi-step operations currently in progress. Two or more means distinct topology
+     * operations (e.g. concurrent bootstraps on disjoint token ranges) are running at once; this is
+     * observed by the Antithesis r-concurrent-multistep-operations property in {@code LocalLog}.
+     */
+    public int size()
+    {
+        return state.size();
+    }
+
     public InProgressSequences with(MultiStepOperation.SequenceKey key, MultiStepOperation<?> sequence)
     {
         if (contains(key))

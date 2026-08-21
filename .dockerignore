@@ -1,0 +1,31 @@
+# Build context exclusions for the Antithesis harness images
+# (antithesis/docker/*.Dockerfile use the repository root as their build context).
+#
+# Without this, the context is roughly 2 GB and dominated by .git plus derived build output. The
+# entries below are all either regenerated inside the image or irrelevant to it.
+#
+# build/ is excluded deliberately and not just for size: a stale apache-cassandra-<version>.jar from
+# the developer's working tree makes bin/cassandra.in.sh abort with "JAR artifacts for multiple
+# versions", and accumulated duplicate dependency versions in build/lib/jars break compilation. The
+# image runs `ant realclean` as well, so this is belt and braces.
+
+# NOTE: .build/ is deliberately NOT excluded — the image build invokes .build/sh/ai-build.
+.git
+.github
+.circleci
+.jenkins
+.idea
+build/
+data/
+logs/
+profiler/
+doc/build/
+
+# local editor and OS noise
+*.iml
+.DS_Store
+
+# never send credentials into a build context
+**/*.key.json
+**/*.pem
+**/id_rsa*

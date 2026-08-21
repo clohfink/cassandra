@@ -27,6 +27,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.function.BiConsumer;
 
+import com.antithesis.sdk.Assert;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Maps;
@@ -38,6 +39,7 @@ import org.apache.cassandra.dht.Token;
 import org.apache.cassandra.io.util.DataInputPlus;
 import org.apache.cassandra.io.util.DataOutputPlus;
 import org.apache.cassandra.schema.ReplicationParams;
+import org.apache.cassandra.tcm.AntithesisDetails;
 import org.apache.cassandra.tcm.ClusterMetadata;
 import org.apache.cassandra.tcm.Epoch;
 import org.apache.cassandra.tcm.MetadataValue;
@@ -70,6 +72,24 @@ public class LockedRanges implements MetadataValue<LockedRanges>
 
         if (ranges == AffectedRanges.EMPTY)
             return this;
+
+        // Antithesis property b-no-overlapping-locked-ranges. CEP-21 makes non-overlap the sole
+        // admission condition for concurrent range movements ("Concurrent operations are permitted
+        // as long as they only affect disjoint token ranges"), enforced by the Prepare*
+        // transformations rejecting when intersects() finds a collision. Reaching lock() with an
+        // overlap therefore means admission already failed.
+        //
+        // The strict form is correct: the builder below calls build(), which throws on a duplicate
+        // key, so lock() can never legitimately be called with a key already present -- any
+        // intersection found here belongs to a *different* operation.
+        Key conflict = intersects(ranges);
+        Assert.always(conflict.equals(NOT_LOCKED),
+                      "newly locked ranges do not intersect existing locks",
+                      AntithesisDetails.of("new_key", key,
+                                           "conflicting_key", conflict,
+                                           "existing_lock_count", locked.size(),
+                                           "new_ranges", ranges,
+                                           "last_modified", lastModified.getEpoch()));
 
         // TODO might we need the ability for the holder of a key to lock multiple sets over time?
         return new LockedRanges(lastModified,

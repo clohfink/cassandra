@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+set -uo pipefail
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# One random membership operation: join a spare, decommission, move, restart, stop, or
+# wipe-and-rejoin. Fire-and-forget, so the next operation can start while this sequence is still in
+# flight -- that overlap is what makes r-concurrent-multistep-operations reachable.
+#
+# serial_driver rather than parallel_driver: the *selection* logic reads cluster-wide state
+# (how many nodes are joined) and must not race another copy of itself into violating the
+# never-drop-below-RF policy. The operations it launches still overlap, because they are
+# asynchronous.
+exec "$HERE/helper_run.sh" membership-churn

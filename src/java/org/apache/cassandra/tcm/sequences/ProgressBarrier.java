@@ -28,6 +28,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.function.Predicate;
 
+import com.antithesis.sdk.Assert;
 import com.codahale.metrics.Timer;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.Maps;
@@ -53,6 +54,7 @@ import org.apache.cassandra.net.Verb;
 import org.apache.cassandra.schema.ReplicationParams;
 import org.apache.cassandra.service.RetryStrategy;
 import org.apache.cassandra.service.WaitStrategy;
+import org.apache.cassandra.tcm.AntithesisDetails;
 import org.apache.cassandra.tcm.ClusterMetadata;
 import org.apache.cassandra.tcm.Epoch;
 import org.apache.cassandra.tcm.Retry;
@@ -147,6 +149,18 @@ public class ProgressBarrier
 
                 ConsistencyLevel prev = currentCL;
                 currentCL = relaxConsistency(prev);
+                // Antithesis property r-progress-barrier-relaxed. Relaxation only happens when nodes
+                // fail to respond, so on a healthy network this code never runs -- which is why
+                // conventional integration tests do not reach it. It is also the guard that makes
+                // b-progress-barrier-quorum-sound meaningful: without relaxation, that property only
+                // ever evaluates the default level, which is sound by construction.
+                Assert.sometimes(currentCL != DEFAULT_CL,
+                                 "a progress barrier relaxed below its default consistency level",
+                                 AntithesisDetails.of("default_cl", DEFAULT_CL,
+                                                      "min_cl", MIN_CL,
+                                                      "previous_cl", prev,
+                                                      "relaxed_to", currentCL,
+                                                      "wait_for_epoch", waitFor.getEpoch()));
                 logger.info(String.format("Could not collect epoch acknowledgements within %dms for %s. Falling back to %s.", TIMEOUT_MILLIS, prev, currentCL));
             }
             return true;
@@ -256,6 +270,38 @@ public class ProgressBarrier
             }
             if (match)
             {
+                // Antithesis property b-progress-barrier-quorum-sound. This is CEP-21's headline
+                // safety theorem: a lagging coordinator "will not be able to collect a quorum for
+                // read or write that is inconsistent with a quorum obtained using metadata that is up
+                // to date". The barrier is the mechanism that makes it true, so a satisfied barrier
+                // must genuinely intersect every quorum of the affected replica group -- in both the
+                // pre-step and post-step placements, which is why each WaitFor is constructed from
+                // both the write and read endpoint sets.
+                //
+                // AlwaysOrUnreachable rather than Always: many timelines never advance a sequence far
+                // enough to evaluate a barrier at all, and "never ran" must not be a failure.
+                //
+                // Re-checking every waiter here rather than trusting the loop above guards the case
+                // where `match` was computed from a stale `collected` set.
+                boolean allSatisfied = true;
+                for (WaitFor waiter : waiters)
+                {
+                    if (!waiter.satisfiedBy(collected))
+                    {
+                        allSatisfied = false;
+                        break;
+                    }
+                }
+                Assert.alwaysOrUnreachable(allSatisfied && collected.size() >= maxWaitFor,
+                                           "satisfied progress barrier intersects pre- and post-step quorums",
+                                           AntithesisDetails.of("consistency_level", cl,
+                                                                "default_cl", DEFAULT_CL,
+                                                                "min_cl", MIN_CL,
+                                                                "collected_count", collected.size(),
+                                                                "max_wait_for", maxWaitFor,
+                                                                "waiter_count", waiters.size(),
+                                                                "superset_size", superset.size(),
+                                                                "wait_for_epoch", waitFor.getEpoch()));
                 logger.info("Collected acknowledgements from {} of nodes for a progress barrier for epoch {} at {}",
                             collected, waitFor, cl);
                 return true;

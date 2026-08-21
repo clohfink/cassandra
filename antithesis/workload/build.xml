@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+ Licensed to the Apache Software Foundation (ASF) under one
+ or more contributor license agreements.  See the NOTICE file
+ distributed with this work for additional information
+ regarding copyright ownership.  The ASF licenses this file
+ to you under the Apache License, Version 2.0 (the
+ "License"); you may not use this file except in compliance
+ with the License.  You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+-->
+<!--
+ Build for the Antithesis TCM workload driver.
+
+ Ant, matching the rest of the project. It is a standalone module: it does not participate in
+ Cassandra's build.xml and Cassandra's build does not read it.
+
+ Dependencies are resolved by the caller (docker/workload.Dockerfile) into ${deps.dir} rather than
+ by a dependency manager here, because there are only three and two of them already ship with
+ Cassandra:
+
+   cassandra-driver-core-*-shaded.jar  from Cassandra's lib/ — CQL. The shaded build bundles
+                                       netty/guava, so it pulls in no transitive dependencies.
+   jackson-databind, jackson-core,     from Cassandra's lib/ — required by the SDK's ObjectNode
+   jackson-annotations                 details parameter.
+   antithesis-sdk / antithesis-ffi     from Maven Central — the assertions.
+
+ JMX needs nothing: javax.management is in the JDK.
+-->
+<project name="cassandra-antithesis-workload" default="jar" basedir=".">
+
+    <property name="src.dir"    value="${basedir}/src/main/java"/>
+    <property name="build.dir"  value="${basedir}/build"/>
+    <property name="classes"    value="${build.dir}/classes"/>
+    <property name="deps.dir"   value="${basedir}/deps"/>
+    <property name="jar.file"   value="${build.dir}/tcm-workload.jar"/>
+
+    <path id="workload.classpath">
+        <fileset dir="${deps.dir}">
+            <include name="**/*.jar"/>
+        </fileset>
+    </path>
+
+    <target name="clean">
+        <delete dir="${build.dir}"/>
+    </target>
+
+    <target name="compile">
+        <mkdir dir="${classes}"/>
+        <javac srcdir="${src.dir}" destdir="${classes}"
+               includeantruntime="false" encoding="utf-8" debug="true"
+               source="11" target="11">
+            <classpath refid="workload.classpath"/>
+            <compilerarg value="-Xlint:-options"/>
+        </javac>
+    </target>
+
+    <!--
+     A thin jar with a Class-Path manifest entry rather than a shaded fat jar. The dependency jars
+     sit next to it in the image, and keeping them separate means the Cassandra driver jar in the
+     workload image is byte-identical to the one in the node image.
+    -->
+    <target name="jar" depends="compile">
+        <pathconvert property="manifest.classpath" pathsep=" ">
+            <path refid="workload.classpath"/>
+            <mapper type="flatten"/>
+        </pathconvert>
+        <jar destfile="${jar.file}" basedir="${classes}">
+            <manifest>
+                <attribute name="Main-Class" value="org.apache.cassandra.antithesis.tcm.Main"/>
+                <attribute name="Class-Path" value="${manifest.classpath}"/>
+            </manifest>
+        </jar>
+    </target>
+</project>

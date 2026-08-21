@@ -1,0 +1,407 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# Topology for the Antithesis TCM harness -- 7 ring nodes + 3 spares (see
+# ../scratchbook/deployment-topology.md).
+#
+#   cassandra-1..7   the ring. RF=3 and CMS RF=3. 1 and 2 are seeds; the rest are non-seed.
+#                    Seven (not three) so two joins/moves can affect DISJOINT token arcs, which is
+#                    what makes r-concurrent-multistep-operations reachable -- in a 3-node RF=3 ring
+#                    every topology op touches overlapping ranges and TCM correctly serialises them.
+#
+#                    They bootstrap SERIALLY via a linear depends_on-healthy chain
+#                    (cassandra-2 waits for cassandra-1 healthy, cassandra-3 for cassandra-2, ...).
+#                    This is deliberate: with random tokens (allocate_tokens disabled) and all seven
+#                    joining at once, several bootstraps lock overlapping ranges simultaneously, TCM
+#                    correctly rejects the colliding plans, and Cassandra's *startup* path treats a
+#                    plan rejection as fatal -- the node exits with code 3 and never joins (run
+#                    82fa2eda...-59-13: cassandra-5 died with "Rejecting this plan as it interacts
+#                    with a range locked by Key{Epoch=19}", so setup_complete never fired). Serial
+#                    bootstrap forms the seven-node ring reliably. Concurrency is exercised AFTER
+#                    setup, when the workload joins the spares below -- there the collisions are the
+#                    point, the workload tolerates the rejections, and admission control is under test.
+#   cassandra-8..10  spares, started with -Dcassandra.join_ring=false: register + follow the log
+#                    without joining. join_ring=false means they take no ranges at boot, so they do
+#                    not participate in the cold-start collision; they start once the ring is up.
+#                    Three spares give the concurrency driver room to launch multiple simultaneous
+#                    joins that land on disjoint arcs.
+#   workload         the test driver (single container; holds cross-node state).
+#
+# Sized for the cassandra_oss Antithesis runner. Locally, ten Cassandra JVMs will not fit a small
+# Docker VM; use CASSANDRA_MAX_HEAP=256M and/or validate a subset (see antithesis/README.md).
+
+name: cassandra-antithesis
+
+
+services:
+
+  cassandra-1:
+    container_name: cassandra-1
+    hostname: cassandra-1
+    platform: linux/amd64
+    build:
+      context: ../..
+      dockerfile: antithesis/docker/cassandra.Dockerfile
+    image: cassandra-antithesis-node:latest
+    init: true
+    environment:
+      NO_COLOR: "1"
+      CASSANDRA_LISTEN_ADDRESS: cassandra-1
+      CASSANDRA_SEEDS: "cassandra-1:7000,cassandra-2:7000"
+      CASSANDRA_CLUSTER_NAME: antithesis-tcm
+      CASSANDRA_NUM_TOKENS: "4"
+      MAX_HEAP_SIZE: "${CASSANDRA_MAX_HEAP:-384M}"
+      HEAP_NEWSIZE: "${CASSANDRA_HEAP_NEW:-96M}"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:7788/status | grep -q '\"running\": true' && nc -z localhost 9042"]
+      interval: 10s
+      timeout: 10s
+      retries: 6
+      start_period: 180s
+
+  cassandra-2:
+    container_name: cassandra-2
+    hostname: cassandra-2
+    platform: linux/amd64
+    build:
+      context: ../..
+      dockerfile: antithesis/docker/cassandra.Dockerfile
+    image: cassandra-antithesis-node:latest
+    init: true
+    environment:
+      NO_COLOR: "1"
+      CASSANDRA_LISTEN_ADDRESS: cassandra-2
+      CASSANDRA_SEEDS: "cassandra-1:7000,cassandra-2:7000"
+      CASSANDRA_CLUSTER_NAME: antithesis-tcm
+      CASSANDRA_NUM_TOKENS: "4"
+      MAX_HEAP_SIZE: "${CASSANDRA_MAX_HEAP:-384M}"
+      HEAP_NEWSIZE: "${CASSANDRA_HEAP_NEW:-96M}"
+    depends_on:
+      cassandra-1:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:7788/status | grep -q '\"running\": true' && nc -z localhost 9042"]
+      interval: 10s
+      timeout: 10s
+      retries: 6
+      start_period: 180s
+
+  cassandra-3:
+    container_name: cassandra-3
+    hostname: cassandra-3
+    platform: linux/amd64
+    build:
+      context: ../..
+      dockerfile: antithesis/docker/cassandra.Dockerfile
+    image: cassandra-antithesis-node:latest
+    init: true
+    environment:
+      NO_COLOR: "1"
+      CASSANDRA_LISTEN_ADDRESS: cassandra-3
+      CASSANDRA_SEEDS: "cassandra-1:7000,cassandra-2:7000"
+      CASSANDRA_CLUSTER_NAME: antithesis-tcm
+      CASSANDRA_NUM_TOKENS: "4"
+      MAX_HEAP_SIZE: "${CASSANDRA_MAX_HEAP:-384M}"
+      HEAP_NEWSIZE: "${CASSANDRA_HEAP_NEW:-96M}"
+    depends_on:
+      cassandra-2:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:7788/status | grep -q '\"running\": true' && nc -z localhost 9042"]
+      interval: 10s
+      timeout: 10s
+      retries: 6
+      start_period: 180s
+
+  cassandra-4:
+    container_name: cassandra-4
+    hostname: cassandra-4
+    platform: linux/amd64
+    build:
+      context: ../..
+      dockerfile: antithesis/docker/cassandra.Dockerfile
+    image: cassandra-antithesis-node:latest
+    init: true
+    environment:
+      NO_COLOR: "1"
+      CASSANDRA_LISTEN_ADDRESS: cassandra-4
+      CASSANDRA_SEEDS: "cassandra-1:7000,cassandra-2:7000"
+      CASSANDRA_CLUSTER_NAME: antithesis-tcm
+      CASSANDRA_NUM_TOKENS: "4"
+      MAX_HEAP_SIZE: "${CASSANDRA_MAX_HEAP:-384M}"
+      HEAP_NEWSIZE: "${CASSANDRA_HEAP_NEW:-96M}"
+    depends_on:
+      cassandra-3:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:7788/status | grep -q '\"running\": true' && nc -z localhost 9042"]
+      interval: 10s
+      timeout: 10s
+      retries: 6
+      start_period: 180s
+
+  cassandra-5:
+    container_name: cassandra-5
+    hostname: cassandra-5
+    platform: linux/amd64
+    build:
+      context: ../..
+      dockerfile: antithesis/docker/cassandra.Dockerfile
+    image: cassandra-antithesis-node:latest
+    init: true
+    environment:
+      NO_COLOR: "1"
+      CASSANDRA_LISTEN_ADDRESS: cassandra-5
+      CASSANDRA_SEEDS: "cassandra-1:7000,cassandra-2:7000"
+      CASSANDRA_CLUSTER_NAME: antithesis-tcm
+      CASSANDRA_NUM_TOKENS: "4"
+      MAX_HEAP_SIZE: "${CASSANDRA_MAX_HEAP:-384M}"
+      HEAP_NEWSIZE: "${CASSANDRA_HEAP_NEW:-96M}"
+    depends_on:
+      cassandra-4:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:7788/status | grep -q '\"running\": true' && nc -z localhost 9042"]
+      interval: 10s
+      timeout: 10s
+      retries: 6
+      start_period: 180s
+
+  cassandra-6:
+    container_name: cassandra-6
+    hostname: cassandra-6
+    platform: linux/amd64
+    build:
+      context: ../..
+      dockerfile: antithesis/docker/cassandra.Dockerfile
+    image: cassandra-antithesis-node:latest
+    init: true
+    environment:
+      NO_COLOR: "1"
+      CASSANDRA_LISTEN_ADDRESS: cassandra-6
+      CASSANDRA_SEEDS: "cassandra-1:7000,cassandra-2:7000"
+      CASSANDRA_CLUSTER_NAME: antithesis-tcm
+      CASSANDRA_NUM_TOKENS: "4"
+      MAX_HEAP_SIZE: "${CASSANDRA_MAX_HEAP:-384M}"
+      HEAP_NEWSIZE: "${CASSANDRA_HEAP_NEW:-96M}"
+    depends_on:
+      cassandra-5:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:7788/status | grep -q '\"running\": true' && nc -z localhost 9042"]
+      interval: 10s
+      timeout: 10s
+      retries: 6
+      start_period: 180s
+
+  cassandra-7:
+    container_name: cassandra-7
+    hostname: cassandra-7
+    platform: linux/amd64
+    build:
+      context: ../..
+      dockerfile: antithesis/docker/cassandra.Dockerfile
+    image: cassandra-antithesis-node:latest
+    init: true
+    environment:
+      NO_COLOR: "1"
+      CASSANDRA_LISTEN_ADDRESS: cassandra-7
+      CASSANDRA_SEEDS: "cassandra-1:7000,cassandra-2:7000"
+      CASSANDRA_CLUSTER_NAME: antithesis-tcm
+      CASSANDRA_NUM_TOKENS: "4"
+      MAX_HEAP_SIZE: "${CASSANDRA_MAX_HEAP:-384M}"
+      HEAP_NEWSIZE: "${CASSANDRA_HEAP_NEW:-96M}"
+    depends_on:
+      cassandra-6:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:7788/status | grep -q '\"running\": true' && nc -z localhost 9042"]
+      interval: 10s
+      timeout: 10s
+      retries: 6
+      start_period: 180s
+
+  # --- spares (join_ring=false; start after the ring is formed) ---
+
+  cassandra-8:
+    container_name: cassandra-8
+    hostname: cassandra-8
+    platform: linux/amd64
+    build:
+      context: ../..
+      dockerfile: antithesis/docker/cassandra.Dockerfile
+    image: cassandra-antithesis-node:latest
+    init: true
+    environment:
+      NO_COLOR: "1"
+      CASSANDRA_LISTEN_ADDRESS: cassandra-8
+      CASSANDRA_SEEDS: "cassandra-1:7000,cassandra-2:7000"
+      CASSANDRA_CLUSTER_NAME: antithesis-tcm
+      CASSANDRA_NUM_TOKENS: "4"
+      MAX_HEAP_SIZE: "${CASSANDRA_MAX_HEAP:-384M}"
+      HEAP_NEWSIZE: "${CASSANDRA_HEAP_NEW:-96M}"
+      CASSANDRA_BASE_FLAGS: "-Dcassandra.join_ring=false"
+    depends_on:
+      cassandra-7:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:7788/status | grep -q '\"running\": true' && nc -z localhost 9042"]
+      interval: 10s
+      timeout: 10s
+      retries: 6
+      start_period: 180s
+
+  cassandra-9:
+    container_name: cassandra-9
+    hostname: cassandra-9
+    platform: linux/amd64
+    build:
+      context: ../..
+      dockerfile: antithesis/docker/cassandra.Dockerfile
+    image: cassandra-antithesis-node:latest
+    init: true
+    environment:
+      NO_COLOR: "1"
+      CASSANDRA_LISTEN_ADDRESS: cassandra-9
+      CASSANDRA_SEEDS: "cassandra-1:7000,cassandra-2:7000"
+      CASSANDRA_CLUSTER_NAME: antithesis-tcm
+      CASSANDRA_NUM_TOKENS: "4"
+      MAX_HEAP_SIZE: "${CASSANDRA_MAX_HEAP:-384M}"
+      HEAP_NEWSIZE: "${CASSANDRA_HEAP_NEW:-96M}"
+      CASSANDRA_BASE_FLAGS: "-Dcassandra.join_ring=false"
+    depends_on:
+      cassandra-7:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:7788/status | grep -q '\"running\": true' && nc -z localhost 9042"]
+      interval: 10s
+      timeout: 10s
+      retries: 6
+      start_period: 180s
+
+  cassandra-10:
+    container_name: cassandra-10
+    hostname: cassandra-10
+    platform: linux/amd64
+    build:
+      context: ../..
+      dockerfile: antithesis/docker/cassandra.Dockerfile
+    image: cassandra-antithesis-node:latest
+    init: true
+    environment:
+      NO_COLOR: "1"
+      CASSANDRA_LISTEN_ADDRESS: cassandra-10
+      CASSANDRA_SEEDS: "cassandra-1:7000,cassandra-2:7000"
+      CASSANDRA_CLUSTER_NAME: antithesis-tcm
+      CASSANDRA_NUM_TOKENS: "4"
+      MAX_HEAP_SIZE: "${CASSANDRA_MAX_HEAP:-384M}"
+      HEAP_NEWSIZE: "${CASSANDRA_HEAP_NEW:-96M}"
+      CASSANDRA_BASE_FLAGS: "-Dcassandra.join_ring=false"
+    depends_on:
+      cassandra-7:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:7788/status | grep -q '\"running\": true' && nc -z localhost 9042"]
+      interval: 10s
+      timeout: 10s
+      retries: 6
+      start_period: 180s
+
+  # --- cold spares (NODE_AGENT_AUTOSTART=0: node-agent up, Cassandra NOT started) ---
+  # These never register until the replace-node driver boots one with replace_address, so they are
+  # the never-seen-address replacement a real BootstrapAndReplace requires (a join_ring=false spare
+  # cannot: its own address is already registered -> "already exists, cancelling join"). They are
+  # NOT in the workload's CASSANDRA_NODES (see WORKLOAD_COLD_SPARES) so waitForCluster and the
+  # checkers ignore them until one is consumed. Healthcheck verifies only that the agent is up.
+  cassandra-11: &cold-spare
+    container_name: cassandra-11
+    hostname: cassandra-11
+    platform: linux/amd64
+    build:
+      context: ../..
+      dockerfile: antithesis/docker/cassandra.Dockerfile
+    image: cassandra-antithesis-node:latest
+    init: true
+    environment: &cold-spare-env
+      NO_COLOR: "1"
+      CASSANDRA_LISTEN_ADDRESS: cassandra-11
+      CASSANDRA_SEEDS: "cassandra-1:7000,cassandra-2:7000"
+      CASSANDRA_CLUSTER_NAME: antithesis-tcm
+      CASSANDRA_NUM_TOKENS: "4"
+      MAX_HEAP_SIZE: "${CASSANDRA_MAX_HEAP:-384M}"
+      HEAP_NEWSIZE: "${CASSANDRA_HEAP_NEW:-96M}"
+      NODE_AGENT_AUTOSTART: "0"
+    depends_on:
+      cassandra-7:
+        condition: service_healthy
+    healthcheck: &cold-spare-health
+      test: ["CMD-SHELL", "curl -sf http://localhost:7788/status >/dev/null"]
+      interval: 10s
+      timeout: 10s
+      retries: 6
+      start_period: 60s
+
+  cassandra-12:
+    <<: *cold-spare
+    container_name: cassandra-12
+    hostname: cassandra-12
+    environment:
+      <<: *cold-spare-env
+      CASSANDRA_LISTEN_ADDRESS: cassandra-12
+
+  cassandra-13:
+    <<: *cold-spare
+    container_name: cassandra-13
+    hostname: cassandra-13
+    environment:
+      <<: *cold-spare-env
+      CASSANDRA_LISTEN_ADDRESS: cassandra-13
+
+
+  workload:
+    container_name: workload
+    hostname: workload
+    platform: linux/amd64
+    build:
+      context: ../..
+      dockerfile: antithesis/docker/workload.Dockerfile
+    image: cassandra-antithesis-workload:latest
+    init: true
+    environment:
+      NO_COLOR: "1"
+      CASSANDRA_NODES: "cassandra-1,cassandra-2,cassandra-3,cassandra-4,cassandra-5,cassandra-6,cassandra-7,cassandra-8,cassandra-9,cassandra-10"
+      # Seeds the replace-node driver leaves alone (replace-same-address is seed-safe, but keeping
+      # seeds up avoids a discovery hiccup on other timelines). Mirrors CASSANDRA_SEEDS on the ring.
+      WORKLOAD_SEEDS: "cassandra-1,cassandra-2"
+      # Cold-spare hosts for the replace-node driver (kept out of CASSANDRA_NODES on purpose).
+      WORKLOAD_COLD_SPARES: "cassandra-11,cassandra-12,cassandra-13"
+      WORKLOAD_STATE_DIR: /var/lib/antithesis-workload
+      WORKLOAD_DEBUG: "0"
+    depends_on:
+      cassandra-1:
+        condition: service_healthy
+      cassandra-2:
+        condition: service_healthy
+      cassandra-3:
+        condition: service_healthy
+      cassandra-4:
+        condition: service_healthy
+      cassandra-5:
+        condition: service_healthy
+      cassandra-6:
+        condition: service_healthy
+      cassandra-7:
+        condition: service_healthy

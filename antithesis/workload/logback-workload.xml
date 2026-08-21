@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+ Licensed to the Apache Software Foundation (ASF) under one
+ or more contributor license agreements.  See the NOTICE file
+ distributed with this work for additional information
+ regarding copyright ownership.  The ASF licenses this file
+ to you under the Apache License, Version 2.0 (the
+ "License"); you may not use this file except in compliance
+ with the License.  You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+-->
+<!--
+ Logging for the workload container.
+
+ The Java driver logs at DEBUG by default once logback is on the classpath, and under continuous
+ fault injection it produces a connection-failure stack trace for every retry against every
+ partitioned node. That output is not merely verbose: Antithesis stores raw bytes and presents them
+ in the triage report, so it buries the workload's own findings under reconnection noise.
+
+ Driver logging is therefore pinned to WARN. Connection failures are an *expected* outcome here —
+ the whole point is that nodes become unreachable — so they are not worth a log line each.
+-->
+<configuration>
+  <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+    <encoder>
+      <!-- No ANSI: Antithesis does not render escape codes. -->
+      <pattern>%d{HH:mm:ss.SSS} %-5level %logger{20} - %msg%n</pattern>
+    </encoder>
+  </appender>
+
+  <!-- Expected-failure chatter from the driver during partitions. -->
+  <logger name="com.datastax.driver" level="WARN"/>
+  <logger name="com.datastax.shaded" level="WARN"/>
+
+  <root level="INFO">
+    <appender-ref ref="STDOUT"/>
+  </root>
+</configuration>

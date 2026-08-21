@@ -20,6 +20,8 @@ package org.apache.cassandra.tcm;
 
 import java.util.function.Supplier;
 
+import com.antithesis.sdk.Assert;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -82,8 +84,32 @@ public abstract class AbstractLocalProcessor implements Processor
                 result = executeStrictly(previous, transform);
             }
 
-            // If we got a rejection, it could be that _we_ are not aware of the highest epoch.
-            // Just try to catch up to the latest distributed state.
+            // Antithesis property r-commit-rejected. Rejections are linearized differently from
+            // successes -- TCM_implementation.md: "Rejects are not persisted in the log, and are
+            // linearized using a read that confirms that transformation was executed against the
+            // highest epoch" -- and that asymmetric path has needed repeated fixing
+            // (CASSANDRA-19260 catch-up-on-rejection, and always sending commit failures as
+            // messaging failures). It is also the guard that makes
+            // c-commit-survives-cms-membership-change meaningful: exactly-once under retry is only
+            // tested when both rejections and successes occur, because the hard case is telling them
+            // apart.
+            //
+            // Evaluated on every commit attempt rather than from inside the rejection branch: a
+            // Sometimes whose condition is structurally always true is a Reachable in disguise, and
+            // the meaningful claim here is "a rejection occurred among the attempts", not "this line
+            // ran".
+            //
+            // SUT-side rather than workload-side because internal rejections -- a Prepare* rejected
+            // during a sequence advance, or one caused by another node's operation -- are invisible
+            // from outside and are the more interesting cases.
+            Assert.sometimes(result.isRejected(),
+                             "a transformation was rejected by the CMS",
+                             AntithesisDetails.of("epoch", previous.epoch.getEpoch(),
+                                                  "kind", transform.kind(),
+                                                  "rejected", result.isRejected(),
+                                                  "rejection_reason",
+                                                  result.isRejected() ? result.rejected().reason : null));
+
             if (result.isRejected())
             {
                 // Use a dedicated retry policy here as the one for the commit itself may not be appropriate.
