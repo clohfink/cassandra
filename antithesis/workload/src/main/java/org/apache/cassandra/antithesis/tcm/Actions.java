@@ -759,6 +759,108 @@ public final class Actions
     }
 
     /**
+     * {@code r-sequence-cancelled}. Abort a failed/stuck bootstrap and let TCM roll it back. Start a
+     * spare joining, kill it mid-bootstrap (which both stalls the sequence and makes it abortable --
+     * the SUT refuses to abort a live node), wait for peers to mark it down, then abortBootstrap,
+     * which commits CancelInProgressSequence + Unregister. The reachability assertion (CANCEL_SEQUENCE
+     * enacted) is SUT-side in {@link org.apache.cassandra.tcm.log.LocalLog}; the range-movement safety
+     * invariants (b-locked-ranges-match-sequences, b-no-overlapping-locked-ranges) then evaluate the
+     * rollback -- an abort that orphaned a lock or left a half-applied movement would trip them.
+     *
+     * <p>The spare is recycled with wipe-and-restart: the abort Unregistered it, so it re-registers
+     * cleanly as a fresh spare (no ghost, no pool depletion). Ring size is unchanged throughout -- the
+     * aborted join never joined -- so this is safe to run alongside the other churn drivers.
+     */
+    public void abortSequence()
+    {
+        List<Node> spares = spareNodes();
+        if (spares.isEmpty())
+        {
+            Log.info("abort-sequence: skipped (no spare to start an abortable bootstrap)");
+            return;
+        }
+        Node s = spares.get(harness.random.nextInt(spares.size()));
+        Node observer = null;
+        for (Node n : idleRingNodes()) { observer = n; break; }
+        if (observer == null)
+        {
+            Log.info("abort-sequence: no live observer available");
+            return;
+        }
+
+        String addr = s.broadcastAddress();
+        ObjectNode d = Harness.details();
+        d.put("spare", s.host);
+        d.put("observer", observer.host);
+        d.put("pre_normal", idleRingNodes().size());
+
+        Log.info("abort-sequence: starting bootstrap on spare " + s.host);
+        fireAndForget("abort-join-" + s.host, s::joinRing);
+        harness.state.bump("abort_bootstrap_started");
+
+        // Wait until the spare is actually mid-bootstrap before killing+aborting it. Poll tightly:
+        // with no faults a bootstrap completes in well under a second (locally it often reaches NORMAL
+        // before we can catch it, and the driver then cleanly skips), but under Antithesis fault
+        // injection the bootstrap stalls for seconds-to-minutes, making the JOINING window easy to
+        // catch. Treat either a non-STARTING operationMode OR the appearance of an in-progress
+        // sequence as "mid-bootstrap".
+        boolean joining = false;
+        long joinDeadline = System.currentTimeMillis() + 90_000;
+        while (System.currentTimeMillis() < joinDeadline)
+        {
+            String mode = s.operationMode();
+            if ("NORMAL".equals(mode))
+                break; // finished before we could catch it mid-flight
+            if ((mode != null && !"STARTING".equals(mode)) || currentInProgressSequences() >= 1)
+            {
+                joining = true; // JOINING / BOOT_REPLACING, or a sequence is registered
+                break;
+            }
+            quietSleep(250);
+        }
+        d.put("reached_joining", joining);
+        if (!joining)
+        {
+            Log.info("abort-sequence: spare did not reach a mid-bootstrap state (mode="
+                     + s.operationMode() + "); nothing to abort. " + d);
+            return;
+        }
+
+        // Kill mid-bootstrap: stalls the sequence and makes the node abortable (SUT rejects aborting a
+        // live node).
+        Log.info("abort-sequence: killing " + s.host + " mid-bootstrap");
+        s.stopViaAgent(true);
+        boolean down = false;
+        long downDeadline = System.currentTimeMillis() + 120_000;
+        while (System.currentTimeMillis() < downDeadline)
+        {
+            if (!s.agentSaysRunning() && addressInList(observer.unreachableNodes(), addr))
+            {
+                down = true;
+                break;
+            }
+            quietSleep(2_000);
+        }
+        d.put("observed_down", down);
+        if (!down)
+        {
+            Log.info("abort-sequence: spare not seen down in time; recycling without abort. " + d);
+            s.agent("POST", "/wipe-and-restart?force=1", "{}");
+            return;
+        }
+
+        Log.info("abort-sequence: abortBootstrap for " + s.host + " via " + observer.host);
+        observer.abortBootstrap("", s.host);
+        harness.state.bump("abort_bootstrap_committed");
+
+        // Recycle: the abort Unregistered the spare, so wipe-and-restart re-registers it as a fresh
+        // spare (join_ring=false base flag) back in the pool.
+        s.agent("POST", "/wipe-and-restart?force=1", "{}");
+        d.put("post_normal", idleRingNodes().size());
+        Log.info("abort-sequence: " + d);
+    }
+
+    /**
      * One randomly chosen membership operation, fire-and-forget so it can overlap the next one.
      *
      * <p>Fire-and-forget is what makes {@code r-concurrent-multistep-operations} reachable: waiting

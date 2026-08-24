@@ -385,6 +385,17 @@ public final class Harness implements AutoCloseable
             mutate(CMS_MBEAN, "snapshotClusterMetadata", new Object[0], new String[0]);
         }
 
+        /**
+         * Abort a stuck/failed bootstrap (or replace) for the node at {@code endpoint}, committing a
+         * CancelInProgressSequence + Unregister. The target must be down first -- the SUT rejects
+         * aborting a live node. Pass an empty nodeId and a hostname/endpoint; the SUT resolves it.
+         */
+        public void abortBootstrap(String nodeId, String endpoint)
+        {
+            mutate(SS_MBEAN, "abortBootstrap", new Object[]{ nodeId, endpoint },
+                   new String[]{ "java.lang.String", "java.lang.String" });
+        }
+
         public Boolean cancelInProgressSequences(String owner, String expectedKind)
         {
             return mutate(CMS_MBEAN, "cancelInProgressSequences",

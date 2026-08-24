@@ -95,6 +95,10 @@ public final class Main
                     actions.replaceNode();
                     break;
 
+                case "abort-sequence":
+                    actions.abortSequence();
+                    break;
+
                 case "cms-churn":
                     actions.cmsChurn();
                     break;

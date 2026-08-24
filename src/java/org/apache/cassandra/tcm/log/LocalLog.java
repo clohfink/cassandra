@@ -639,6 +639,18 @@ public abstract class LocalLog implements Closeable
                                          "a node completed a replacement (FINISH_REPLACE enacted)",
                                          AntithesisDetails.of("published_epoch", next.epoch.getEpoch(),
                                                               "kind", kind));
+                        // Antithesis property r-sequence-cancelled. Aborting an in-flight multi-step
+                        // operation (nodetool abortbootstrap / cancelInProgressSequences) commits a
+                        // CANCEL_SEQUENCE that must roll the operation back cleanly -- release the
+                        // locked ranges and revert placements -- rather than orphan a lock or leave a
+                        // half-applied movement. Observing the enactment here makes the rollback path
+                        // reachable so the range-movement safety invariants (b-locked-ranges-match-
+                        // sequences, b-no-overlapping-locked-ranges) are evaluated over it. Regression
+                        // surface for "abortbootstrap robustness" and CMS-init-abort NPE fixes.
+                        Assert.sometimes(kind == Transformation.Kind.CANCEL_SEQUENCE,
+                                         "an in-progress sequence was cancelled (CANCEL_SEQUENCE enacted)",
+                                         AntithesisDetails.of("published_epoch", next.epoch.getEpoch(),
+                                                              "kind", kind));
                         // Antithesis property a-metadata-serialization-round-trips. Cluster metadata
                         // is serialized on every replication and snapshot; a serializer/deserializer
                         // asymmetry silently corrupts what peers and restarts reconstruct (e.g.

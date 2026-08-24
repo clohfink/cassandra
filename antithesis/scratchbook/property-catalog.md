@@ -11,11 +11,12 @@ external_references:
 
 # TCM Property Catalog
 
-31 properties, post-evaluation: 16 `Always`, 3 `Always` inside quiet-period commands
+34 properties, post-evaluation: 16 `Always`, 3 `Always` inside quiet-period commands
 (liveness questions expressed as safety assertions after faults stop — see those entries for
-why), 2 `AlwaysOrUnreachable`, 2 `Unreachable`, 8 `Sometimes`. No `Reachable`: the catalog
+why), 2 `AlwaysOrUnreachable`, 2 `Unreachable`, 9 `Sometimes`. No `Reachable`: the catalog
 consistently prefers `Sometimes` on a meaningful condition over marking a line as hit.
 Added 2026-08-20: `a-metadata-serialization-round-trips` (Always) and `r-node-replaced` (Sometimes).
+Added 2026-08-23: `r-sequence-cancelled` (Sometimes).
 
 Each is a condition a workload or a SUT-side callsite can evaluate, not a goal.
 
@@ -432,6 +433,20 @@ states the safety properties are about?" Without them, all-green is uninformativ
 **Open Questions:**
 
 - Should we also exercise replacing a CMS member (a distinct, more delicate scenario)? `(deliberately excluded today; worth a dedicated future driver)`
+
+### r-sequence-cancelled — Aborting an in-flight operation rolls it back
+
+| | |
+|---|---|
+| **Type** | Reachability |
+| **Property** | At least once per run, an in-progress multi-step operation is cancelled — a `CANCEL_SEQUENCE` transformation is enacted — and the rollback leaves no orphaned lock or half-applied movement. |
+| **Invariant** | SUT-side `Assert.sometimes` in `LocalLog.processPendingInternal` inside the CAS block, message `"an in-progress sequence was cancelled (CANCEL_SEQUENCE enacted)"`, condition `kind == Transformation.Kind.CANCEL_SEQUENCE`. Driven by `serial_driver_abort_sequence`: start a spare joining, kill it mid-bootstrap (which stalls the sequence and makes it abortable — the SUT rejects aborting a live node), wait for peers to mark it down, then `abortBootstrap`, which commits `CancelInProgressSequence` + `Unregister`. The rollback correctness itself is covered by the existing always-on `b-locked-ranges-match-sequences` and `b-no-overlapping-locked-ranges` (an orphaned lock after cancel trips them on the CANCEL_SEQUENCE transition); this property just makes that path reachable. SUT-side so it fires for any cancel, however initiated. |
+| **Antithesis Angle** | Cancellation is the rollback half of every range movement and is only reached on the failure path (a bootstrap that got stuck under a partition, then aborted). Under fault injection the abort races ongoing churn, so the lock-release and placement-revert happen while other sequences hold adjacent locks — exactly where an orphaned-lock bug would hide. |
+| **Why It Matters** | Dense historical bug surface: "Make nodetool abortbootstrap more robust", "Add nodetool command to abort failed cms initialize", "Avoid NPE during cms initialization abort". An abort that orphans a `LockedRange` or leaves a partial placement wedges all future movement over those ranges. |
+
+**Open Questions:**
+
+- Also exercise `cancelInProgressSequences` on a decommission/move, and `cancelReconfigureCms` on a CMS reconfiguration? `(hooks are wired in Harness; abortBootstrap on a stuck join is the first, most bug-dense case)`
 
 ### r-cms-reconfiguration-observed — CMS membership actually changes
 

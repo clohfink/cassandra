@@ -224,9 +224,18 @@ export LOCAL_JMX=no
 # a-metadata-serialization-round-trips). It is gated by this flag because serializing the full
 # metadata on every committed epoch is pure overhead in a production node; here it is exactly the
 # kind of cheap-in-a-sim, high-signal check we want on.
+#
+# -XX:MaxDirectMemorySize=512M caps off-heap DIRECT memory. cassandra-env.sh otherwise derives this
+# from container RAM (~1958M observed), which -- on top of the 384M heap and on a 14-container host --
+# lets peak container RSS approach the cgroup limit during concurrent bootstrap streaming and trips
+# Antithesis's "Peak memory usage" system property (run 2702edb0). Our off-heap caches are tiny
+# (file_cache + networking_cache = 64MiB total), so 512M is ample headroom for netty/streaming buffers
+# while bounding the peak well under the container limit. Last -XX wins, so this overrides the derived
+# value appended earlier by cassandra-env.sh.
 export JVM_EXTRA_OPTS="${JVM_EXTRA_OPTS:-} \
 -Dcassandra.storagedir=/var/lib/cassandra \
 -Dcassandra.antithesis.serialization_check=true \
+-XX:MaxDirectMemorySize=512M \
 -Dcom.sun.management.jmxremote.authenticate=false \
 -Dcom.sun.management.jmxremote.ssl=false \
 -Djava.rmi.server.hostname=${CASSANDRA_LISTEN_ADDRESS} \

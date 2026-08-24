@@ -436,3 +436,33 @@ serializer asymmetry (or a throw) would still fail. r-node-replaced PASSING (ex=
 
 #1 (node replacement, cold-spare BootstrapAndReplace) and #3 (metadata serialization round-trip via
 idempotence) are complete and green under fault injection.
+
+## Run 2702edb0...-59-13 (adds r-sequence-cancelled, 45 min) — abort works; 2 non-correctness flags
+
+- **r-sequence-cancelled PASSING (ex=227).** abortBootstrap on a killed mid-bootstrap spare commits
+  CANCEL_SEQUENCE 227x under faults; the abort/rollback path is now exercised (and the always-on
+  b-locked-ranges-match-sequences / b-no-overlapping-locked-ranges evaluate the rollback). #2 done.
+- r-node-replaced (ex=200) and a-metadata-serialization-round-trips (ex=192) still passing.
+- **2 failures, neither a TCM correctness bug (total 70 vs run7's 68 -- both newly surfaced):**
+  1. "Always: Peak memory usage" (Antithesis system property, cex=3/7155): container memory tipped
+     over the platform threshold 3x. Already near the edge in run7 (ex=6522, passing). The abort
+     driver necessarily starts extra bootstraps (to then abort them), adding stream/JVM churn on 14
+     containers. Infra/resource, not correctness. Mitigation: more heap headroom or fewer concurrent
+     bootstraps; or accept a marginal peak.
+  2. "a progress barrier relaxed below its default consistency level" (our Sometimes, ex=0 this run):
+     a rare event (ex=11 in run7) whose fault schedule simply did not force a barrier relaxation this
+     run. Sometimes-reachability variance, not a regression.
+
+Net: the abort/cancel correctness deliverable passes. The two flags are infra (memory) + reachability
+variance (barrier relax), to tune/re-run rather than fix in TCM.
+
+## Run b703bcb4...-59-13 (MaxDirectMemorySize=512M, 45 min) — CLEAN, 70/70
+
+Capping direct memory (1958M -> 512M) cleared the Antithesis "Peak memory usage" system property
+(now Passing, ex=8797) with no direct-memory errors -- bootstrap streaming is healthy under the cap.
+progress-barrier-relaxed fired again (ex=18; run 2702edb0's miss was Sometimes variance). All new
+correctness properties green: r-sequence-cancelled (ex=200), r-node-replaced (ex=188),
+a-metadata-serialization-round-trips (ex=236). Zero failures.
+
+Abort/cancel (#2) is complete and confirmed on a clean board. Still zero TCM correctness bugs found
+across all runs; the only fixes have been to the harness (topology, memory, and property definitions).
